@@ -99,4 +99,29 @@ Xcode 27 needed the Metal toolchain component (`xcodebuild -downloadComponent Me
 ### Known gaps for later milestones
 - Frame files: abandoned-frame cleanup and "keep only the best frames" belong to M5, when real frames exist. Today's frames are `demo://` placeholders.
 - The dev tread simulation keeps counting while the Leave dialog is open. Real capture (M5) must pause while a dialog is up.
-- `Start scan` doesn't check camera permission yet; that's M4.
+- ~~`Start scan` doesn't check camera permission yet~~ Done in M4.
+
+## M4 Vehicle scan — awaiting real-device testing
+
+**Status: awaiting real-device testing, not finished.** Built and unit/screen tested; the live camera and OCR have not run on a phone yet (the Android emulator's virtual camera failed to start and the iOS simulator has no camera).
+
+- **Permission flow.** `Start scan` opens Camera access first when the permission hasn't been asked (`Allow camera` → system prompt; either answer, or `Not now`, continues to Scan number plate). On the scan screens the viewfinder shows `Allow camera access` / `Allow camera` while the system can still ask, and `Camera access is off` / `Turn it on in Settings to scan tyres.` / `Open Settings` once it can't. Access is re-checked when the app comes back from Settings. First-launch Camera access still goes Home after either answer.
+- **Android "permanently denied".** Android allows one more prompt after the first denial and then stops showing it silently. The app treats a denial as permanent once it has asked in the current session. After an app restart, the first `Allow camera` tap on a permanently denied Android phone shows no prompt, then the screen switches to `Open Settings`. Verified on the emulator: deny → `Allow camera` again → deny → `Camera access is off`; grant from Settings → access refreshed on return.
+- **Camera states.** No back camera → `No camera found`; start error → `The camera stopped` with `Try again`; system interruption → `Camera paused`. Capture is disabled while the camera can't run. `Type it` and `Skip` always work.
+- **How OCR runs (VisionCamera v5 only).** A `useFrameOutput` frame processor worklet, at most one frame at a time: `HybridFrameConverter.convertFrameToImage` → rotate upright from `frame.orientation` → crop to the guide box (mapped through the `cover` preview, plus 8% margin) → hand the crop to JS. Every frame is `dispose()`d in a `finally`, and every intermediate image is disposed. On JS the crop is written to a temporary JPEG, read by ML Kit (Latin, bundled), then the file is deleted. Passes are spaced at least 350 ms apart.
+- **Library choice.** `rn-mlkit-ocr` only accepts an image file, so frames go through a temporary file rather than a frame-processor plugin. Nothing leaves the phone.
+- **Stable read.** The same value read 3 times within the last 5 reads (plates compared ignoring spaces and hyphens) → success haptic → Confirm plate, or for chassis → Vehicle details with the number filled in. `Capture` uses the next single read; if nothing readable is found it says so and stays.
+- **No guessing.** Plate text is only uppercased and stripped of characters other than letters, digits, spaces and hyphens; the tallest line in the guide with 2–10 letters/digits is used. Chassis text is the longest run of words on one line making 5–17 letters/digits with at least one digit; a leading `VIN`/`CHASSIS`/`NO` label is dropped. Letters and digits are never swapped (O/0, I/1, B/8), nothing is padded to 17, and no format is enforced. Anything not read stays empty.
+- **Move closer.** Shown when chassis-like text is shorter than 18% of the guide crop's height; such reads are not accepted.
+- **OCR unavailable** (iOS simulator builds made with `LINEUP_IOS_SIM=1`, or the module missing): the hint says `Text reading isn't available. Type it instead.` After 3 OCR failures in a row: `Text can't be read right now. Use Capture, or type it.`
+- **Tunables** in `src/config/ocr.ts` (stable reads, window, interval, margins, size ratio). Starting values; calibrate on real plates and chassis plates.
+- **iOS app target deployment** set to 16.0 in the Xcode project (it was still the template's 15.1; the Podfile was already 16.0).
+- Home's unfinished-inspection card reads `Tyres not chosen yet` before tyres are selected (was `0 of ? tyres scanned`).
+
+### Needs owner attention: ML Kit usage metrics
+Google ML Kit (via `rn-mlkit-ocr`) pulls in Google's data transport libraries (`GoogleDataTransport` on iOS, `com.google.android.datatransport` on Android), which ML Kit uses to send API usage metrics to Google. Images and recognised text are processed on the phone, but this is still a network call the spec doesn't allow without approval. Options: (a) accept and disclose it in the store privacy answers, (b) block it (e.g. strip the transport backend or remove `INTERNET` from release), testing that OCR still works, or (c) replace ML Kit with Apple Vision on iOS plus an alternative on Android. Added to the release checklist. Not changed yet.
+
+### Android release permissions (checked in the merged release manifest)
+- Kept: `CAMERA`; `VIBRATE` (haptics); `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (AndroidX internal, app-private).
+- Removed with `tools:node="remove"` because the app doesn't use them: `READ_PHONE_STATE` (implied by the TFLite GPU library's old targetSdk), `WRITE_EXTERNAL_STORAGE` (react-native-fs), `READ_EXTERNAL_STORAGE` (react-native-vision-camera-resizer). All files are in app-private storage.
+- **Still present, owner decision:** `INTERNET` and `ACCESS_NETWORK_STATE`, added by ML Kit's `com.google.android.datatransport` (usage metrics, see above). `ACCESS_NETWORK_STATE` is also requested by `androidx.media3` (a VisionCamera dependency).

@@ -21,6 +21,7 @@ import { inspectionStatus } from '../../features/inspection/status';
 import { formatRelativeDateTime, formatTyreCount } from '../../features/inspection/format';
 import { getAnalyzer, isDemoVersion } from '../../ml';
 import { resumeRoutes } from '../../features/inspection/resume';
+import { currentCameraAccess } from '../../features/capture/useCameraAccess';
 import { colors, fonts, radius, sizes } from '../../theme';
 
 type Nav = CompositeNavigationProp<
@@ -40,7 +41,12 @@ export function HomeScreen() {
 
   const startNew = () => {
     startInspection(getAnalyzer().version);
-    navigation.navigate('PlateScan');
+    // Ask for the camera before the first scan if it hasn't been allowed yet.
+    if (currentCameraAccess() === 'can_ask') {
+      navigation.navigate('CameraAccess', { next: 'PlateScan' });
+    } else {
+      navigation.navigate('PlateScan');
+    }
   };
 
   const continueCurrent = () => {
@@ -82,9 +88,11 @@ export function HomeScreen() {
           <>
             <AppText style={styles.cardTitle}>Unfinished inspection</AppText>
             <AppText variant="rowLabel" color="textSecondary" style={styles.cardText}>
-              {`${current.plate ?? 'No plate'} · ${analysedTyres(current).length} of ${
-                current.tyres.length || '?'
-              } tyres scanned`}
+              {`${current.plate ?? 'No plate'} · ${
+                current.tyres.length === 0
+                  ? 'Tyres not chosen yet'
+                  : `${analysedTyres(current).length} of ${current.tyres.length} tyres scanned`
+              }`}
             </AppText>
             <Button label="Continue inspection" height={52} onPress={continueCurrent} />
             <Button label="Start new scan" variant="text" onPress={startOver} />

@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Camera, Smartphone, WifiOff, type LucideIcon } from 'lucide-react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AppText, Button } from '../../components';
-import { resetToHome, useRootNavigation } from '../../app/navigation';
+import { resetToHome } from '../../app/navigation';
+import type { RootStackParamList } from '../../app/routes';
+import { requestCameraAccess } from '../../features/capture/useCameraAccess';
 import { colors, sizes } from '../../theme';
 
 function Note({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
@@ -17,11 +20,24 @@ function Note({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
   );
 }
 
-/** 05 Camera access (Permission.dc.html). The system prompt is wired in M4. */
-export function CameraAccessScreen() {
-  const navigation = useRootNavigation();
+type Props = NativeStackScreenProps<RootStackParamList, 'CameraAccess'>;
+
+/**
+ * 05 Camera access (Permission.dc.html). `Allow camera` shows the system
+ * prompt. On first launch either answer goes Home; when a scan is starting it
+ * goes on to the scan, where typing and Skip still work without the camera.
+ */
+export function CameraAccessScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
-  const goHome = () => resetToHome(navigation);
+  const next = route.params?.next;
+  const [asking, setAsking] = useState(false);
+  const goOn = () => (next ? navigation.replace(next) : resetToHome(navigation));
+  const allow = async () => {
+    setAsking(true);
+    await requestCameraAccess();
+    setAsking(false);
+    goOn();
+  };
   return (
     <View
       style={[
@@ -45,8 +61,8 @@ export function CameraAccessScreen() {
         </View>
       </View>
       <View style={styles.actions}>
-        <Button label="Allow camera" onPress={goHome} />
-        <Button label="Not now" variant="text" onPress={goHome} />
+        <Button label="Allow camera" onPress={allow} disabled={asking} />
+        <Button label="Not now" variant="text" onPress={goOn} disabled={asking} />
       </View>
     </View>
   );

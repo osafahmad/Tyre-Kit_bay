@@ -5,6 +5,16 @@ React Native app that checks tyre health with the phone camera. Models run on th
 - Source of truth: [`docs/TYRE_KIT_BAY_SPEC.md`](docs/TYRE_KIT_BAY_SPEC.md)
 - Decisions and deviations: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 - Rules for contributors and coding assistants: [`CLAUDE.md`](CLAUDE.md)
+- Running on real phones and the current test checklist: [`docs/DEVICE_TESTING.md`](docs/DEVICE_TESTING.md)
+- Release blockers: [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)
+
+## Status
+
+| Milestone | State |
+|---|---|
+| M0 Setup – M3 Inspection state | Done (emulator/simulator tested) |
+| M4 Vehicle scan | **Awaiting real-device testing** |
+| M5 – M8 | Not started |
 
 ## Run
 

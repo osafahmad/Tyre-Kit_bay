@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Keyboard, Plus } from 'lucide-react-native';
 import {
   AppText,
@@ -13,17 +14,82 @@ import {
   Viewfinder,
 } from '../../components';
 import { useRootNavigation } from '../../app/navigation';
+import { VehicleScanCamera, type CameraIssue } from '../../features/capture/VehicleScanCamera';
+import { useTextScanner, type ScanResult } from '../../features/capture/useTextScanner';
+import { useGuideLayout } from '../../features/capture/useGuideLayout';
+import { ReadStabilizer } from '../../features/capture/readStabilizer';
+import { chassisCandidate } from '../../ml/ocr/textCandidates';
+import { useInspectionStore } from '../../features/inspection/store';
+import { feedback } from '../../features/feedback/feedback';
+import { OCR_FAILING, OCR_UNAVAILABLE } from '../PlateScan/PlateScanScreen';
 import { colors, radius } from '../../theme';
 
 /**
- * 10 Scan chassis number (ChassisScan.dc.html). Static in M2; camera and OCR
- * arrive in M4. `Move closer` shows when OCR says the text is too small.
+ * 10 Scan chassis number (ChassisScan.dc.html). Shows `Move closer` when the
+ * text is too small. A read is never padded or corrected to 17 characters.
  */
 export function ChassisScanScreen() {
   const navigation = useRootNavigation();
   const insets = useSafeAreaInsets();
+  const setVehicle = useInspectionStore(s => s.setVehicle);
   const [flashOn, setFlashOn] = useState(false);
-  const textTooSmall = false;
+  const [live, setLive] = useState(false);
+  const [issue, setIssue] = useState<CameraIssue>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [tooSmall, setTooSmall] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const stabilizer = useRef(new ReadStabilizer());
+
+  useFocusEffect(
+    useCallback(() => {
+      stabilizer.current.reset();
+      setLeaving(false);
+      setMessage(null);
+      setTooSmall(false);
+    }, []),
+  );
+
+  const found = (chassis: string) => {
+    setLeaving(true);
+    setVehicle({ chassis });
+    feedback.success('Chassis number found');
+    navigation.navigate('VehicleDetails');
+  };
+
+  const onResult = ({ lines, crop, manual }: ScanResult) => {
+    if (leaving) return;
+    const read = chassisCandidate(lines, crop.height);
+    setTooSmall(read.tooSmall);
+    if (manual) {
+      if (read.value) found(read.value);
+      else
+        setMessage(
+          read.tooSmall
+            ? 'Move closer, then try again.'
+            : "Couldn't read the chassis number. Try again, or type it.",
+        );
+      return;
+    }
+    const stable = stabilizer.current.push(read.value);
+    if (stable) found(stable);
+  };
+
+  const scanner = useTextScanner({ enabled: live && !leaving, onResult });
+  const layout = useGuideLayout(scanner.setGuide);
+
+  const capture = () => {
+    if (!scanner.available) return setMessage(OCR_UNAVAILABLE);
+    setMessage(null);
+    scanner.captureOnce();
+  };
+
+  const hint =
+    message ??
+    (scanner.state === 'unavailable'
+      ? OCR_UNAVAILABLE
+      : scanner.state === 'error'
+        ? OCR_FAILING
+        : 'Place the whole number inside the box');
 
   return (
     <View style={styles.root}>
@@ -33,27 +99,49 @@ export function ChassisScanScreen() {
         onSkip={() => navigation.navigate('SelectTyres')}
       />
       <CameraTitle title="Scan chassis number" subtitle="Optional" />
-      <Viewfinder style={styles.viewfinder}>
-        <View style={styles.guide} accessibilityLabel="Chassis number guide box" />
-        {textTooSmall ? (
-          <View style={styles.closer} accessibilityLiveRegion="polite">
-            <Plus size={16} color={colors.navy} strokeWidth={2.5} />
-            <AppText variant="rowLabel" weight="semibold">
-              Move closer
-            </AppText>
+      <Viewfinder>
+        <VehicleScanCamera
+          frameOutput={scanner.frameOutput}
+          torchOn={flashOn}
+          onLayout={layout.onViewLayout}
+          onLiveChange={setLive}
+          onIssueChange={setIssue}
+        >
+          <View style={styles.content}>
+            <View
+              style={styles.guide}
+              onLayout={layout.onGuideLayout}
+              accessible
+              accessibilityLabel="Chassis number guide box"
+            />
+            {tooSmall ? (
+              <View style={styles.closer} accessibilityLiveRegion="polite">
+                <Plus size={16} color={colors.navy} strokeWidth={2.5} />
+                <AppText variant="rowLabel" weight="semibold">
+                  Move closer
+                </AppText>
+              </View>
+            ) : null}
           </View>
-        ) : null}
-        <AppText variant="rowLabel" color="white" align="center" style={styles.hint}>
-          Place the whole number inside the box
-        </AppText>
+          <AppText
+            variant="rowLabel"
+            color="white"
+            align="center"
+            style={styles.hint}
+            accessibilityLiveRegion="polite"
+          >
+            {hint}
+          </AppText>
+        </VehicleScanCamera>
       </Viewfinder>
       <CameraControls
         bottomInset={insets.bottom}
-        left={<FlashToggle on={flashOn} onToggle={() => setFlashOn(v => !v)} />}
+        left={<FlashToggle on={flashOn} onToggle={() => setFlashOn(v => !v)} available={issue === null} />}
         centre={
           <CaptureButton
             accessibilityLabel="Capture chassis number"
-            onPress={() => navigation.navigate('VehicleDetails')}
+            onPress={capture}
+            disabled={issue !== null}
           />
         }
         right={
@@ -70,9 +158,20 @@ export function ChassisScanScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.black },
-  viewfinder: { paddingHorizontal: 16, gap: 16 },
+  // The guide sits inside this padded box; its onLayout is relative to it.
+  content: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
   guide: {
-    width: '100%',
+    alignSelf: 'stretch',
     height: 84,
     borderWidth: 3,
     borderColor: colors.cameraBlue,
@@ -87,5 +186,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 14,
   },
-  hint: { position: 'absolute', left: 16, right: 16, bottom: 18 },
+  hint: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 18,
+    textShadowColor: colors.black,
+    textShadowRadius: 4,
+  },
 });

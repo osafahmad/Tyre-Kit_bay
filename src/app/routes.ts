@@ -12,7 +12,8 @@ export type RootStackParamList = {
   Welcome: undefined;
   /** Walkthrough 1–3 are pages of one pager so horizontal swipe works. */
   Walkthrough: { step?: 0 | 1 | 2 } | undefined;
-  CameraAccess: undefined;
+  /** `next` is set when a scan is starting; otherwise it's the first-launch step. */
+  CameraAccess: { next?: 'PlateScan' } | undefined;
   Tabs: NavigatorScreenParams<TabParamList> | undefined;
   PlateScan: undefined;
   PlateConfirm: { plate: string };

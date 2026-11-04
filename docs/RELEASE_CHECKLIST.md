@@ -31,3 +31,5 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] Merged release `AndroidManifest.xml` checked: no unexpected permissions (only `CAMERA`, plus anything a library adds that has been reviewed). `INTERNET` should not be requested by the app itself.
 - [ ] Release signing set up outside git (Android upload keystore; iOS distribution certificate and profile).
 - [ ] No analytics, crash reporting or network calls added without owner approval.
+- [ ] **ML Kit usage metrics decided** (see DECISIONS.md, M4): accepted and disclosed, or blocked and OCR re-tested. Check with a network monitor that a release build makes no unexpected requests during a full inspection.
+- [ ] M4 real-device checklist (`docs/DEVICE_TESTING.md`) passed on iPhone and Android.
