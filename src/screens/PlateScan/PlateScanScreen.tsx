@@ -14,7 +14,7 @@ import {
   Viewfinder,
 } from '../../components';
 import { useRootNavigation } from '../../app/navigation';
-import { VehicleScanCamera, type CameraIssue } from '../../features/capture/VehicleScanCamera';
+import { CaptureCamera, type CameraIssue } from '../../features/capture/CaptureCamera';
 import { useTextScanner, type ScanResult } from '../../features/capture/useTextScanner';
 import { useGuideLayout } from '../../features/capture/useGuideLayout';
 import { ReadStabilizer } from '../../features/capture/readStabilizer';
@@ -93,7 +93,7 @@ export function PlateScanScreen() {
       />
       <CameraTitle title="Scan number plate" subtitle="Optional" />
       <Viewfinder>
-        <VehicleScanCamera
+        <CaptureCamera
           frameOutput={scanner.frameOutput}
           torchOn={flashOn}
           onLayout={layout.onViewLayout}
@@ -115,7 +115,7 @@ export function PlateScanScreen() {
           >
             {hint}
           </AppText>
-        </VehicleScanCamera>
+        </CaptureCamera>
       </Viewfinder>
       <CameraControls
         bottomInset={insets.bottom}

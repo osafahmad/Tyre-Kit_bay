@@ -1,6 +1,7 @@
 import type { InspectionRepository } from './repository';
 import { useInspectionStore } from './store';
 import { settings } from './settings';
+import { clearTempFrames, reconcileFrames } from '../capture/frameFiles';
 import type { Inspection } from './types';
 
 /**
@@ -8,7 +9,10 @@ import type { Inspection } from './types';
  * that, so a closed app can resume where it left off.
  */
 export async function startPersistence(repo: InspectionRepository): Promise<() => void> {
-  const inspections = await repo.loadAll();
+  // Frames that vanished (or never finished saving) send their tyre back to that step.
+  const loaded = await repo.loadAll();
+  const inspections = await reconcileFrames(loaded);
+  await clearTempFrames().catch(() => {});
   const savedCurrent = settings.currentInspectionId();
   const current =
     savedCurrent && inspections.some(i => i.id === savedCurrent && i.completedAt === null)
@@ -25,6 +29,9 @@ export async function startPersistence(repo: InspectionRepository): Promise<() =
   };
 
   let previous = new Map<string, Inspection>(inspections.map(i => [i.id, i]));
+  inspections.forEach((inspection, i) => {
+    if (inspection !== loaded[i]) enqueue(() => repo.save(inspection));
+  });
   return useInspectionStore.subscribe(state => {
     if (state.currentId !== settings.currentInspectionId()) {
       settings.setCurrentInspectionId(state.currentId);

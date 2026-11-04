@@ -24,7 +24,8 @@ export function resumeRoutes(inspection: Inspection): Route[] {
   const tyreId = tyre.id;
   switch (tyre.state) {
     case 'capturing_tread':
-      return [...base, { name: 'TreadCapture', params: { tyreId } }];
+      // Sidewall frames are saved; reopen its review so the read details can be checked.
+      return [...base, { name: 'SidewallCaptured', params: { tyreId } }];
     case 'captured':
       return [...base, { name: 'FramesCaptured', params: { tyreId } }];
     case 'analysing':

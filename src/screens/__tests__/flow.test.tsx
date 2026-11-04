@@ -1,5 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import * as VC from 'react-native-vision-camera';
 import App from '../../app/App';
 import { useInspectionStore } from '../../features/inspection/store';
 import { settings } from '../../features/inspection/settings';
@@ -8,7 +9,11 @@ import { MemoryInspectionRepository } from '../../features/inspection/repository
 
 let repo: MemoryInspectionRepository;
 
+// No camera: capture screens use the labelled development simulation.
+const camera = (VC as unknown as { __mock: { device: unknown } }).__mock;
+
 beforeEach(() => {
+  camera.device = undefined;
   jest.useFakeTimers();
   repo = new MemoryInspectionRepository();
   settings.setCurrentInspectionId(null);
@@ -116,7 +121,7 @@ test('two-tyre inspection in order, with a skipped tyre, ends in a labelled demo
   await press('Capture sidewall');
   await press('Scan tread');
   await press('Having trouble');
-  expect(await screen.findByText("The tyre wasn't detected")).toBeTruthy();
+  expect(await screen.findByText('Not enough clear frames')).toBeTruthy();
   await press('Skip this tyre');
 
   expect(await screen.findByText('Not scanned')).toBeTruthy();

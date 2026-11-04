@@ -6,11 +6,16 @@ import {
   Camera,
   Droplet,
   Hand,
+  MoveHorizontal,
+  Pause,
+  RotateCw,
   Ruler,
   Scan,
   Sun,
+  SunMedium,
   TriangleAlert,
   Zap,
+  ZapOff,
   type LucideIcon,
 } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -25,7 +30,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'CaptureProblem'>;
 
 type Tip = { icon: LucideIcon; text: string };
 
-/** Reason table from spec §4.16. */
+/** Reason table from spec §4.16, plus the reasons added for capture without a detector. */
 export const captureProblems: Record<CaptureErrorReason, { title: string; tips: Tip[] }> = {
   dark: {
     title: 'Too dark to read the tread',
@@ -50,6 +55,7 @@ export const captureProblems: Record<CaptureErrorReason, { title: string; tips: 
       { icon: Scan, text: 'Keep the tyre inside the guide' },
     ],
   },
+  // Only shown once a tyre detector exists and reports no tyre.
   not_found: {
     title: "The tyre wasn't detected",
     tips: [
@@ -57,7 +63,41 @@ export const captureProblems: Record<CaptureErrorReason, { title: string; tips: 
       { icon: Sun, text: 'Try more light' },
     ],
   },
+  // Added by owner decision: specific reasons the app can measure without a detector.
+  glare: {
+    title: 'Too much glare',
+    tips: [
+      { icon: ZapOff, text: 'Turn off the flash' },
+      { icon: RotateCw, text: 'Tilt the phone to avoid reflections' },
+      { icon: SunMedium, text: 'Shade the tyre from direct sun' },
+    ],
+  },
+  unsteady: {
+    title: 'Hold the phone steady',
+    tips: [
+      { icon: Hand, text: 'Hold the phone with both hands' },
+      { icon: Pause, text: 'Keep still until the capture finishes' },
+    ],
+  },
+  too_few_frames: {
+    title: 'Not enough clear frames',
+    tips: [
+      { icon: Scan, text: 'Keep the tyre inside the guide' },
+      { icon: MoveHorizontal, text: 'Move slowly across the tread, from edge to edge' },
+    ],
+  },
 };
+
+/** Tips that depend on the stage. */
+function tipsFor(reason: CaptureErrorReason, stage: 'sidewall' | 'tread'): Tip[] {
+  if (reason === 'too_few_frames' && stage === 'sidewall') {
+    return [
+      { icon: Scan, text: 'Keep the tyre inside the circle' },
+      { icon: Pause, text: 'Keep still until the capture finishes' },
+    ];
+  }
+  return captureProblems[reason].tips;
+}
 
 /** 16 Capture problem (TreadRetry.dc.html). Shows the real reason. */
 export function CaptureProblemScreen({ navigation, route }: Props) {
@@ -65,6 +105,9 @@ export function CaptureProblemScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const skipTyre = useInspectionStore(s => s.skipTyre);
   const problem = captureProblems[reason];
+  // The spec's dark title names the tread; say sidewall when that's the stage.
+  const title =
+    reason === 'dark' && stage === 'sidewall' ? 'Too dark to read the sidewall' : problem.title;
 
   const retry = () =>
     navigation.replace(stage === 'sidewall' ? 'SidewallCapture' : 'TreadCapture', { tyreId });
@@ -87,13 +130,13 @@ export function CaptureProblemScreen({ navigation, route }: Props) {
           accessibilityRole="header"
           style={styles.title}
         >
-          {problem.title}
+          {title}
         </AppText>
         <AppText variant="body" color="textOnDark" style={styles.lead}>
           Too few clear frames were captured. Try these before scanning again.
         </AppText>
         <View style={styles.tips}>
-          {problem.tips.map(tip => (
+          {tipsFor(reason, stage).map(tip => (
             <View key={tip.text} style={styles.tip}>
               <tip.icon size={22} color={colors.cameraBlue} strokeWidth={2} />
               <AppText variant="bodySmall" color="white" style={styles.tipText}>

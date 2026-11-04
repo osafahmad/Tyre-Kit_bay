@@ -105,7 +105,7 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
             label="Scan sidewall again"
             variant="text"
             height={44}
-            onPress={() => navigation.goBack()}
+            onPress={() => navigation.replace('SidewallCapture', { tyreId })}
           />
         </View>
       </ScrollView>

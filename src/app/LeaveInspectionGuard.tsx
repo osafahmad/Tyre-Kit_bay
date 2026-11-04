@@ -7,6 +7,7 @@ import {
   useRoute,
 } from '@react-navigation/native';
 import { useInspectionStore } from '../features/inspection/store';
+import { useCaptureBlock } from '../features/capture/captureBlock';
 
 /** Only going back out of the flow asks first; resets (Done, View report) don't. */
 const BACK_ACTIONS = new Set(['GO_BACK', 'POP', 'POP_TO_TOP']);
@@ -30,10 +31,24 @@ export function LeaveInspectionGuard({ children }: { children: React.ReactNode }
       navigation.dispatch(data.action);
       return;
     }
-    Alert.alert('Leave this inspection?', 'It stays saved. You can continue it from Home.', [
-      { text: 'Keep scanning', style: 'cancel' },
-      { text: 'Save and leave', onPress: () => navigation.dispatch(data.action) },
-    ]);
+    // Pause capture while the dialog is open.
+    const { setBlocked } = useCaptureBlock.getState();
+    setBlocked(true);
+    Alert.alert(
+      'Leave this inspection?',
+      'It stays saved. You can continue it from Home.',
+      [
+        { text: 'Keep scanning', style: 'cancel', onPress: () => setBlocked(false) },
+        {
+          text: 'Save and leave',
+          onPress: () => {
+            setBlocked(false);
+            navigation.dispatch(data.action);
+          },
+        },
+      ],
+      { cancelable: true, onDismiss: () => setBlocked(false) },
+    );
   });
 
   return <>{children}</>;

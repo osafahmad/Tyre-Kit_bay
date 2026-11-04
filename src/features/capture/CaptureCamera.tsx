@@ -22,12 +22,12 @@ type Props = {
 };
 
 /**
- * Back camera for plate and chassis scanning. Handles permission, no camera,
+ * Back camera for plate, chassis and tyre capture. Handles permission, no camera,
  * start errors and interruptions, and only runs while the screen is focused
  * and the app is in the foreground. Typing and Skip stay available on the
  * screen whatever happens here.
  */
-export function VehicleScanCamera({
+export function CaptureCamera({
   frameOutput,
   torchOn,
   children,

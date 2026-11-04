@@ -28,9 +28,9 @@ test('no tyres chosen yet: back to vehicle details', () => {
   expect(resumeRoutes(inspection([]))).toEqual([{ name: 'VehicleDetails' }]);
 });
 
-test('first tyre mid-capture reopens its step', () => {
+test('first tyre mid-capture reopens its step (after the sidewall: its review)', () => {
   expect(resumeRoutes(inspection([tyre('a', 'capturing_tread'), tyre('b', 'waiting')]))).toEqual([
-    { name: 'TreadCapture', params: { tyreId: 'a' } },
+    { name: 'SidewallCaptured', params: { tyreId: 'a' } },
   ]);
   expect(resumeRoutes(inspection([tyre('a', 'captured')]))).toEqual([
     { name: 'FramesCaptured', params: { tyreId: 'a' } },

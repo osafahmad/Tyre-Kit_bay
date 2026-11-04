@@ -1,4 +1,8 @@
 import { create } from 'zustand';
+import {
+  deleteInspectionFrames,
+  deleteTyreFrames,
+} from '../capture/frameFiles';
 import { useShallow } from 'zustand/react/shallow';
 import type {
   CaptureErrorReason,
@@ -148,7 +152,15 @@ export const useInspectionStore = create<InspectionStore>()((set, get) => {
     },
 
     skipTyre(tyreId) {
-      patchTyre(tyreId, t => ({ ...t, state: 'skipped', result: null }));
+      const found = findTyre(get().inspections, tyreId);
+      if (found) deleteTyreFrames(found.inspection.id, tyreId).catch(() => {});
+      patchTyre(tyreId, t => ({
+        ...t,
+        state: 'skipped',
+        result: null,
+        sidewallFrames: [],
+        treadFrames: [],
+      }));
     },
 
     setResult(tyreId, result) {
@@ -160,6 +172,8 @@ export const useInspectionStore = create<InspectionStore>()((set, get) => {
     },
 
     resetTyre(tyreId) {
+      const found = findTyre(get().inspections, tyreId);
+      if (found) deleteTyreFrames(found.inspection.id, tyreId).catch(() => {});
       patchTyre(tyreId, t => ({
         ...newTyre(t.position),
         id: t.id,
@@ -179,6 +193,7 @@ export const useInspectionStore = create<InspectionStore>()((set, get) => {
     },
 
     discardInspection(id) {
+      deleteInspectionFrames(id).catch(() => {});
       set(state => ({
         inspections: state.inspections.filter(i => i.id !== id),
         currentId: state.currentId === id ? null : state.currentId,

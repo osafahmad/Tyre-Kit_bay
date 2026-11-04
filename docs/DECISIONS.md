@@ -114,7 +114,7 @@ Xcode 27 needed the Metal toolchain component (`xcodebuild -downloadComponent Me
 - **No guessing.** Plate text is only uppercased and stripped of characters other than letters, digits, spaces and hyphens; the tallest line in the guide with 2–10 letters/digits is used. Chassis text is the longest run of words on one line making 5–17 letters/digits with at least one digit; a leading `VIN`/`CHASSIS`/`NO` label is dropped. Letters and digits are never swapped (O/0, I/1, B/8), nothing is padded to 17, and no format is enforced. Anything not read stays empty.
 - **Move closer.** Shown when chassis-like text is shorter than 18% of the guide crop's height; such reads are not accepted.
 - **OCR unavailable** (iOS simulator builds made with `LINEUP_IOS_SIM=1`, or the module missing): the hint says `Text reading isn't available. Type it instead.` After 3 OCR failures in a row: `Text can't be read right now. Use Capture, or type it.`
-- **Tunables** in `src/config/ocr.ts` (stable reads, window, interval, margins, size ratio). Starting values; calibrate on real plates and chassis plates.
+- **Tunables** were in `src/config/ocr.ts`; since M5 they're in `src/config/capture.ts` (`ocrConfig`) with every other estimated value. Uncalibrated.
 - **iOS app target deployment** set to 16.0 in the Xcode project (it was still the template's 15.1; the Podfile was already 16.0).
 - Home's unfinished-inspection card reads `Tyres not chosen yet` before tyres are selected (was `0 of ? tyres scanned`).
 
@@ -135,3 +135,53 @@ Google ML Kit (via `rn-mlkit-ocr`) pulls in Google's data transport libraries (`
 ## ML Kit usage metrics — still open
 
 Unchanged after the bundle ID change: ML Kit setup not modified, decision still with the owner (see M4 above).
+
+## M4 real-device testing deferred (owner decision)
+
+- The owner deferred M4 real-device testing and started M5. **M4 stays "awaiting real-device testing"** and must pass `docs/DEVICE_TESTING.md` on a real iPhone and Android phone before release.
+- M5 reuses M4 camera code that hasn't run on a phone yet; those risks are listed under M5 below.
+
+## M5 Tyre capture — awaiting real-device testing
+
+**Status: awaiting real-device testing, not finished.** Built and covered by unit and screen tests (including frame-disposal tests that drive the real frame worklet with fake frames). The live camera path has not run on a phone, and no emulator or simulator here has a working camera.
+
+### What's built
+- **Quality checks on every analysed frame** (about 10 per second, VisionCamera v5 frame output in YUV, worklet on the camera thread): brightness (mean luminance of the centre region), blur (Laplacian variance on a sampled grid), steadiness (difference between consecutive 16×16 thumbnails). **All estimated values are in one file, `src/config/capture.ts`, marked `CALIBRATION_STATUS = 'uncalibrated'`**, each tagged `spec` or `estimate`. No model values are there or anywhere else.
+- **Disposal.** Every frame is disposed in a `finally`, its planes right after reading, and every intermediate image (converted, rotated, cropped) as soon as it's replaced or saved, including on errors.
+- **Sidewall.** Frames that are bright enough, sharp and steady are saved after **Capture** is pressed. It keeps the sharpest `sidewallTargetFrames` (8) of up to 12 candidates, or finishes 1 s after reaching 8. At the 20 s timeout it keeps what it has if that's at least `sidewallMinFrames` (5); otherwise it opens Capture problem.
+- **Tread.** Frames are accepted while the sweep moves: each must pass light and sharpness checks and differ from the last accepted frame. Progress = accepted / `treadTargetFrames` (10); finishes at 10; `Finish sweep` from 5 (otherwise `Keep going. A few more clear frames are needed.`); `Having trouble` and the 20 s timeout open Capture problem. Per spec, the timeout opens Capture problem even with 5–9 frames (the user can press Finish sweep before then).
+- **Timeout counts active time only:** camera live, screen focused, app in front, no dialog open, storage OK.
+- **Real reason on Capture problem** = the most common rejection: too dark → `dark`, overexposed → `glare` (**Too much glare**), blurred → `blur`, moving → `unsteady` (**Hold the phone steady**). With no single cause (standing still on the tread, no usable frames) → `too_few_frames` (**Not enough clear frames**, tips per stage). **`The tyre wasn't detected` is only used once a real detector reports it** (owner decision 3). The dark title says "sidewall" on the sidewall stage (**owner accepted**).
+- **Retry is always one tap:** Capture problem → `Scan sidewall again` / `Scan tread again` (or `Skip this tyre`); camera error → `Try again`; permission off → `Allow camera` or `Open Settings`; low storage or a failed save → `Try again`; Sidewall captured → `Scan sidewall again`; Frames captured → `Scan tread again`.
+- **Frame storage.** Accepted frames are cropped to the guide (plus 8% margin) and written as JPEG (quality 0.9) to a temp folder in caches, then the kept ones are moved to `Documents/frames/<inspection>/<tyre>/<stage>_<time>_<n>.jpg`. Inspections store paths **relative** to Documents (the iOS container path changes across updates). Discarded candidates are deleted right away.
+- **Deleting abandoned frames:** a new capture of a stage replaces that stage's frames; `Scan this tyre again` and `Skip this tyre` delete the tyre's folder; deleting an unfinished inspection deletes its folder; at startup, leftover temp frames and folders of deleted inspections are removed.
+- **Resume.** Frame paths and the tyre's step are saved as soon as a stage finishes. At startup, saved inspections are checked against the files on disk; a tyre whose frames are missing goes back to the step that needs them. After the sidewall, resume now opens **Sidewall captured** (to review the details) instead of jumping to the tread. A capture interrupted mid-stage restarts that stage.
+- **Low storage (spec §8):** checked before capturing (60 MB free) and on write errors; shows `There isn't enough storage to save these frames. Free up some space and try again.` with `Try again`. Other write failures show `The frames couldn't be saved. Try again.`
+- **Camera problems** reuse the M4 camera component (renamed `CaptureCamera`): permission off, no camera, start error, interruption. **No flash** shows a disabled `No flash` control.
+- **Dialogs pause capture.** `Leave this inspection?` sets a flag that stops frames being accepted and the timeout running (the M3 gap).
+- **No models during capture.** Tread and damage models only run after capture (M6/M7); nothing here calls TFLite or the network.
+- **Flash on Tread capture.** The tread design has no flash control, but the spec's dark tips say "Turn on the flash", so a compact flash toggle sits in the progress row. **Owner accepted.**
+- **Development builds without a camera** (simulators, Jest) still use the labelled `Demo data` simulation. With a camera, development builds use the real capture. In release builds (`__DEV__` false) the simulation, demo seeding and demo analyzer are all unreachable (`releaseGuards.test.ts`).
+
+### Tyre detector not available yet (spec says "run the tyre detector during preview") — owner accepted for now, release blocker
+The detector model is an owner input (M7); `src/ml/manifest.ts` is empty, and nothing is guessed. Until it exists:
+- Sidewall capture starts from the **Capture** button instead of automatically.
+- `Move closer`, `Move back` and `Distance OK` are **not shown**: claiming a distance that wasn't measured would be wrong. The tread pill no longer shows the design's fixed `Distance OK`.
+- Capture can't tell whether a tyre is in the frame at all: a sharp, well-lit wall would pass. The user is relied on to frame the tyre.
+- `isTyreDetectorAvailable()` (`src/ml/tyreDetector.ts`) is the switch for M7.
+
+### Added status messages (owner decision 2)
+Kept: `Too bright` (overexposed), `Keep moving` (tread: frame too like the last one), `Ready to capture` (sidewall: checks pass, waiting for Capture). The tread "checks pass" message is **`Image is clear`** (was `Looks good`, renamed so it can't be read as tyre condition). Also on screen during sidewall capture: `N of 8 frames`.
+
+### Risks: M4 camera code reused without real-device proof
+- **Frame orientation → upright rotation** (`uprightRotation`): assumed `right` = rotate −90°. If wrong, saved frames are sideways and crops miss the guide.
+- **Guide → image mapping** (`guideToImageRect`): assumes the preview fills the viewfinder with `cover` and shows the same field of view as the frame output. If not, crops are offset; the 8% margin absorbs small errors.
+- **`HybridFrameConverter.convertFrameToImage`** and passing the image to the JS thread: unproven on phones. If slow, fewer frames are accepted per second.
+- **`CaptureCamera`** (permission, errors, interruptions): from M4, untested on a phone.
+
+### Other M5 risks to check on a phone
+- **Luminance plane access:** reading plane 0 of a YUV frame with `getPixelBuffer()` copies it; cost at about 10 fps on a low-end Android phone is unknown.
+- **Thresholds** (brightness 55–215, sharpness 120, motion 6, novelty 5) are guesses until calibrated; too strict means timeouts, too loose means blurry frames saved.
+- **Sharpness scale** depends on the frame resolution (720p) and the sampling step (4 px).
+- **Heat and battery** over a four-tyre inspection: not measured.
+- **Capture problem reasons added beyond the spec table:** `glare`, `unsteady`, `too_few_frames` (see above).

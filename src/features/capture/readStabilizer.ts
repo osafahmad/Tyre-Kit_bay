@@ -1,4 +1,4 @@
-import { ocrConfig } from '../../config/ocr';
+import { ocrConfig } from '../../config/capture';
 
 /**
  * Accepts an OCR value once the same value has been read `stableReads` times

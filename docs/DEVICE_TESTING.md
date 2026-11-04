@@ -1,6 +1,6 @@
-# Device testing (M4: vehicle scan)
+# Device testing
 
-M4 status: **awaiting real-device testing.**
+M4 (vehicle scan) and M5 (tyre capture) are both **awaiting real-device testing**. Sections 0–3 apply to both; section 4 is M4, section 6 is M5.
 
 Use a **debug build** for this round. It talks to Metro on your Mac, shows logs, and keeps the dev-only capture simulation so you can walk past the vehicle steps. Release builds turn that simulation off; tyre capture is M5.
 
@@ -120,3 +120,33 @@ Start each test from Home → **Start scan**, unless it says otherwise. Have rea
 7. Whether it happens **every time** or only sometimes.
 
 Plates and chassis numbers are personal data: crop or blur them in anything you send if needed. The app itself doesn't log them.
+
+## 6. M5 tyre capture checklist
+
+Development builds on a phone use the **real camera** for tyre capture (the `Demo data` simulation only runs on simulators). Analysis after capture is still the demo analyzer, so results are labelled `Demo data`.
+
+No tyre detector exists yet (owner input, M7). So: **sidewall capture starts when you press Capture**, and the pill never says `Move closer`, `Move back` or `Distance OK`. The app can't tell if a tyre is actually in the frame.
+
+Get to a tyre: Home → Start scan → Skip → Skip → choose tyres → Scan.
+
+| # | Area | Steps | Expected result |
+|---|---|---|---|
+| T1 | Sidewall preview | Point at a tyre sidewall in good light. | Live preview with the blue guide circle. Pill goes from `Focusing…` to `Ready to capture` when held still. |
+| T2 | Sidewall capture | Fit the tyre in the circle, hold still, press Capture. | Pill `Hold steady`, counter `N of 8 frames` rises, then **Sidewall captured** opens within a few seconds. Vibrates. |
+| T3 | Sidewall, moving | Press Capture and keep moving the phone. | Pill `Hold steady`; counter barely rises. After 20 s **Capture problem**: `The frames are too blurred`. |
+| T4 | Sidewall, dark | Cover most of the lens or go somewhere dark, press Capture. | Pill `Too dark`. After 20 s: `Too dark to read the sidewall` with flash tips. Turning flash on helps. |
+| T5 | Tread sweep | On Tread capture, move slowly across the tread from edge to edge. | Pill `Looks good`; progress rises in steps; at 100% **Frames captured** opens: Sidewall `8 clear frames`, Tread `10 clear frames` (or the real counts). |
+| T6 | Tread, not moving | Hold the phone still on the tread. | Pill `Keep moving`; progress stops. |
+| T7 | Finish sweep | Tap **Finish sweep** under 50%, then again above 50%. | First: `Keep going. A few more clear frames are needed.` Second: Frames captured. |
+| T8 | Having trouble / timeout | Tap **Having trouble**. Separately, wait 20 s without finishing. | Capture problem with a reason. `Scan tread again` returns to a fresh sweep; `Skip this tyre` marks it `Not scanned`. |
+| T9 | Glare | Point at a bright light or shiny surface in sun. | Pill `Too bright`. |
+| T10 | Flash | Toggle flash on both capture screens (on Tread it's in the progress row). | Torch turns on/off. On a phone without a torch: `No flash`, disabled. |
+| T11 | Interruption | During a sweep: lock/unlock, switch apps, take a call. | Preview resumes; the 20 s timer doesn't run while away. |
+| T12 | Leave dialog | During a sweep press Back → wait 10 s on the dialog → `Keep scanning`. | No Capture problem appears behind the dialog; progress hasn't moved. |
+| T13 | Resume | Finish the sidewall, then force-quit on Tread capture. Reopen → Continue inspection. | Opens **Sidewall captured** for the same tyre, details kept; `Scan tread` continues. |
+| T14 | Saved frames | After a full tyre, check storage. iPhone: Settings → General → iPhone Storage → Line Up. Android: Settings → Apps → Line Up → Storage. | Grows by a few MB per tyre. `Scan this tyre again` and deleting an unfinished inspection free it again. |
+| T15 | Low storage | Only if you have a nearly full test phone (under 60 MB free). | `There isn't enough storage to save these frames. Free up some space and try again.`; Capture disabled. |
+| T16 | Four tyres | Full four-tyre inspection. | No crash, no slowdown. Note roughly how warm the phone gets and the battery drop. |
+| T17 | Low-end Android | T2 and T5 on the slowest Android phone you have. | Still completes; note how long the sweep takes. |
+
+If a capture test fails, send the same details as in section 5, plus: the **pill messages you saw**, roughly **how long** it took, the **light** (sun, workshop, dim, flash), and whether frames looked **sideways or off-centre** (that points to the rotation/crop risk in `docs/DECISIONS.md`, M5).

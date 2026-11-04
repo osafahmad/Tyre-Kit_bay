@@ -40,7 +40,10 @@ jest.mock('react-native-vision-camera', () => {
     },
     Camera: props => React.createElement(View, { testID: 'camera-preview', style: props.style }),
     useCameraDevice: () => mock.device ?? undefined,
-    useFrameOutput: () => ({}),
+    useFrameOutput: options => {
+      mock.frameOutputOptions = options;
+      return {};
+    },
     CommonResolutions: { HD_16_9: { width: 720, height: 1280 } },
     HybridFrameConverter: {},
   };
@@ -54,4 +57,13 @@ jest.mock('react-native-worklets', () => ({
   scheduleOnRN: (fn, ...args) => fn(...args),
 }));
 
-jest.mock('@dr.pogodin/react-native-fs', () => ({ unlink: jest.fn(async () => {}) }));
+jest.mock('@dr.pogodin/react-native-fs', () => ({
+  DocumentDirectoryPath: '/docs',
+  CachesDirectoryPath: '/caches',
+  unlink: jest.fn(async () => {}),
+  exists: jest.fn(async () => false),
+  mkdir: jest.fn(async () => {}),
+  moveFile: jest.fn(async () => {}),
+  readDir: jest.fn(async () => []),
+  getFSInfo: jest.fn(async () => ({ freeSpace: 10e9, totalSpace: 64e9 })),
+}));

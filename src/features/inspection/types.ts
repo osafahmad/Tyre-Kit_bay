@@ -28,7 +28,20 @@ export type TyreResult = {
   ageMonths: number | null;
 };
 
-export type CaptureErrorReason = 'dark' | 'blur' | 'distance' | 'not_found';
+/**
+ * Why a capture stage failed. `dark`, `blur`, `distance` and `not_found` are
+ * the spec's reasons; `distance` and `not_found` need the tyre detector.
+ * `glare`, `unsteady` and `too_few_frames` were added (owner decision) so
+ * the app never claims a tyre wasn't detected without a detector.
+ */
+export type CaptureErrorReason =
+  | 'dark'
+  | 'blur'
+  | 'distance'
+  | 'not_found'
+  | 'glare'
+  | 'unsteady'
+  | 'too_few_frames';
 
 /** Sidewall text as read by OCR and then checked or corrected by the user. */
 export type SidewallDetails = {

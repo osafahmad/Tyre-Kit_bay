@@ -8,7 +8,7 @@ import {
 import type { Image } from 'react-native-nitro-image';
 import { createSynchronizable, scheduleOnRN } from 'react-native-worklets';
 import { unlink } from '@dr.pogodin/react-native-fs';
-import { ocrConfig } from '../../config/ocr';
+import { ocrConfig } from '../../config/capture';
 import { isOcrAvailable, recognizeLines } from '../../ml/ocr/ocr';
 import type { OcrLineLike } from '../../ml/ocr/textCandidates';
 import { guideToImageRect, uprightRotation, type Rect, type Size } from './guideGeometry';

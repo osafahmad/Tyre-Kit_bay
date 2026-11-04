@@ -1,14 +1,20 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import * as VC from 'react-native-vision-camera';
 import App from '../../app/App';
 import { useInspectionStore } from '../../features/inspection/store';
 import { settings } from '../../features/inspection/settings';
 import { MemoryInspectionRepository } from '../../features/inspection/repository';
+import { useCaptureBlock } from '../../features/capture/captureBlock';
 
 let repo: MemoryInspectionRepository;
 
+// No camera: capture screens use the labelled development simulation.
+const camera = (VC as unknown as { __mock: { device: unknown } }).__mock;
+
 beforeEach(() => {
+  camera.device = undefined;
   jest.useFakeTimers();
   repo = new MemoryInspectionRepository();
   useInspectionStore.getState().replaceAll([], null);
@@ -76,7 +82,10 @@ test('an inspection closed mid-tyre resumes where it stopped after a restart', a
   expect(await screen.findByText('Unfinished inspection')).toBeTruthy();
   expect(screen.getByText(/KHI-4420/)).toBeTruthy();
   await press('Continue inspection');
-  // Sidewall was done, so it reopens the tread step of the same tyre.
+  // Sidewall was done, so it reopens that tyre's sidewall review, then the tread.
+  expect(await screen.findByText('Sidewall captured')).toBeTruthy();
+  expect(screen.getByLabelText('Make').props.value).toBe('Bridgestone');
+  await press('Scan tread');
   expect(await screen.findByText('Step 2 of 2: tread')).toBeTruthy();
   expect(screen.getByText('Left front tyre')).toBeTruthy();
   const saved = (await repo.loadAll())[0];
@@ -132,11 +141,15 @@ test('going back out of an unfinished inspection asks first', async () => {
       expect.objectContaining({ text: 'Keep scanning' }),
       expect.objectContaining({ text: 'Save and leave' }),
     ]),
+    expect.objectContaining({ cancelable: true }),
   );
+  // Capture is paused while the dialog is open.
+  expect(useCaptureBlock.getState().blocked).toBe(true);
   expect(screen.getByText('Scan number plate')).toBeTruthy();
 
   // Save and leave goes Home with Continue inspection offered.
   const buttons = alert.mock.calls[0][2]!;
   await act(async () => buttons.find(b => b.text === 'Save and leave')!.onPress!());
   expect(await screen.findByText('Unfinished inspection')).toBeTruthy();
+  expect(useCaptureBlock.getState().blocked).toBe(false);
 });

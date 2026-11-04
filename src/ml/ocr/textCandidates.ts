@@ -1,4 +1,4 @@
-import { ocrConfig } from '../../config/ocr';
+import { ocrConfig } from '../../config/capture';
 
 // Picks plate / chassis text out of OCR lines. Only text that was actually read
 // is returned: letters and digits are never swapped (O/0, I/1, B/8…) and
