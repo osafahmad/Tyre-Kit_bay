@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inspection progress</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}a{color:#12357A}</style>
+</helmet>
+<div style="width:390px;height:844px;box-sizing:border-box;overflow:hidden;background:#FFFFFF;color:#0A0A0A;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column">
+  <div style="background:#0A0A0A;color:#FFFFFF;padding:64px 24px 24px">
+    <p style="margin:0;font-size:14px;color:#C7CCD4">ABC-1234</p>
+    <h1 style="margin:4px 0 16px;font-size:28px;line-height:34px;font-weight:700">1 of 4 tyres scanned</h1>
+    <div role="progressbar" aria-valuenow="1" aria-valuemin="0" aria-valuemax="4" aria-label="Tyres scanned" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px">
+      <span style="display:block;height:6px;border-radius:999px;background:#4DA3FF"></span>
+      <span style="display:block;height:6px;border-radius:999px;background:#2B2F36"></span>
+      <span style="display:block;height:6px;border-radius:999px;background:#2B2F36"></span>
+      <span style="display:block;height:6px;border-radius:999px;background:#2B2F36"></span>
+    </div>
+  </div>
+  <div style="flex-grow:1;padding:16px 20px;display:flex;flex-direction:column;gap:10px">
+    <a href="TyreResult.dc.html" style="display:flex;justify-content:space-between;align-items:center;min-height:76px;padding:0 16px;box-sizing:border-box;border:1px solid #E3E6EB;border-radius:12px;color:#0A0A0A;text-decoration:none">
+      <span style="display:flex;flex-direction:column;gap:3px"><span style="font-size:15px;font-weight:600">Left front</span><span style="font-size:13px;color:#5A606B">6.2 mm · 215/65 R15</span></span>
+      <span style="font-size:12px;font-weight:600;background:#E3F5EB;color:#14693C;padding:5px 10px;border-radius:999px">Good</span>
+    </a>
+    <div style="display:flex;justify-content:space-between;align-items:center;min-height:76px;padding:0 16px;box-sizing:border-box;border:2px solid #12357A;border-radius:12px">
+      <span style="font-size:15px;font-weight:600">Right front</span>
+      <span style="font-size:13px;font-weight:600;color:#12357A">Next</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;min-height:76px;padding:0 16px;box-sizing:border-box;border:1px solid #E3E6EB;border-radius:12px">
+      <span style="font-size:15px;font-weight:500">Left rear</span>
+      <span style="font-size:13px;color:#5A606B">Waiting</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;min-height:76px;padding:0 16px;box-sizing:border-box;border:1px solid #E3E6EB;border-radius:12px">
+      <span style="font-size:15px;font-weight:500">Right rear</span>
+      <span style="font-size:13px;color:#5A606B">Waiting</span>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:6px;padding:8px 20px 32px">
+    <a href="Sidewall.dc.html" style="display:flex;align-items:center;justify-content:center;height:56px;border-radius:12px;background:#12357A;color:#FFFFFF;text-decoration:none;font-size:16px;font-weight:600">Scan right front tyre</a>
+    <a href="Report.dc.html" style="display:flex;align-items:center;justify-content:center;height:48px;font-size:15px;font-weight:500;text-decoration:none">Finish and view report</a>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

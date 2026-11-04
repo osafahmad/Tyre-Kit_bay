@@ -1,0 +1,24 @@
+buildscript {
+    ext {
+        buildToolsVersion = "37.0.0"
+        minSdkVersion = 26 // react-native-vision-camera-resizer requires 26. Final minimum is an owner decision.
+        compileSdkVersion = 37
+        targetSdkVersion = 36
+        ndkVersion = "27.1.12297006"
+        kotlinVersion = "2.2.0"
+        // rn-mlkit-ocr: Latin only, models bundled so OCR works offline.
+        ocrModels = ["latin"]
+        ocrUseBundled = true
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"

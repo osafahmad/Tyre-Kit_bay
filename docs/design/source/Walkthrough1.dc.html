@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Walkthrough: scan the vehicle</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}a{color:#FFFFFF}</style>
+</helmet>
+<div style="width:390px;height:844px;box-sizing:border-box;overflow:hidden;position:relative;background:#12357A;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:52px 12px 0">
+    <a href="Main.dc.html" aria-label="Back" style="display:flex;align-items:center;justify-content:center;width:44px;height:44px">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+    </a>
+    <a href="Permission.dc.html" style="display:flex;align-items:center;justify-content:center;min-width:44px;height:44px;padding:0 10px;font-size:16px;font-weight:600;text-decoration:none">Skip</a>
+  </div>
+  <div style="position:relative;flex-grow:1">
+    <svg width="390" height="400" viewBox="0 0 390 400" fill="none" aria-hidden="true" style="position:absolute;left:0;top:0">
+      <path d="M70 196l34-88c7-17 22-27 41-27h100c19 0 34 10 41 27l34 88c19 7 29 22 29 41v82H41v-82c0-19 10-34 29-41z" fill="#0A0A0A"></path>
+      <path d="M102 188l24-65c5-12 15-20 28-20h82c13 0 23 8 28 20l24 65z" fill="#264C99"></path>
+      <path d="M58 224h60l17 21H58zM332 224h-60l-17 21h77z" fill="#4DA3FF"></path>
+    </svg>
+    <div style="position:absolute;left:45px;top:232px;width:300px;height:112px;box-sizing:border-box;border:4px solid #4DA3FF;border-radius:14px;background:#0A0A0A;display:flex;align-items:center;justify-content:center">
+      <span style="display:block;background:#FFFFFF;color:#0A0A0A;border-radius:8px;padding:12px 26px;font-size:32px;line-height:38px;font-weight:700">ABC-1234</span>
+    </div>
+    <div style="position:absolute;right:28px;top:210px;width:48px;height:48px;box-sizing:border-box;border-radius:50%;background:#FFFFFF;border:4px solid #12357A;display:flex;align-items:center;justify-content:center">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#12357A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>
+    </div>
+  </div>
+  <div style="background:#FFFFFF;color:#0A0A0A;border-radius:28px 28px 0 0;padding:24px 24px 36px">
+    <div role="img" aria-label="Step 1 of 3" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">
+      <span style="display:block;height:6px;border-radius:999px;background:#12357A"></span>
+      <span style="display:block;height:6px;border-radius:999px;background:#E3E6EB"></span>
+      <span style="display:block;height:6px;border-radius:999px;background:#E3E6EB"></span>
+    </div>
+    <h1 style="margin:22px 0 10px;font-size:32px;line-height:38px;font-weight:700">Scan the vehicle</h1>
+    <p style="margin:0 0 24px;font-size:17px;line-height:26px;color:#4A505B;min-height:78px">Point your camera at the number plate and chassis number. Both are optional, so you can skip them.</p>
+    <a href="Walkthrough2.dc.html" style="display:flex;align-items:center;justify-content:center;height:58px;border-radius:14px;background:#12357A;color:#FFFFFF;text-decoration:none;font-size:17px;font-weight:600">Next</a>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

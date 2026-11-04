@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Select tyres</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}a{color:#12357A}</style>
+</helmet>
+<div style="width:390px;height:844px;box-sizing:border-box;overflow:hidden;background:#FFFFFF;color:#0A0A0A;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column">
+  <div style="background:#0A0A0A;color:#FFFFFF;padding:56px 12px 20px">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <a href="Vehicle.dc.html" aria-label="Back" style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;color:#FFFFFF">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+      </a>
+      <span style="font-size:13px;color:#C7CCD4;padding-right:12px">Step 3 of 3</span>
+    </div>
+    <h1 style="margin:8px 12px 0;font-size:26px;line-height:32px;font-weight:700">Select tyres to scan</h1>
+  </div>
+  <div style="flex-grow:1;padding:20px;display:flex;flex-direction:column">
+    <h2 style="margin:0 0 10px;font-size:14px;font-weight:600">Number of tyres</h2>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+      <sc-for list="{{counts}}" as="c" hint-placeholder-count="3">
+        <button type="button" onClick="{{c.pick}}" aria-pressed="{{c.pressed}}" style="height:52px;border-radius:12px;border:1px solid {{c.border}};background:{{c.bg}};color:{{c.fg}};font:600 18px Inter,system-ui,sans-serif">{{c.value}}</button>
+      </sc-for>
+    </div>
+    <h2 style="margin:24px 0 10px;font-size:14px;font-weight:600">Tyre positions</h2>
+    <div style="display:flex;flex-direction:column;gap:12px;flex-grow:1;justify-content:center;background:#F4F5F7;border-radius:16px;padding:16px 12px">
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="2">
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:36px;position:relative">
+          <sc-for list="{{r.tyres}}" as="t" hint-placeholder-count="2">
+            <button type="button" onClick="{{t.pick}}" aria-pressed="{{t.pressed}}" style="min-height:64px;padding:8px;border-radius:12px;border:1px solid {{t.border}};background:{{t.bg}};color:{{t.fg}};font:600 14px Inter,system-ui,sans-serif">{{t.name}}</button>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="padding:8px 20px 36px">
+    <sc-if value="{{hasSelection}}" hint-placeholder-val="{{ true }}">
+      <a href="Sidewall.dc.html" style="display:flex;align-items:center;justify-content:center;height:56px;border-radius:12px;background:#12357A;color:#FFFFFF;text-decoration:none;font-size:16px;font-weight:600">{{ctaLabel}}</a>
+    </sc-if>
+    <sc-if value="{{noSelection}}" hint-placeholder-val="{{ false }}">
+      <p role="alert" style="display:flex;align-items:center;justify-content:center;height:56px;margin:0;border-radius:12px;background:#F4F5F7;color:#0A0A0A;font-size:15px;font-weight:500">Select at least one tyre</p>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const layouts = {
+      2: [['Front'], ['Rear']],
+      4: [['Left front', 'Right front'], ['Left rear', 'Right rear']],
+      6: [['Left front', 'Right front'], ['Left rear outer', 'Right rear outer'], ['Left rear inner', 'Right rear inner']]
+    };
+    const s = this.state || {};
+    const count = s.count ?? 4;
+    const off = s.off || {};
+    const paint = (on) => ({
+      bg: on ? '#12357A' : '#FFFFFF',
+      fg: on ? '#FFFFFF' : '#0A0A0A',
+      border: on ? '#12357A' : '#AEB4BE',
+      pressed: on ? 'true' : 'false'
+    });
+    const names = layouts[count].flat();
+    const selected = names.filter((n) => !off[n]).length;
+    return {
+      counts: [2, 4, 6].map((value) => ({
+        value,
+        ...paint(value === count),
+        pick: () => this.setState({ count: value, off: {} })
+      })),
+      rows: layouts[count].map((row) => ({
+        tyres: row.map((name) => ({
+          name,
+          ...paint(!off[name]),
+          pick: () => this.setState({ off: { ...off, [name]: !off[name] } })
+        }))
+      })),
+      hasSelection: selected > 0,
+      noSelection: selected === 0,
+      ctaLabel: selected === 1 ? 'Scan 1 tyre' : 'Scan ' + selected + ' tyres'
+    };
+  }
+}
+</script>
+</body>
+</html>

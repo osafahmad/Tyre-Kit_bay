@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Final report</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}a{color:#12357A}</style>
+</helmet>
+<div style="width:390px;height:844px;box-sizing:border-box;overflow:hidden;background:#FFFFFF;color:#0A0A0A;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column">
+  <div style="background:#0A0A0A;color:#FFFFFF;padding:64px 24px 22px">
+    <p style="margin:0;font-size:14px;color:#C7CCD4">ABC-1234 · 4 Nov 2026, 11:40</p>
+    <h1 style="margin:4px 0 0;font-size:28px;line-height:34px;font-weight:700">Tyre report</h1>
+    <p style="margin:6px 0 0;font-size:13px;color:#C7CCD4;font-family:ui-monospace,Menlo,Consolas,monospace">JT2BG22K0W0123456</p>
+  </div>
+  <div style="flex-grow:1;padding:16px 20px 0">
+    <div style="display:flex;gap:12px;align-items:center;padding:14px;border-radius:12px;background:#FBE5E5;color:#932B2B">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4L2.5 20h19zM12 10v4M12 17h.01"></path></svg>
+      <span style="display:flex;flex-direction:column;gap:2px"><span style="font-size:15px;font-weight:700">Right rear needs replacing now</span><span style="font-size:13px">Right front should be replaced soon.</span></span>
+    </div>
+    <div style="margin-top:8px">
+      <sc-for list="{{tyres}}" as="t" hint-placeholder-count="4">
+        <a href="TyreResult.dc.html" style="display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:64px;border-bottom:1px solid #E3E6EB;color:#0A0A0A;text-decoration:none">
+          <span style="display:flex;flex-direction:column;gap:3px"><span style="font-size:15px;font-weight:600">{{t.name}}</span><span style="font-size:13px;color:#5A606B">{{t.detail}}</span></span>
+          <span style="font-size:12px;font-weight:600;background:{{t.bg}};color:{{t.fg}};padding:5px 10px;border-radius:999px">{{t.status}}</span>
+        </a>
+      </sc-for>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:4px;padding:8px 20px 28px">
+    <sc-if value="{{shared}}" hint-placeholder-val="{{ false }}">
+      <p role="status" style="margin:0 0 6px;text-align:center;font-size:14px;font-weight:600;color:#12357A">PDF report ready to share</p>
+    </sc-if>
+    <button type="button" onClick="{{share}}" style="height:56px;border:0;border-radius:12px;background:#12357A;color:#FFFFFF;font:600 16px Inter,system-ui,sans-serif">Share report</button>
+    <a href="Home.dc.html" style="display:flex;align-items:center;justify-content:center;height:44px;font-size:15px;font-weight:500;text-decoration:none">Done</a>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const good = { status: 'Good', bg: '#E3F5EB', fg: '#14693C' };
+    const soon = { status: 'Replace soon', bg: '#FBF0D5', fg: '#7A5408' };
+    const now = { status: 'Replace now', bg: '#FBE5E5', fg: '#932B2B' };
+    return {
+      shared: !!(this.state && this.state.shared),
+      share: () => this.setState({ shared: true }),
+      tyres: [
+        { name: 'Left front', detail: '6.2 mm · 215/65 R15', ...good },
+        { name: 'Right front', detail: '3.4 mm · 215/65 R15', ...soon },
+        { name: 'Left rear', detail: '5.8 mm · 215/65 R15', ...good },
+        { name: 'Right rear', detail: '1.6 mm · 215/65 R15', ...now }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

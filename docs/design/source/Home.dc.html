@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Home</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}a{color:#12357A}</style>
+</helmet>
+<div style="width:390px;height:844px;box-sizing:border-box;overflow:hidden;background:#FFFFFF;color:#0A0A0A;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column">
+  <div style="background:#0A0A0A;color:#FFFFFF;padding:64px 20px 96px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <svg width="24" height="24" viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="13" stroke="#FFFFFF" stroke-width="4"></circle><circle cx="16" cy="16" r="4" fill="#4DA3FF"></circle></svg>
+      <span style="font-size:15px;font-weight:600">Line Up</span>
+    </div>
+    <h1 style="margin:28px 0 0;font-size:30px;line-height:36px;font-weight:700">Ready to inspect</h1>
+  </div>
+  <div style="margin:-72px 20px 0;background:#FFFFFF;border:1px solid #E3E6EB;border-radius:16px;padding:20px">
+    <h2 style="margin:0;font-size:18px;line-height:24px;font-weight:600">New inspection</h2>
+    <p style="margin:6px 0 16px;font-size:14px;line-height:21px;color:#5A606B">Scan the vehicle, then capture each tyre.</p>
+    <a href="PlateScan.dc.html" style="display:flex;align-items:center;justify-content:center;gap:8px;height:52px;border-radius:12px;background:#12357A;color:#FFFFFF;text-decoration:none;font-size:16px;font-weight:600">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"></path></svg>
+      Start scan
+    </a>
+  </div>
+  <div style="flex-grow:1;padding:28px 20px 0">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h2 style="margin:0;font-size:16px;font-weight:600">Recent inspections</h2>
+      <a href="History.dc.html" style="display:flex;align-items:center;min-height:44px;font-size:14px;font-weight:500;text-decoration:none">View all</a>
+    </div>
+    <a href="Report.dc.html" style="display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:72px;border-top:1px solid #E3E6EB;color:#0A0A0A;text-decoration:none">
+      <span style="display:flex;flex-direction:column;gap:4px"><span style="font-size:15px;font-weight:600">ABC-1234</span><span style="font-size:13px;color:#5A606B">Today, 11:40 · 4 tyres</span></span>
+      <span style="font-size:12px;font-weight:600;background:#FBE5E5;color:#932B2B;padding:5px 10px;border-radius:999px">Replace now</span>
+    </a>
+    <a href="Report.dc.html" style="display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:72px;border-top:1px solid #E3E6EB;color:#0A0A0A;text-decoration:none">
+      <span style="display:flex;flex-direction:column;gap:4px"><span style="font-size:15px;font-weight:600">LEB-7781</span><span style="font-size:13px;color:#5A606B">Yesterday, 16:20 · 4 tyres</span></span>
+      <span style="font-size:12px;font-weight:600;background:#E3F5EB;color:#14693C;padding:5px 10px;border-radius:999px">Good</span>
+    </a>
+    <a href="Report.dc.html" style="display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:72px;border-top:1px solid #E3E6EB;color:#0A0A0A;text-decoration:none">
+      <span style="display:flex;flex-direction:column;gap:4px"><span style="font-size:15px;font-weight:600">No plate</span><span style="font-size:13px;color:#5A606B">2 Nov, 10:05 · 2 tyres</span></span>
+      <span style="font-size:12px;font-weight:600;background:#FBF0D5;color:#7A5408;padding:5px 10px;border-radius:999px">Replace soon</span>
+    </a>
+  </div>
+  <nav aria-label="Main" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid #E3E6EB;padding:8px 0 24px">
+    <a href="Home.dc.html" aria-current="page" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:52px;color:#12357A;font-size:12px;font-weight:600;text-decoration:none">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"></path></svg>Home
+    </a>
+    <a href="History.dc.html" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:52px;color:#5A606B;font-size:12px;font-weight:500;text-decoration:none">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>History
+    </a>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
