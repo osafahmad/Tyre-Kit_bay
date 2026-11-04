@@ -14,8 +14,11 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] All dependency and model licences checked.
 - [ ] Android release build and iOS archive succeed.
 
+## Bundle ID
+- [x] **Bundle ID / application ID** set to the final `com.velox.tyre.kit.bay` (iOS `PRODUCT_BUNDLE_IDENTIFIER`, Debug and Release; Android `applicationId`, `namespace` and Kotlin package).
+- [ ] `com.velox.tyre.kit.bay` registered as an App ID in the Apple Developer account (Certificates, Identifiers & Profiles), and the app created in App Store Connect and Google Play Console with this ID.
+
 ## Placeholders to replace (kept for now by the owner)
-- [ ] **Bundle ID / application ID** `com.lineup.tyrekitbay` → final ID (iOS `PRODUCT_BUNDLE_IDENTIFIER` in the Xcode project; Android `applicationId` and `namespace` in `android/app/build.gradle`, plus the Kotlin package folder).
 - [ ] **Display name** `Line Up` → final store name (`ios/LineUpTyreKitBay/Info.plist` `CFBundleDisplayName`; `android/app/src/main/res/values/strings.xml` `app_name`).
 - [ ] **Launch screens** plain black → final splash (`ios/LineUpTyreKitBay/LaunchScreen.storyboard`; Android `windowBackground` in `styles.xml`).
 - [ ] **App icon** is still the React Native template icon (iOS `AppIcon.appiconset`; Android `mipmap-*`).
@@ -31,5 +34,5 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] Merged release `AndroidManifest.xml` checked: no unexpected permissions (only `CAMERA`, plus anything a library adds that has been reviewed). `INTERNET` should not be requested by the app itself.
 - [ ] Release signing set up outside git (Android upload keystore; iOS distribution certificate and profile).
 - [ ] No analytics, crash reporting or network calls added without owner approval.
-- [ ] **ML Kit usage metrics decided** (see DECISIONS.md, M4): accepted and disclosed, or blocked and OCR re-tested. Check with a network monitor that a release build makes no unexpected requests during a full inspection.
+- [ ] **ML Kit usage metrics decided (open)** (see DECISIONS.md, M4): accepted and disclosed, or blocked and OCR re-tested. Check with a network monitor that a release build makes no unexpected requests during a full inspection.
 - [ ] M4 real-device checklist (`docs/DEVICE_TESTING.md`) passed on iPhone and Android.

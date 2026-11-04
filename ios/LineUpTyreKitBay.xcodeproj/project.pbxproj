@@ -306,7 +306,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.lineup.tyrekitbay;
+				PRODUCT_BUNDLE_IDENTIFIER = com.velox.tyre.kit.bay;
 				PRODUCT_NAME = LineUpTyreKitBay;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -335,7 +335,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.lineup.tyrekitbay;
+				PRODUCT_BUNDLE_IDENTIFIER = com.velox.tyre.kit.bay;
 				PRODUCT_NAME = LineUpTyreKitBay;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;

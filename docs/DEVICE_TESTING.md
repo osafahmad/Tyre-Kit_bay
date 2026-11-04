@@ -27,7 +27,7 @@ Signing setup (once):
 2. iPhone: **Settings → Privacy & Security → Developer Mode → On**, restart, confirm.
 3. `open ios/LineUpTyreKitBay.xcworkspace` (the **.xcworkspace**, not .xcodeproj).
 4. Select the **LineUpTyreKitBay** target → **Signing & Capabilities** → tick **Automatically manage signing** → choose your **Team** (sign in under Xcode → Settings → Accounts if none is listed).
-5. If Xcode says the bundle identifier `com.lineup.tyrekitbay` isn't available to your team (common with a free Apple ID), change it locally in that same field to something unique, e.g. `com.lineup.tyrekitbay.<yourname>`. Don't commit that change; the bundle ID stays a placeholder on the release checklist.
+5. The bundle identifier is `com.velox.tyre.kit.bay` (final). With a paid Apple Developer account on the team that owns it, Xcode registers it automatically. With a free personal team, or if Xcode says it isn't available, change it **locally only** in that same field to e.g. `com.velox.tyre.kit.bay.dev.<yourname>`, and don't commit that change.
 
 Build and run:
 
@@ -69,9 +69,12 @@ Release signing (an upload keystore) isn't set up yet and isn't needed for this 
 
 ## 3. Resetting between tests
 
+If you installed an earlier test build, delete it first: it used the old placeholder ID and is a separate app.
+
+
 To see first launch and the permission prompts again:
 - **iPhone:** delete the app (long-press → Remove App), then run again. To reset only camera permission: Settings → General → Transfer or Reset iPhone → Reset → Reset Location & Privacy (resets all apps).
-- **Android:** `adb shell pm clear com.lineup.tyrekitbay` (clears data and permissions), or Settings → Apps → Line Up → Storage → Clear storage.
+- **Android:** `adb shell pm clear com.velox.tyre.kit.bay` (clears data and permissions), or Settings → Apps → Line Up → Storage → Clear storage.
 
 ## 4. Test checklist
 

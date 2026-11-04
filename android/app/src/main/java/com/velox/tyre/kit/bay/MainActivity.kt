@@ -1,4 +1,4 @@
-package com.lineup.tyrekitbay
+package com.velox.tyre.kit.bay
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

@@ -8,7 +8,7 @@ Choices made while building, and anything that differs from `TYRE_KIT_BAY_SPEC.m
 - No React Native app existed, only docs. Created a bare React Native CLI app (not Expo), as the spec's default and the owner chose.
 - React Native 0.88.1, React 19.3.0, TypeScript strict (`@react-native/typescript-config` sets `strict: true`). New Architecture and Hermes are on by default.
 - App lives at the workspace root. `CLAUDE.md` and `docs/` were moved up from `tyre-kit-bay-project-docs/`.
-- Bundle ID / application ID: `com.lineup.tyrekitbay`. **Placeholder, kept for now by the owner; on the release checklist.**
+- Bundle ID / application ID: started as a template placeholder; replaced with the owner's final ID in the bundle ID change below.
 - Display name: `Line Up` (spec's short brand label). **Placeholder, kept for now; on the release checklist.**
 
 ### Pinned libraries
@@ -125,3 +125,13 @@ Google ML Kit (via `rn-mlkit-ocr`) pulls in Google's data transport libraries (`
 - Kept: `CAMERA`; `VIBRATE` (haptics); `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (AndroidX internal, app-private).
 - Removed with `tools:node="remove"` because the app doesn't use them: `READ_PHONE_STATE` (implied by the TFLite GPU library's old targetSdk), `WRITE_EXTERNAL_STORAGE` (react-native-fs), `READ_EXTERNAL_STORAGE` (react-native-vision-camera-resizer). All files are in app-private storage.
 - **Still present, owner decision:** `INTERNET` and `ACCESS_NETWORK_STATE`, added by ML Kit's `com.google.android.datatransport` (usage metrics, see above). `ACCESS_NETWORK_STATE` is also requested by `androidx.media3` (a VisionCamera dependency).
+
+## Bundle ID (owner decision)
+
+- **Final Android `applicationId` and iOS bundle identifier: `com.velox.tyre.kit.bay`.** Replaces the placeholder everywhere: Android `namespace` and `applicationId` (`android/app/build.gradle`), Gradle `rootProject.name` (`android/settings.gradle`), Kotlin `package` declarations and folder (`android/app/src/main/java/com/velox/tyre/kit/bay/`), and both iOS build configurations' `PRODUCT_BUNDLE_IDENTIFIER` (Debug and Release, `ios/LineUpTyreKitBay.xcodeproj/project.pbxproj`).
+- Internal project names are unchanged: Xcode project/target/scheme `LineUpTyreKitBay`, iOS folder `ios/LineUpTyreKitBay/`, and the JS app registry name `LineUpTyreKitBay` (`app.json`). They aren't the bundle ID and renaming them adds risk for no user-visible change.
+- Installing over an older test build: the new ID is a different app to both platforms. Old test installs under the earlier placeholder ID keep their own data and should be deleted by hand.
+
+## ML Kit usage metrics — still open
+
+Unchanged after the bundle ID change: ML Kit setup not modified, decision still with the owner (see M4 above).

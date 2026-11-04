@@ -1,4 +1,4 @@
-package com.lineup.tyrekitbay
+package com.velox.tyre.kit.bay
 
 import android.app.Application
 import com.facebook.react.PackageList
