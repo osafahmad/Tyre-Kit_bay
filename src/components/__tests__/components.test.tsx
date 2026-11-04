@@ -46,3 +46,10 @@ test('icon button has an accessibility label', async () => {
   await render(<IconButton icon={ChevronLeft} accessibilityLabel="Back" onPress={() => {}} />);
   expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
 });
+
+test('logo shows the app name', async () => {
+  const { LogoMark } = require('..');
+  await render(<LogoMark />);
+  expect(screen.getByText('Tyre Kit Bay')).toBeTruthy();
+  expect(screen.getByLabelText('Tyre Kit Bay')).toBeTruthy();
+});

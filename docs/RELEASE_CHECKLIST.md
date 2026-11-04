@@ -19,8 +19,9 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] `com.velox.tyre.kit.bay` registered as an App ID in the Apple Developer account (Certificates, Identifiers & Profiles), and the app created in App Store Connect and Google Play Console with this ID.
 
 ## Placeholders to replace (kept for now by the owner)
-- [ ] **Display name** `Line Up` → final store name (`ios/LineUpTyreKitBay/Info.plist` `CFBundleDisplayName`; `android/app/src/main/res/values/strings.xml` `app_name`).
-- [ ] **Launch screens** plain black → final splash (`ios/LineUpTyreKitBay/LaunchScreen.storyboard`; Android `windowBackground` in `styles.xml`).
+- [x] **Display name** set to `Tyre Kit Bay` (`ios/TyreKitBay/Info.plist` `CFBundleDisplayName`; `android/app/src/main/res/values/strings.xml` `app_name`).
+- [ ] Store listing name confirmed for App Store Connect and Google Play (expected: `Tyre Kit Bay`).
+- [ ] **Launch screens** plain black → final splash (`ios/TyreKitBay/LaunchScreen.storyboard`; Android `windowBackground` in `styles.xml`).
 - [ ] **App icon** is still the React Native template icon (iOS `AppIcon.appiconset`; Android `mipmap-*`).
 - [ ] **Logo mark** in `src/components/LogoMark.tsx` is the design placeholder.
 
@@ -29,7 +30,7 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] Android `minSdkVersion` is 26 / Android 8.0 (`android/build.gradle`).
 
 ## Build configuration
-- [ ] iOS pods installed **without** `LINEUP_IOS_SIM=1` (ML Kit OCR included). `ios/Podfile.lock` must list `RnMlkitOcr`.
+- [ ] iOS pods installed **without** `TYREKITBAY_IOS_SIM=1` (ML Kit OCR included). `ios/Podfile.lock` must list `RnMlkitOcr`.
 - [ ] `src/config/dev.ts`: all switches resolve to off in release (`__DEV__` false).
 - [ ] Merged release `AndroidManifest.xml` checked: no unexpected permissions (only `CAMERA`, plus anything a library adds that has been reviewed). `INTERNET` should not be requested by the app itself.
 - [ ] **Android release signing replaced with a real upload key.** Today `android/app/build.gradle` signs the `release` build type with `signingConfigs.debug`, i.e. the public React Native debug keystore (`android/app/debug.keystore`, password `android`). Before any Play upload:

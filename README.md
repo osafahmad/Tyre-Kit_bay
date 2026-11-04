@@ -1,4 +1,4 @@
-# Line Up Tyre Kit Bay
+# Tyre Kit Bay
 
 React Native app that checks tyre health with the phone camera. Models run on the phone.
 
@@ -31,7 +31,7 @@ cd ios && pod install && cd ..
 npm run ios
 
 # iOS simulator on Apple Silicon without Rosetta: leave ML Kit out (OCR becomes manual entry)
-cd ios && LINEUP_IOS_SIM=1 pod install && cd ..
+cd ios && TYREKITBAY_IOS_SIM=1 pod install && cd ..
 ```
 
 Requires Node 22.11+, Xcode with the Metal toolchain component, JDK 17, Android SDK 37.

@@ -7,12 +7,12 @@ Use a **debug build** for this round. It talks to Metro on your Mac, shows logs,
 ## 0. Once, on the Mac
 
 ```sh
-cd "/Users/apple/Desktop/Line Up Tyre Kit Bay"
+cd path/to/project   # the folder containing package.json
 npm install
-cd ios && pod install && cd ..   # full pods, ML Kit OCR included. Do NOT set LINEUP_IOS_SIM here.
+cd ios && pod install && cd ..   # full pods, ML Kit OCR included. Do NOT set TYREKITBAY_IOS_SIM here.
 ```
 
-`ios/Podfile.lock` should list `RnMlkitOcr`. If you ever ran `LINEUP_IOS_SIM=1 pod install`, run plain `pod install` again before building for a phone.
+`ios/Podfile.lock` should list `RnMlkitOcr`. If you ever ran `TYREKITBAY_IOS_SIM=1 pod install`, run plain `pod install` again before building for a phone.
 
 Keep Metro running in its own terminal for both phones:
 
@@ -25,8 +25,8 @@ npm start
 Signing setup (once):
 1. Connect the iPhone by cable and unlock it. Tap **Trust** on the phone.
 2. iPhone: **Settings → Privacy & Security → Developer Mode → On**, restart, confirm.
-3. `open ios/LineUpTyreKitBay.xcworkspace` (the **.xcworkspace**, not .xcodeproj).
-4. Select the **LineUpTyreKitBay** target → **Signing & Capabilities** → tick **Automatically manage signing** → choose your **Team** (sign in under Xcode → Settings → Accounts if none is listed).
+3. `open ios/TyreKitBay.xcworkspace` (the **.xcworkspace**, not .xcodeproj).
+4. Select the **TyreKitBay** target → **Signing & Capabilities** → tick **Automatically manage signing** → choose your **Team** (sign in under Xcode → Settings → Accounts if none is listed).
 5. The bundle identifier is `com.velox.tyre.kit.bay` (final). With a paid Apple Developer account on the team that owns it, Xcode registers it automatically. With a free personal team, or if Xcode says it isn't available, change it **locally only** in that same field to e.g. `com.velox.tyre.kit.bay.dev.<yourname>`, and don't commit that change.
 
 Build and run:
@@ -74,7 +74,7 @@ If you installed an earlier test build, delete it first: it used the old placeho
 
 To see first launch and the permission prompts again:
 - **iPhone:** delete the app (long-press → Remove App), then run again. To reset only camera permission: Settings → General → Transfer or Reset iPhone → Reset → Reset Location & Privacy (resets all apps).
-- **Android:** `adb shell pm clear com.velox.tyre.kit.bay` (clears data and permissions), or Settings → Apps → Line Up → Storage → Clear storage.
+- **Android:** `adb shell pm clear com.velox.tyre.kit.bay` (clears data and permissions), or Settings → Apps → Tyre Kit Bay → Storage → Clear storage.
 
 ## 4. Test checklist
 
@@ -144,7 +144,7 @@ Get to a tyre: Home → Start scan → Skip → Skip → choose tyres → Scan.
 | T11 | Interruption | During a sweep: lock/unlock, switch apps, take a call. | Preview resumes; the 20 s timer doesn't run while away. |
 | T12 | Leave dialog | During a sweep press Back → wait 10 s on the dialog → `Keep scanning`. | No Capture problem appears behind the dialog; progress hasn't moved. |
 | T13 | Resume | Finish the sidewall, then force-quit on Tread capture. Reopen → Continue inspection. | Opens **Sidewall captured** for the same tyre, details kept; `Scan tread` continues. |
-| T14 | Saved frames | After a full tyre, check storage. iPhone: Settings → General → iPhone Storage → Line Up. Android: Settings → Apps → Line Up → Storage. | Grows by a few MB per tyre. `Scan this tyre again` and deleting an unfinished inspection free it again. |
+| T14 | Saved frames | After a full tyre, check storage. iPhone: Settings → General → iPhone Storage → Tyre Kit Bay. Android: Settings → Apps → Tyre Kit Bay → Storage. | Grows by a few MB per tyre. `Scan this tyre again` and deleting an unfinished inspection free it again. |
 | T15 | Low storage | Only if you have a nearly full test phone (under 60 MB free). | `There isn't enough storage to save these frames. Free up some space and try again.`; Capture disabled. |
 | T16 | Four tyres | Full four-tyre inspection. | No crash, no slowdown. Note roughly how warm the phone gets and the battery drop. |
 | T17 | Low-end Android | T2 and T5 on the slowest Android phone you have. | Still completes; note how long the sweep takes. |

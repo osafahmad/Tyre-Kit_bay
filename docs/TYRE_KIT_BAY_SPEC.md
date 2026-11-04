@@ -1,10 +1,10 @@
-# Line Up Tyre Kit Bay: Build Specification
+# Tyre Kit Bay: Build Specification
 
 This file is the source of truth for the app. Screen images are in `docs/design/screens/`. The original design markup, including exact SVG artwork, is in `docs/design/source/`.
 
 ## 1. Product
 
-**Name:** Line Up Tyre Kit Bay. Short brand label: Line Up.
+**Name:** Tyre Kit Bay. Code identifier: `TyreKitBay`.
 
 **Purpose:** A React Native app for iOS and Android that uses the phone camera to check tyre health. It identifies the vehicle (optional), captures each tyre, analyses the frames on the phone, and produces a shareable report.
 

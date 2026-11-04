@@ -30,7 +30,7 @@ class SceneDelegate: RCTDefaultReactNativeFactoryDelegate, UIWindowSceneDelegate
     #endif
     
     reactNativeFactory?.startReactNative(
-      withModuleName: "LineUpTyreKitBay",
+      withModuleName: "TyreKitBay",
       in: window,
       connectionOptions: connectionOptions
     )

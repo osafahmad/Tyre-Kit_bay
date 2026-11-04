@@ -9,7 +9,7 @@ Choices made while building, and anything that differs from `TYRE_KIT_BAY_SPEC.m
 - React Native 0.88.1, React 19.3.0, TypeScript strict (`@react-native/typescript-config` sets `strict: true`). New Architecture and Hermes are on by default.
 - App lives at the workspace root. `CLAUDE.md` and `docs/` were moved up from `tyre-kit-bay-project-docs/`.
 - Bundle ID / application ID: started as a template placeholder; replaced with the owner's final ID in the bundle ID change below.
-- Display name: `Line Up` (spec's short brand label). **Placeholder, kept for now; on the release checklist.**
+- Display name: `Tyre Kit Bay` (see the app rename below).
 
 ### Pinned libraries
 All runtime dependencies are pinned to exact versions in `package.json`.
@@ -53,7 +53,7 @@ Compatibility was checked by building both platforms, not only by peer ranges (m
 Google ML Kit's iOS frameworks have no arm64 simulator slice, and this Mac has no Rosetta, so ML Kit can't link into an iOS simulator build. For simulator-only work run:
 
 ```sh
-cd ios && LINEUP_IOS_SIM=1 pod install
+cd ios && TYREKITBAY_IOS_SIM=1 pod install
 ```
 
 `react-native.config.js` then leaves `rn-mlkit-ocr` out on iOS, and the app treats OCR as unavailable (manual entry), a state the spec already requires. **Before building for a real iPhone or release, run plain `pod install`.** Android and real iPhones are not affected.
@@ -113,7 +113,7 @@ Xcode 27 needed the Metal toolchain component (`xcodebuild -downloadComponent Me
 - **Stable read.** The same value read 3 times within the last 5 reads (plates compared ignoring spaces and hyphens) → success haptic → Confirm plate, or for chassis → Vehicle details with the number filled in. `Capture` uses the next single read; if nothing readable is found it says so and stays.
 - **No guessing.** Plate text is only uppercased and stripped of characters other than letters, digits, spaces and hyphens; the tallest line in the guide with 2–10 letters/digits is used. Chassis text is the longest run of words on one line making 5–17 letters/digits with at least one digit; a leading `VIN`/`CHASSIS`/`NO` label is dropped. Letters and digits are never swapped (O/0, I/1, B/8), nothing is padded to 17, and no format is enforced. Anything not read stays empty.
 - **Move closer.** Shown when chassis-like text is shorter than 18% of the guide crop's height; such reads are not accepted.
-- **OCR unavailable** (iOS simulator builds made with `LINEUP_IOS_SIM=1`, or the module missing): the hint says `Text reading isn't available. Type it instead.` After 3 OCR failures in a row: `Text can't be read right now. Use Capture, or type it.`
+- **OCR unavailable** (iOS simulator builds made with `TYREKITBAY_IOS_SIM=1`, or the module missing): the hint says `Text reading isn't available. Type it instead.` After 3 OCR failures in a row: `Text can't be read right now. Use Capture, or type it.`
 - **Tunables** were in `src/config/ocr.ts`; since M5 they're in `src/config/capture.ts` (`ocrConfig`) with every other estimated value. Uncalibrated.
 - **iOS app target deployment** set to 16.0 in the Xcode project (it was still the template's 15.1; the Podfile was already 16.0).
 - Home's unfinished-inspection card reads `Tyres not chosen yet` before tyres are selected (was `0 of ? tyres scanned`).
@@ -128,8 +128,8 @@ Google ML Kit (via `rn-mlkit-ocr`) pulls in Google's data transport libraries (`
 
 ## Bundle ID (owner decision)
 
-- **Final Android `applicationId` and iOS bundle identifier: `com.velox.tyre.kit.bay`.** Replaces the placeholder everywhere: Android `namespace` and `applicationId` (`android/app/build.gradle`), Gradle `rootProject.name` (`android/settings.gradle`), Kotlin `package` declarations and folder (`android/app/src/main/java/com/velox/tyre/kit/bay/`), and both iOS build configurations' `PRODUCT_BUNDLE_IDENTIFIER` (Debug and Release, `ios/LineUpTyreKitBay.xcodeproj/project.pbxproj`).
-- Internal project names are unchanged: Xcode project/target/scheme `LineUpTyreKitBay`, iOS folder `ios/LineUpTyreKitBay/`, and the JS app registry name `LineUpTyreKitBay` (`app.json`). They aren't the bundle ID and renaming them adds risk for no user-visible change.
+- **Final Android `applicationId` and iOS bundle identifier: `com.velox.tyre.kit.bay`.** Replaces the placeholder everywhere: Android `namespace` and `applicationId` (`android/app/build.gradle`), Gradle `rootProject.name` (`android/settings.gradle`), Kotlin `package` declarations and folder (`android/app/src/main/java/com/velox/tyre/kit/bay/`), and both iOS build configurations' `PRODUCT_BUNDLE_IDENTIFIER` (Debug and Release, `ios/TyreKitBay.xcodeproj/project.pbxproj`).
+- Internal project names are separate from the bundle ID; they were renamed to `TyreKitBay` later (see the app rename below).
 - Installing over an older test build: the new ID is a different app to both platforms. Old test installs under the earlier placeholder ID keep their own data and should be deleted by hand.
 
 ## ML Kit usage metrics — still open
@@ -185,3 +185,13 @@ Kept: `Too bright` (overexposed), `Keep moving` (tread: frame too like the last 
 - **Sharpness scale** depends on the frame resolution (720p) and the sampling step (4 px).
 - **Heat and battery** over a four-tyre inspection: not measured.
 - **Capture problem reasons added beyond the spec table:** `glare`, `unsteady`, `too_few_frames` (see above).
+
+## App rename to Tyre Kit Bay (owner decision)
+
+- The earlier name was taken from the project folder by mistake. **The app is "Tyre Kit Bay"** in user-facing text and **`TyreKitBay`** in code identifiers. The bundle ID `com.velox.tyre.kit.bay`, the GitHub repo and remote, and git history are unchanged.
+- **User-facing:** iOS `CFBundleDisplayName` and Android `app_name` are `Tyre Kit Bay`; `app.json` `displayName`; the logo label in `LogoMark` (Welcome and Home headers). There's no report, PDF or share text yet (M6).
+- **Code identifiers:** JS app registry name (`app.json` `name`, `MainActivity.getMainComponentName`, `SceneDelegate` `withModuleName`) = `TyreKitBay`; Xcode project, target, scheme, workspace and app folder = `TyreKitBay` (`ios/TyreKitBay.xcodeproj`, `ios/TyreKitBay.xcworkspace`, `ios/TyreKitBay/`); Podfile target `TyreKitBay` (CocoaPods files `Pods-TyreKitBay*` regenerated); Gradle `rootProject.name = 'TyreKitBay'`; npm package name `tyre-kit-bay`; simulator flag `TYREKITBAY_IOS_SIM`.
+- **Docs:** CLAUDE.md, the spec title and name line, START_PROMPT, README and these docs. The hardcoded project path in DEVICE_TESTING.md was replaced by a generic "project folder" instruction, so it survives the root folder rename.
+- **Not changed (design files):** `docs/design/source/Main.dc.html` and `Home.dc.html`, and their renders `docs/design/screens/01-welcome.png` and `06-home.png`, still show the old logo label. Design files are reference material and aren't edited.
+- **Welcome shows the name twice** now: the logo label and the `Tyre Kit Bay` title (the design had a different short label above the title). The final logo is still an owner input.
+- **Local Xcode signing:** Xcode stores the signing team in the project file, which was renamed. Reselect the team on the `TyreKitBay` target; don't commit it.

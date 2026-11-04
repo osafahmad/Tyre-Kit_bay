@@ -37,7 +37,7 @@ async function goHomeFromWelcome() {
 
 test('first launch: Welcome, walkthrough Skip saves the flag, then Home', async () => {
   await render(<App repository={repo} />);
-  expect(await screen.findByText('Tyre Kit Bay')).toBeTruthy();
+  expect(await screen.findByText('Check tyre condition, size, and age with your phone camera.')).toBeTruthy();
   await press('Get started');
   expect(await screen.findByText('Scan the vehicle')).toBeTruthy();
   await press('Skip');

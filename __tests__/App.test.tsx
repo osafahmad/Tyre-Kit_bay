@@ -5,7 +5,7 @@ import { MemoryInspectionRepository } from '../src/features/inspection/repositor
 
 test('app renders the Welcome screen', async () => {
   await render(<App repository={new MemoryInspectionRepository()} />);
-  expect(await screen.findByText('Tyre Kit Bay')).toBeTruthy();
+  expect(await screen.findByText('Check tyre condition, size, and age with your phone camera.')).toBeTruthy();
 });
 
 test('storage failure is shown, not ignored', async () => {

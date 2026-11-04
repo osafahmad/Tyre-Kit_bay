@@ -3,7 +3,7 @@
 Paste this into your coding assistant from the root of your React Native project:
 
 ```text
-Build the Line Up Tyre Kit Bay app in this React Native project.
+Build the Tyre Kit Bay app in this React Native project.
 
 First read CLAUDE.md, docs/TYRE_KIT_BAY_SPEC.md, and all images in docs/design/screens/. Use docs/design/source/ for exact artwork and layout values.
 

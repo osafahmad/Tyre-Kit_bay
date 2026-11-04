@@ -1,4 +1,4 @@
-# Line Up Tyre Kit Bay
+# Tyre Kit Bay
 
 React Native app for checking tyre health with the phone camera. Models run on the phone.
 

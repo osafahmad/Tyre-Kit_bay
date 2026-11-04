@@ -6,7 +6,7 @@ import type { OcrLineLike } from './textCandidates';
  * only on local files; nothing is sent anywhere.
  *
  * Unavailable when the native module isn't in the build (iOS simulator builds
- * made with LINEUP_IOS_SIM=1). Screens then fall back to typing.
+ * made with TYREKITBAY_IOS_SIM=1). Screens then fall back to typing.
  */
 export function isOcrAvailable(): boolean {
   return NativeModules.RnMlkitOcr != null;

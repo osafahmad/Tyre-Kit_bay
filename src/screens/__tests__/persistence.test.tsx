@@ -44,7 +44,7 @@ test('later launches open Home, not the walkthrough', async () => {
   settings.setHasSeenWalkthrough(true);
   await render(<App repository={repo} />);
   expect(await screen.findByText('Ready to inspect')).toBeTruthy();
-  expect(screen.queryByText('Tyre Kit Bay')).toBeNull();
+  expect(screen.queryByText('Check tyre condition, size, and age with your phone camera.')).toBeNull();
   expect(screen.getByText('Your inspections will appear here')).toBeTruthy();
 });
 
