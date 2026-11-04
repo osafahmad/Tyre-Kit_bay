@@ -35,6 +35,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan number plates, chassis numbers, and tyres.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Tyre Kit Bay does not access your photo library unless a feature you choose needs it.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
