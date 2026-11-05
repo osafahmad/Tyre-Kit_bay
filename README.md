@@ -13,9 +13,11 @@ React Native app that checks tyre health with the phone camera. Models run on th
 | Milestone | State |
 |---|---|
 | M0 Setup – M3 Inspection state | Done (emulator/simulator tested) |
-| M4 Vehicle scan | **Awaiting real-device testing** (deferred by the owner) |
-| M5 Tyre capture | **Awaiting real-device testing** |
-| M6 – M8 | Not started |
+| M4 Vehicle scan | Done (tested and verified on a real iPhone and an Android Redmi 13) |
+| M5 Tyre capture | Done (tested on a real iPhone and Android; orientation and quality verified) |
+| M6 Inspection flow & report | Done (multi-tyre flow with pending analysis and offline PDF sharing; device-tested) |
+| M7 Models & inference | In progress (planning) |
+| M8 Release | Not started |
 
 ## Run
 

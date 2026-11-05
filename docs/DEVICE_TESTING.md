@@ -1,8 +1,17 @@
 # Device testing
 
-M4 (vehicle scan) and M5 (tyre capture) are both **awaiting real-device testing**. Sections 0–3 apply to both; section 4 is M4, section 6 is M5.
+## Status
 
-Use a **debug build** for this round. It talks to Metro on your Mac, shows logs, and keeps the dev-only capture simulation so you can walk past the vehicle steps. Release builds turn that simulation off; tyre capture is M5.
+| Milestone | Real-device result | Phones |
+|---|---|---|
+| M4 Vehicle scan | **Verified.** Includes the Android MediaTek camera driver fix (YUV frame format, torch timing guard) and the 180° rotation correction. | iPhone, Android Redmi 13 |
+| M5 Tyre capture | **Verified.** Guide box alignment, live feedback and upright frame capture. | iPhone, Android |
+| M6 Multi-tyre flow & PDF report | **Verified.** Multi-tyre sequence with the `Analysis pending` flow, offline PDF generation and the system share sheet. | iPhone, Android |
+| M7 Models & inference | Not testable yet (no trained models). | — |
+
+Sections 0–3 apply to all milestones; section 4 is M4, section 6 is M5. Keep the checklists for regression testing, especially after a VisionCamera upgrade (see the orientation retest item in `docs/RELEASE_CHECKLIST.md`).
+
+Use a **debug build** for M4/M5 checks. It talks to Metro on your Mac, shows logs, and keeps the dev-only capture simulation so you can walk past the vehicle steps. Release builds turn that simulation off; tyre capture is M5.
 
 ## 0. Once, on the Mac
 

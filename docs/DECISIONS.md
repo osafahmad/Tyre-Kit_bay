@@ -101,9 +101,9 @@ Xcode 27 needed the Metal toolchain component (`xcodebuild -downloadComponent Me
 - The dev tread simulation keeps counting while the Leave dialog is open. Real capture (M5) must pause while a dialog is up.
 - ~~`Start scan` doesn't check camera permission yet~~ Done in M4.
 
-## M4 Vehicle scan — awaiting real-device testing
+## M4 Vehicle scan — verified on real devices
 
-**Status: awaiting real-device testing, not finished.** Built and unit/screen tested; the live camera and OCR have not run on a phone yet (the Android emulator's virtual camera failed to start and the iOS simulator has no camera).
+**Status: done.** Verified on a real iPhone and a real Android phone (Redmi 13), including the Android MediaTek camera driver fix (YUV frame format, torch timing guard) and the 180° rotation correction. Originally built and tested before any phone was available (the Android emulator's virtual camera failed to start and the iOS simulator has no camera).
 
 - **Permission flow.** `Start scan` opens Camera access first when the permission hasn't been asked (`Allow camera` → system prompt; either answer, or `Not now`, continues to Scan number plate). On the scan screens the viewfinder shows `Allow camera access` / `Allow camera` while the system can still ask, and `Camera access is off` / `Turn it on in Settings to scan tyres.` / `Open Settings` once it can't. Access is re-checked when the app comes back from Settings. First-launch Camera access still goes Home after either answer.
 - **Android "permanently denied".** Android allows one more prompt after the first denial and then stops showing it silently. The app treats a denial as permanent once it has asked in the current session. After an app restart, the first `Allow camera` tap on a permanently denied Android phone shows no prompt, then the screen switches to `Open Settings`. Verified on the emulator: deny → `Allow camera` again → deny → `Camera access is off`; grant from Settings → access refreshed on return.
@@ -138,12 +138,14 @@ Unchanged after the bundle ID change: ML Kit setup not modified, decision still 
 
 ## M4 real-device testing deferred (owner decision)
 
-- The owner deferred M4 real-device testing and started M5. **M4 stays "awaiting real-device testing"** and must pass `docs/DEVICE_TESTING.md` on a real iPhone and Android phone before release.
-- M5 reuses M4 camera code that hasn't run on a phone yet; those risks are listed under M5 below.
+- The owner deferred M4 real-device testing and started M5. **Resolved:** M4 has since been verified on a real iPhone and Android (Redmi 13); see `docs/DEVICE_TESTING.md`.
+- M5 reused M4 camera code that hadn't run on a phone yet; that code has now been verified on both platforms.
 
-## M5 Tyre capture — awaiting real-device testing
+## M5 Tyre capture — verified on real devices
 
-**Status: awaiting real-device testing, not finished.** Built and covered by unit and screen tests (including frame-disposal tests that drive the real frame worklet with fake frames). The live camera path has not run on a phone, and no emulator or simulator here has a working camera.
+**Status: done.** Guide box alignment, live feedback and upright frame capture verified on a real iPhone and Android.
+
+Built first with unit and screen tests only (including frame-disposal tests that drive the real frame worklet with fake frames), because no emulator or simulator here has a working camera. The live camera path was later verified on phones (status above).
 
 ### What's built
 - **Quality checks on every analysed frame** (about 10 per second, VisionCamera v5 frame output in YUV, worklet on the camera thread): brightness (mean luminance of the centre region), blur (Laplacian variance on a sampled grid), steadiness (difference between consecutive 16×16 thumbnails). **All estimated values are in one file, `src/config/capture.ts`, marked `CALIBRATION_STATUS = 'uncalibrated'`**, each tagged `spec` or `estimate`. No model values are there or anywhere else.
@@ -235,7 +237,7 @@ A clear plate gave "Couldn't read the plate" on an iPhone (Release). Panel data 
 
 ### Needs a real phone
 - iOS: the baked image is upright (not upside down or mirrored) in portrait. With the phone sideways or upside down, frames still match the portrait UI.
-- Android: the direction of VisionCamera's `Matrix.postRotate` is assumed correct. The Android activity isn't locked to portrait, so the UI (and with `interface`, the frames) can rotate; check that the guide still matches after rotation.
+- ~~Android: the direction of VisionCamera's `Matrix.postRotate` is assumed correct.~~ Superseded by the 180° fix below, now verified on a Redmi 13. The Android activity isn't locked to portrait, so the UI (and with `interface`, the frames) can rotate; check that the guide still matches after rotation.
 - `rotate(0, false)` cost on a full 1920×1080 frame per OCR pass and per accepted tyre frame.
 - Join thresholds and guide height with real two-line plates.
 
@@ -246,7 +248,7 @@ After the fix above: phone upright, plate and chassis OCR read nothing; phone up
 ### Root cause (react-native-vision-camera 5.2.4 source)
 - `frame.orientation` is right. VisionCamera documents `'left'` as pixel data rotated −90°, so the scene's top is on the buffer's left and it needs 90° clockwise to be upright. On iPhone the frame connection keeps AVFoundation's default `landscapeRight`, which `AV+CameraOrientation` maps to `.left` (device panel: `left`).
 - **iOS:** `CameraOrientation.toUIImageOrientation` maps `.left → UIImage.Orientation.left`. UIKit displays `.left` turned 90° counter-clockwise (EXIF 8). The flag for this buffer is `.right` (90° clockwise, EXIF 6, the flag iPhone portrait photos use). So the converter's UIImage is upright-minus-180°. nitro-image's `rotate(0, false)` just redraws with that flag, so the error went through to the crop and the JPEG unchanged. `up` and `down` are mapped correctly.
-- **Android, same error:** CameraX `rotationDegrees` (the clockwise turn to make it upright, 90 in portrait) → `fromDegrees(90)` = `LEFT` → `LEFT.degrees` = 270 → `toBitmap` does `postRotate(270)`. That's −rotationDegrees instead of +rotationDegrees, so it's 180° off for 90/270 and right for 0/180. Proven from source plus the documented CameraX and Matrix behaviour; **not verified on a device.**
+- **Android, same error:** CameraX `rotationDegrees` (the clockwise turn to make it upright, 90 in portrait) → `fromDegrees(90)` = `LEFT` → `LEFT.degrees` = 270 → `toBitmap` does `postRotate(270)`. That's −rotationDegrees instead of +rotationDegrees, so it's 180° off for 90/270 and right for 0/180. Proven from source plus the documented CameraX and Matrix behaviour, and **verified on a physical Android phone (Redmi 13)**.
 
 ### Fix
 - One shared place: `uprightPlan()` adds a 180° correction for `left`/`right` on both platforms. `cropFrameToGuide()` applies it in the same single redraw: `rotate(180, false)` on iOS (flag applied, then 180°, pixels `.up`) and a physical `rotate(180)` on Android. No phone-position check, no OCR retries.
@@ -259,7 +261,10 @@ After the fix above: phone upright, plate and chassis OCR read nothing; phone up
 The fake images only tracked width and height, and the fake converter returned an image assumed upright. A 180° turn doesn't change width or height, so every size and call assertion passed. `orientationModel.test.ts` now models the pixels through each documented native step. It reproduces both device results (sideways before the first fix, upside down after it) and shows the corrected chain upright for every orientation. It still can't prove the native libraries behave as modelled; only a device can.
 
 ### Diagnostic panel removed
-The iPhone device test passed with upright frames, thumbnails matching the guide box, and correct plate and chassis reads. The temporary `TEMP_OCR_DIAGNOSTIC` panel and its collection code were then removed. Android remains unverified on a device.
+The iPhone device test passed with upright frames, thumbnails matching the guide box, and correct plate and chassis reads. The temporary `TEMP_OCR_DIAGNOSTIC` panel and its collection code were then removed.
+
+### Verified on physical devices
+The 180° correction and upright captures (plate OCR, chassis OCR and saved tyre frames) are verified on a Redmi 13 and an iPhone. Re-check on every VisionCamera upgrade.
 
 ## Chassis OCR validator (multi-tier)
 
@@ -298,6 +303,6 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 - Tyre layouts stay as spec §4.12 (2 / 4 / 6, those positions). No spare position: the spec leaves custom layouts out of the first release.
 - Report rows don't show frame thumbnails. `21-final-report.png` has none. The saved-frame count stands in until a design is agreed.
 
-### Needs a real phone
-- PDF rendering on iOS (WKWebView) and Android (PrintDocumentAdapter), share sheet to Mail/WhatsApp/Files, and opening the PDF in the receiving app on Android via the FileProvider.
-- Release build: analysis-pending path end to end.
+### Verified on real devices
+- PDF generation and the system share sheet work offline on a physical iPhone and Android phone.
+- The release-build `Analysis pending` fallback works end to end through a multi-tyre inspection on both platforms.
