@@ -111,7 +111,7 @@ Xcode 27 needed the Metal toolchain component (`xcodebuild -downloadComponent Me
 - **How OCR runs (VisionCamera v5 only).** A `useFrameOutput` frame processor worklet, at most one frame at a time: `HybridFrameConverter.convertFrameToImage` → rotate upright from `frame.orientation` → crop (**superseded**: the extra rotation was a bug, see "Plate OCR real-device fix" below) to the guide box (mapped through the `cover` preview, plus 8% margin) → hand the crop to JS. Every frame is `dispose()`d in a `finally`, and every intermediate image is disposed. On JS the crop is written to a temporary JPEG, read by ML Kit (Latin, bundled), then the file is deleted. Passes are spaced at least 350 ms apart.
 - **Library choice.** `rn-mlkit-ocr` only accepts an image file, so frames go through a temporary file rather than a frame-processor plugin. Nothing leaves the phone.
 - **Stable read.** The same value read 3 times within the last 5 reads (plates compared ignoring spaces and hyphens) → success haptic → Confirm plate, or for chassis → Vehicle details with the number filled in. `Capture` uses the next single read; if nothing readable is found it says so and stays.
-- **No guessing.** Plate text is only uppercased and stripped of characters other than letters, digits, spaces and hyphens; the tallest line in the guide with 2–10 letters/digits is used. Chassis text is the longest run of words on one line making 5–17 letters/digits with at least one digit; a leading `VIN`/`CHASSIS`/`NO` label is dropped. Letters and digits are never swapped (O/0, I/1, B/8), nothing is padded to 17, and no format is enforced. Anything not read stays empty.
+- **No guessing.** Plate text is only uppercased and stripped of characters other than letters, digits, spaces and hyphens; the tallest line in the guide with 2–10 letters/digits is used. Chassis text is the longest run of words on one line making 5–17 letters/digits with at least one digit (**superseded** by "Chassis OCR validator" below); a leading `VIN`/`CHASSIS`/`NO` label is dropped. Letters and digits are never swapped (O/0, I/1, B/8), nothing is padded to 17, and no format is enforced. Anything not read stays empty.
 - **Move closer.** Shown when chassis-like text is shorter than 18% of the guide crop's height; such reads are not accepted.
 - **OCR unavailable** (iOS simulator builds made with `TYREKITBAY_IOS_SIM=1`, or the module missing): the hint says `Text reading isn't available. Type it instead.` After 3 OCR failures in a row: `Text can't be read right now. Use Capture, or type it.`
 - **Tunables** were in `src/config/ocr.ts`; since M5 they're in `src/config/capture.ts` (`ocrConfig`) with every other estimated value. Uncalibrated.
@@ -260,3 +260,18 @@ The fake images only tracked width and height, and the fake converter returned a
 
 ### Diagnostic panel removed
 The iPhone device test passed with upright frames, thumbnails matching the guide box, and correct plate and chassis reads. The temporary `TEMP_OCR_DIAGNOSTIC` panel and its collection code were then removed. Android remains unverified on a device.
+
+## Chassis OCR validator (multi-tier)
+
+Owner request: filter OCR garbage before `Chassis found`, while typed chassis numbers stay unrestricted.
+
+- **OCR only.** `validateChassisCandidate()` in `src/ml/ocr/textCandidates.ts` decides whether an OCR read counts. Typed values in Vehicle details are unchanged: anything is allowed, with the spec §5 warning outside 5–17 (`isUnusualChassis`).
+- **Normalising.** Uppercase; spaces, hyphens/dashes and punctuation removed. Letters and digits are never swapped. Anything else left (non-Latin letters, symbols) rejects the read.
+- **Length.** 8–17 letters/digits. This is stricter than spec §5's 5–17 for typed values, by owner request; 5–7 character chassis numbers must be typed.
+- **Tier 1, standard VIN:** `^[A-HJ-NPR-Z0-9]{17}$`. A 17-character read containing I, O or Q is rejected, not corrected. A real VIN misread with O for 0 therefore won't auto-fill; the user types it.
+- **Tier 2, JDM frame:** `^[A-Z0-9]{3,6}[0-9]{6,8}$`, 9–14 characters, e.g. `NHP10-1234567` → `NHP101234567`, `FD3S-123456`.
+- **Tier 3, other frame numbers** (bikes, two-wheelers, commercial): 8–16 letters/digits.
+- **Additions beyond the request, to reject garbage:** every tier needs a digit; tiers 2 and 3 also need a letter (the tier-2 regex alone accepts all-digit runs such as dates and phone numbers); a tier-3 read must come from a single OCR word, so printed lines such as `MADE IN JAPAN 2019` aren't joined into a frame number. VIN and JDM reads may still be joined across words (`KE30 123456`).
+- **Choosing between reads on a frame:** standard VIN beats JDM beats tier 3; within a tier the longer read wins.
+- `Move closer` is only shown for small text that would otherwise have passed the validator.
+- The stored chassis is the normalised value (no hyphen). The tiers are uncalibrated against real plates; check on a phone with real VIN plates, JDM frame stamps and bike frames.

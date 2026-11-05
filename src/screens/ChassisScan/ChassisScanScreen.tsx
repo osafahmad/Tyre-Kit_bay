@@ -31,7 +31,10 @@ import { colors, radius } from '../../theme';
 
 /**
  * 10 Scan chassis number (ChassisScan.dc.html). Shows `Move closer` when the
- * text is too small. A read is never padded or corrected to 17 characters.
+ * text is too small. Only OCR reads that pass `validateChassisCandidate`
+ * (standard VIN, JDM frame or other frame number) count as `Chassis found`;
+ * a read is never padded or corrected to 17 characters. `Type it` opens
+ * Vehicle details, where any typed value is allowed (spec §5: warn, don't block).
  */
 export function ChassisScanScreen() {
   const navigation = useRootNavigation();

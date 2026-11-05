@@ -236,6 +236,56 @@ describe('chassis scanning', () => {
     expect(screen.getByLabelText('Number plate, optional').props.value).toBe('');
   });
 
+  test('OCR reads that fail the chassis check never count as found', async () => {
+    await toChassis();
+    await read('A1234');
+    await read('A1234');
+    await read('A1234');
+    await read('JT2IOQ2K0W0123456');
+    await read('JT2IOQ2K0W0123456');
+    await read('JT2IOQ2K0W0123456');
+    expect(screen.getByText('Scan chassis number')).toBeTruthy();
+    await press(/Capture/);
+    await read('MANUFACTURED', { manual: true });
+    expect(screen.getByText("Couldn't read the chassis number. Try again, or type it.")).toBeTruthy();
+  });
+
+  test('a stable JDM frame read is filled in without its hyphen', async () => {
+    await toChassis();
+    await read('NHP10-1234567');
+    await read('NHP10-1234567');
+    await read('NHP10-1234567');
+    expect(await screen.findByText('Check vehicle details')).toBeTruthy();
+    expect(screen.getByLabelText('Chassis number, optional').props.value).toBe('NHP101234567');
+  });
+
+  test('Type it allows numbers the OCR check would reject, with a warning only', async () => {
+    await toChassis();
+    await press('Type it');
+    const field = await screen.findByLabelText('Chassis number, optional');
+    await fireEvent.changeText(field, 'a12');
+    expect(
+      screen.getByText('Chassis numbers usually have 5 to 17 letters and numbers. Check it before you continue.'),
+    ).toBeTruthy();
+    await press('Continue');
+    let s = useInspectionStore.getState();
+    expect(s.inspections.find(i => i.id === s.currentId)?.chassis).toBe('A12');
+    expect(await screen.findByText('Select tyres to scan')).toBeTruthy();
+    s = useInspectionStore.getState();
+    expect(s.inspections.find(i => i.id === s.currentId)?.chassis).toBe('A12');
+  });
+
+  test('Type it keeps a vintage-style number with I, O and Q exactly as typed', async () => {
+    await toChassis();
+    await press('Type it');
+    const field = await screen.findByLabelText('Chassis number, optional');
+    await fireEvent.changeText(field, 'IOQ1234');
+    expect(field.props.value).toBe('IOQ1234');
+    await press('Continue');
+    const s = useInspectionStore.getState();
+    expect(s.inspections.find(i => i.id === s.currentId)?.chassis).toBe('IOQ1234');
+  });
+
   test('small text shows Move closer and nothing is accepted', async () => {
     await toChassis();
     await read('JT2BG22K0W0123456', { height: 8 });

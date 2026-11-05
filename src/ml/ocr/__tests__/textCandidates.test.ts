@@ -3,6 +3,7 @@ import {
   cleanPlateText,
   explainPlateCandidate,
   plateCandidate,
+  validateChassisCandidate,
   type OcrLineLike,
 } from '../textCandidates';
 
@@ -44,14 +45,90 @@ describe('plateCandidate', () => {
   });
 });
 
-describe('chassisCandidate', () => {
-  test('reads a 17-character chassis number', () => {
-    expect(chassisCandidate([line('JT2BG22K0W0123456', 30)], 100).value).toBe('JT2BG22K0W0123456');
+describe('validateChassisCandidate', () => {
+  const v = validateChassisCandidate;
+
+  describe('tier 1: standard 17-character VIN', () => {
+    test.each(['JT2BG22K0W0123456', 'WVWZZZ1JZ3W386752', '1HGCM82633A004352', 'MA3FB32S00A123456'])(
+      'accepts %s',
+      vin => expect(v(vin)).toEqual({ isValid: true, normalized: vin, type: 'standard_vin' }),
+    );
+
+    test('lowercase, spaces and hyphens are normalised, not swapped', () => {
+      expect(v('jt2bg22k0w 012-3456')).toEqual({
+        isValid: true,
+        normalized: 'JT2BG22K0W0123456',
+        type: 'standard_vin',
+      });
+    });
+
+    test.each(['JT2IG22K0W0123456', 'JT2OG22K0W0123456', 'JT2QG22K0W0123456', 'JT2IOQ2K0W0123456'])(
+      'rejects 17 characters containing I, O or Q (%s) without swapping them',
+      bad => expect(v(bad)).toEqual({ isValid: false, normalized: bad }),
+    );
   });
 
-  test('accepts shorter numbers and never pads to 17', () => {
+  describe('tier 2: JDM frame number', () => {
+    test.each([
+      ['NHP10-1234567', 'NHP101234567'],
+      ['FD3S-123456', 'FD3S123456'],
+      ['ZVW30-1234567', 'ZVW301234567'],
+      ['KE30 123456', 'KE30123456'],
+      ['GRS200-12345678', 'GRS20012345678'],
+    ])('accepts %s as %s', (raw, normalized) => {
+      expect(v(raw)).toEqual({ isValid: true, normalized, type: 'jdm_frame' });
+    });
+  });
+
+  describe('tier 3: bike / two-wheeler / commercial frame number', () => {
+    test.each(['ME4JC651KH81', 'MD2A11CZ9KCA', 'ME1RG0717K012', 'JH2RC4600MK1', 'MBLHA10A'])(
+      'accepts %s',
+      frame => expect(v(frame)).toMatchObject({ isValid: true, normalized: frame, type: 'legacy_frame' }),
+    );
+  });
+
+  describe('rejects OCR garbage', () => {
+    test.each([
+      ['empty', ''],
+      ['short word', 'VIN'],
+      ['under 8 characters', 'A1234'],
+      ['7 characters', 'AB12345'],
+      ['letters only', 'MANUFACTURED'],
+      ['digits only (date/serial run)', '2024051512345'],
+      ['phone-like digit run', '03001234567'],
+      ['over 17 characters', 'JT2BG22K0W01234567890'],
+      ['18 characters', 'JT2BG22K0W01234567'],
+      ['17 characters that are not a VIN, too long for other tiers', 'JT2IOQ2K0W012345A'],
+      ['non-Latin symbols', 'JT2BG22K€W0123456'],
+      ['accented letters', 'ÄBC12345678'],
+      ['random noise', '@@##!!~~^^'],
+    ])('%s', (_label, text) => {
+      expect(v(text).isValid).toBe(false);
+      expect(v(text).type).toBeUndefined();
+    });
+  });
+});
+
+describe('chassisCandidate', () => {
+  test('reads a 17-character chassis number', () => {
+    expect(chassisCandidate([line('JT2BG22K0W0123456', 30)], 100)).toEqual({
+      value: 'JT2BG22K0W0123456',
+      type: 'standard_vin',
+      tooSmall: false,
+    });
+  });
+
+  test('accepts JDM and bike frame numbers and never pads to 17', () => {
     expect(chassisCandidate([line('KE30123456', 30)], 100).value).toBe('KE30123456');
-    expect(chassisCandidate([line('A1234', 30)], 100).value).toBe('A1234');
+    expect(chassisCandidate([line('NHP10-1234567', 30)], 100)).toMatchObject({
+      value: 'NHP101234567',
+      type: 'jdm_frame',
+    });
+    expect(chassisCandidate([line('FD3S-123456', 30)], 100).value).toBe('FD3S123456');
+    expect(chassisCandidate([line('MD2A11CZ9KCA', 30)], 100)).toMatchObject({
+      value: 'MD2A11CZ9KCA',
+      type: 'legacy_frame',
+    });
   });
 
   test('joins words split by OCR and drops a leading VIN label', () => {
@@ -62,13 +139,28 @@ describe('chassisCandidate', () => {
     expect(read.value).toBe('WVWZZZ1JZ3W386752');
   });
 
-  test('keeps I, O and Q exactly as read', () => {
-    expect(chassisCandidate([line('JT2IOQ2K0W0123456', 30)], 100).value).toBe('JT2IOQ2K0W0123456');
+  test('prefers a standard VIN over a frame-number-shaped part of the same line', () => {
+    const read = chassisCandidate(
+      [line('JT2BG22 K0W0123456', 30, ['JT2BG22', 'K0W0123456'])],
+      100,
+    );
+    expect(read).toMatchObject({ value: 'JT2BG22K0W0123456', type: 'standard_vin' });
   });
 
-  test('ignores words without digits and runs over 17 characters', () => {
+  test('rejects 17 characters with I, O or Q instead of swapping them', () => {
+    expect(chassisCandidate([line('JT2IOQ2K0W0123456', 30)], 100).value).toBeNull();
+  });
+
+  test('ignores labels, short words, noise and runs over 17 characters', () => {
     expect(chassisCandidate([line('CHASSIS', 30)], 100).value).toBeNull();
+    expect(chassisCandidate([line('A1234', 30)], 100).value).toBeNull();
+    expect(chassisCandidate([line('MADE IN JAPAN 2019', 30)], 100).value).toBeNull();
     expect(chassisCandidate([line('JT2BG22K0W01234567890', 30)], 100).value).toBeNull();
+  });
+
+  test('a fallback-tier frame number is read from one word, not joined across words', () => {
+    expect(chassisCandidate([line('MD2A11CZ9KCA', 30)], 100).value).toBe('MD2A11CZ9KCA');
+    expect(chassisCandidate([line('MD2A 11CZ9K', 30)], 100).value).toBeNull();
   });
 
   test('small text asks the user to move closer instead of guessing', () => {
@@ -76,6 +168,10 @@ describe('chassisCandidate', () => {
       value: null,
       tooSmall: true,
     });
+  });
+
+  test('small garbage text does not ask the user to move closer', () => {
+    expect(chassisCandidate([line('A1234', 10)], 100)).toEqual({ value: null, tooSmall: false });
   });
 });
 

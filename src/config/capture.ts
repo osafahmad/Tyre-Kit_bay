@@ -93,7 +93,10 @@ export const ocrConfig = {
   jpegQualityPercent: JPEG_QUALITY_PERCENT,
   /** estimate. A Capture press that no frame has answered by then shows a camera message. */
   manualCaptureTimeoutMs: 3000,
-  /** spec §5: chassis allows 5 to 17 letters and numbers. */
-  chassisMinChars: 5,
+  /**
+   * Longest OCR chassis read (a 17-character VIN). OCR reads must also pass
+   * `validateChassisCandidate` (8–17, see DECISIONS). Typed chassis numbers
+   * follow spec §5 (5 to 17, warn only) in `isUnusualChassis`.
+   */
   chassisMaxChars: 17,
 };
