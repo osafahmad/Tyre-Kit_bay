@@ -60,6 +60,11 @@ export function CaptureCamera({
           isActive={live}
           outputs={[frameOutput]}
           resizeMode="cover"
+          // Frames follow the screen, like the preview and the guide box drawn on it.
+          // The default ('device') follows the physical phone, so with the app
+          // locked to portrait a sideways phone gave frames that no longer
+          // matched the guide.
+          orientationSource="interface"
           torchMode={torchOn && device.hasTorch ? 'on' : 'off'}
           onError={() => setFailed(true)}
           onInterruptionStarted={() => setInterrupted(true)}

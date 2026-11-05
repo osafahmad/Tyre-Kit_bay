@@ -1,10 +1,41 @@
-import { guideToImageRect, uprightRotation } from '../guideGeometry';
+import { guideToImageRect, uprightPlan } from '../guideGeometry';
 
-test('upright rotation counters the frame orientation', () => {
-  expect(uprightRotation('up')).toBe(0);
-  expect(uprightRotation('right')).toBe(-90);
-  expect(uprightRotation('left')).toBe(90);
-  expect(uprightRotation('down')).toBe(180);
+describe('uprightPlan: corrects the converter\'s 180° error for left/right, in one redraw', () => {
+  test('iOS', () => {
+    // Phone upright on iPhone = frame orientation `left` (device test).
+    expect(uprightPlan('ios', 'left', false)).toEqual({ redraw: true, correctionDegrees: 180 });
+    expect(uprightPlan('ios', 'right', false)).toEqual({ redraw: true, correctionDegrees: 180 });
+    // up/down flags are applied in the right direction; down still needs baking into pixels.
+    expect(uprightPlan('ios', 'down', false)).toEqual({ redraw: true, correctionDegrees: 0 });
+    expect(uprightPlan('ios', 'up', true)).toEqual({ redraw: true, correctionDegrees: 0 });
+    expect(uprightPlan('ios', 'up', false)).toEqual({ redraw: false, correctionDegrees: 0 });
+  });
+
+  test('Android: same correction (same error in the converter), no redraw otherwise', () => {
+    expect(uprightPlan('android', 'left', false)).toEqual({ redraw: true, correctionDegrees: 180 });
+    expect(uprightPlan('android', 'right', false)).toEqual({ redraw: true, correctionDegrees: 180 });
+    expect(uprightPlan('android', 'up', false)).toEqual({ redraw: false, correctionDegrees: 0 });
+    expect(uprightPlan('android', 'down', false)).toEqual({ redraw: false, correctionDegrees: 0 });
+  });
+
+  test('never depends on anything but the frame (no phone-position check)', () => {
+    for (const o of ['up', 'down', 'left', 'right'] as const) {
+      expect(uprightPlan('ios', o, false)).toEqual(uprightPlan('ios', o, false));
+      expect([0, 180]).toContain(uprightPlan('ios', o, false).correctionDegrees);
+    }
+  });
+});
+
+test('device case: 1080x1920 upright image in a portrait view crops a landscape box, not a sideways strip', () => {
+  // Converted size from the device test (phone upright). The guide is wider than tall,
+  // so the crop must be too.
+  const rect = guideToImageRect(
+    { x: 65, y: 182, width: 260, height: 150 },
+    { width: 390, height: 514 },
+    { width: 1080, height: 1920 },
+    0,
+  )!;
+  expect(rect.width).toBeGreaterThan(rect.height);
 });
 
 test('maps the guide through a cover-scaled preview', () => {

@@ -4,21 +4,44 @@ export type Rect = { x: number; y: number; width: number; height: number };
 export type Size = { width: number; height: number };
 
 /**
- * Degrees (clockwise) to turn a frame so it's upright, given VisionCamera's
- * `frame.orientation` (how the pixel data is rotated relative to upright).
+ * What to do with the image from `HybridFrameConverter.convertFrameToImage`
+ * so its PIXELS are upright and match the preview, before cropping and saving.
+ * Done in one `rotate(correctionDegrees, false)` call (a real redraw), or not at all.
+ *
+ * `frame.orientation` itself is right (VisionCamera docs: `'left'` = pixel data
+ * rotated −90°, i.e. the scene's top is on the buffer's left, so it needs 90°
+ * clockwise to be upright). The converter applies it in the WRONG direction
+ * for `left`/`right` (react-native-vision-camera 5.2.4 source):
+ * - iOS: `CameraOrientation.toUIImageOrientation` maps `.left → UIImage .left`
+ *   (displayed 90° counter-clockwise). The upright flag for that buffer is
+ *   `.right` (displayed 90° clockwise; what iPhone portrait photos use, EXIF 6).
+ * - Android: `rotationDegrees` 90 → `fromDegrees` → LEFT → `.degrees` 270 →
+ *   `postRotate(270)`, i.e. −rotationDegrees instead of +rotationDegrees.
+ * Either way the image is off by exactly 180° for `left`/`right`, and right
+ * for `up`/`down`. The phone-upright case is `left` on iOS (device test).
+ *
+ * The correction is a 180° turn. It commutes with mirroring, so it's also
+ * right for mirrored frames. On iOS the redraw also bakes the flag into the
+ * pixels (UIGraphicsImageRenderer, orientation `.up`), because nitro-image's
+ * `crop` reads raw CGImage pixels and the JPEG must not depend on an EXIF tag.
  */
-export function uprightRotation(orientation: CameraOrientation): number {
+export type UprightPlan = {
+  /** Call `rotate(correctionDegrees, false)` on the converted image. */
+  redraw: boolean;
+  /** Turn added after the converter's own rotation: 180 for left/right, else 0. */
+  correctionDegrees: 0 | 180;
+};
+
+export function uprightPlan(
+  platform: string,
+  orientation: CameraOrientation,
+  isMirrored: boolean,
+): UprightPlan {
   'worklet';
-  switch (orientation) {
-    case 'right':
-      return -90;
-    case 'left':
-      return 90;
-    case 'down':
-      return 180;
-    default:
-      return 0;
-  }
+  const correctionDegrees = orientation === 'left' || orientation === 'right' ? 180 : 0;
+  // iOS must also redraw whenever the UIImage carries a non-up flag.
+  const iosFlag = platform === 'ios' && (orientation !== 'up' || isMirrored);
+  return { redraw: correctionDegrees !== 0 || iosFlag, correctionDegrees };
 }
 
 /**

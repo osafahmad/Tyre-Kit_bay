@@ -12,6 +12,14 @@
  */
 export const CALIBRATION_STATUS = 'uncalibrated' as const;
 
+/**
+ * JPEG quality as a PERCENT, 0–100. This is react-native-nitro-image's scale
+ * for `saveToFileAsync` / `saveToTemporaryFileAsync` (it divides by 100 on iOS
+ * and passes it straight to Bitmap.compress on Android). Never pass 0–1
+ * fractions such as 0.9: that is 0.9 %, not 90 %. A unit test checks this.
+ */
+export const JPEG_QUALITY_PERCENT = 90;
+
 /** Tyre capture quality checks (M5, spec §7). */
 export const captureConfig = {
   /** estimate (spec §7 says "about 10 frames per second" for the detector). Frames analysed per second. */
@@ -44,8 +52,8 @@ export const captureConfig = {
   guideMargin: 0.08,
   /** estimate. Below this free space capture doesn't start (spec §8 low storage; value is ours). */
   minFreeBytes: 60 * 1024 * 1024,
-  /** estimate. JPEG quality of saved frames. */
-  jpegQuality: 0.9,
+  /** JPEG quality of saved tyre frames, PERCENT 0–100 (nitro-image scale). See JPEG_QUALITY_PERCENT. */
+  jpegQualityPercent: JPEG_QUALITY_PERCENT,
 };
 
 /** Number plate and chassis OCR (M4). */
@@ -63,6 +71,28 @@ export const ocrConfig = {
   /** estimate. Plate candidates: letters and digits, not counting spaces or hyphens. */
   plateMinChars: 2,
   plateMaxChars: 10,
+  /**
+   * estimate. Two OCR lines are joined into one two-line plate only when the
+   * shorter line is at least this fraction of the taller line's height.
+   */
+  plateJoinMinHeightRatio: 0.7,
+  /** estimate. …and they overlap horizontally by at least this fraction of the narrower line. */
+  plateJoinMinHorizontalOverlap: 0.5,
+  /** estimate. …and the gap between them is at most this many times the taller line's height. */
+  plateJoinMaxGapRatio: 1.0,
+  /** estimate. …and they overlap vertically by at most this fraction of the shorter line (so they are stacked, not side by side). */
+  plateJoinMaxVerticalOverlap: 0.3,
+  /**
+   * UNCALIBRATED. Plate guide box in points. The design (PlateScan.dc.html) is
+   * 260 × 86, which fits a one-line car plate but not a two-line bike plate;
+   * the height was raised for two-line plates. Width is the design's.
+   */
+  plateGuideWidth: 260,
+  plateGuideHeight: 150,
+  /** JPEG quality of the OCR crop, PERCENT 0–100 (nitro-image scale). See JPEG_QUALITY_PERCENT. */
+  jpegQualityPercent: JPEG_QUALITY_PERCENT,
+  /** estimate. A Capture press that no frame has answered by then shows a camera message. */
+  manualCaptureTimeoutMs: 3000,
   /** spec §5: chassis allows 5 to 17 letters and numbers. */
   chassisMinChars: 5,
   chassisMaxChars: 17,

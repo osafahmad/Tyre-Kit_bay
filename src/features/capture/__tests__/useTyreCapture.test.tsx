@@ -33,7 +33,7 @@ function fakeFrame(lumaValue: number | ((x: number, y: number) => number)) {
       data[y * W + x] = typeof lumaValue === 'number' ? lumaValue : lumaValue(x, y);
   const plane = { width: W, height: H, bytesPerRow: W, getPixelBuffer: () => data.buffer, dispose: jest.fn() };
   const uv = { ...plane, dispose: jest.fn() };
-  return { orientation: 'right', getPlanes: () => [plane, uv], dispose: jest.fn(), plane, uv };
+  return { orientation: 'left', isMirrored: false, width: 1920, height: 1080, getPlanes: () => [plane, uv], dispose: jest.fn(), plane, uv };
 }
 
 // Fine texture (pseudo-random), so it's sharp at any sampling step.
@@ -77,9 +77,9 @@ test('a dark frame is rejected; frame and planes are disposed, nothing converted
   expect(hook.snapshot.status).toBe('too_dark');
 });
 
-test('an accepted tread frame: converted, rotated, saved, and every image disposed', async () => {
+test('an accepted tread frame: corrected upright in one redraw, saved at quality 90, every image disposed', async () => {
   await render(<Harness stage="tread" active />);
-  const converted = image(720, 1280);
+  const converted = image(1080, 1920);
   converter.convertFrameToImage = jest.fn(() => converted);
   const f = fakeFrame(sharp);
   await act(async () => {
@@ -87,12 +87,36 @@ test('an accepted tread frame: converted, rotated, saved, and every image dispos
     await new Promise<void>(r => setImmediate(() => r()));
   });
   expect(f.dispose).toHaveBeenCalledTimes(1);
-  expect(converted.rotate).toHaveBeenCalledWith(-90);
-  expect(converted.dispose).toHaveBeenCalled();
-  const upright = (converted.rotate as jest.Mock).mock.results[0].value as Disposable & { saveToFileAsync: jest.Mock };
-  expect(upright.saveToFileAsync).toHaveBeenCalledWith(expect.stringMatching(/capture-tmp\/.+\.jpg$/), 'jpg', 0.9);
+  // Same shared path as OCR: one redraw with the 180° correction for `left`, never ±90.
+  expect((converted.rotate as jest.Mock).mock.calls).toEqual([[180, false]]);
+  const upright = (
+    (converted.rotate as jest.Mock).mock.results[0]?.value ?? converted
+  ) as Disposable & { saveToFileAsync: jest.Mock };
+  // No guide laid out in this harness: the whole upright frame is saved.
+  expect(upright.saveToFileAsync).toHaveBeenCalledWith(expect.stringMatching(/capture-tmp\/.+\.jpg$/), 'jpg', 90);
   expect(upright.dispose).toHaveBeenCalled();
+  if (upright !== converted) expect(converted.dispose).toHaveBeenCalled();
   expect(hook.snapshot.accepted).toBe(1);
+});
+
+test('with a guide: the saved image is the crop, and the full frame images are disposed', async () => {
+  await render(<Harness stage="tread" active />);
+  const converted = image(1080, 1920);
+  converter.convertFrameToImage = jest.fn(() => converted);
+  await act(async () => hook.setGuide({ x: 15, y: 60, width: 360, height: 300 }, { width: 390, height: 520 }));
+  await act(async () => {
+    mock.frameOutputOptions.onFrame(fakeFrame(sharp));
+    await new Promise<void>(r => setImmediate(() => r()));
+  });
+  const upright = ((converted.rotate as jest.Mock).mock.results[0]?.value ?? converted) as Disposable & {
+    crop: jest.Mock;
+  };
+  expect(upright.crop).toHaveBeenCalledTimes(1);
+  const cropped = upright.crop.mock.results[0].value as Disposable & { saveToFileAsync: jest.Mock };
+  expect(cropped.saveToFileAsync).toHaveBeenCalledWith(expect.any(String), 'jpg', 90);
+  expect(cropped.dispose).toHaveBeenCalled();
+  expect(upright.dispose).toHaveBeenCalled();
+  expect(converted.dispose).toHaveBeenCalled();
 });
 
 test('a conversion error still disposes the frame and frees the pipeline', async () => {

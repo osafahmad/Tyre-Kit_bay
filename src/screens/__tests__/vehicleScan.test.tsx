@@ -33,12 +33,16 @@ const camera = (VC as unknown as { __mock: { status: string; answer: string; dev
 const lines = (text: string, height = 40) => [
   { text, frame: { x: 0, y: 0, width: 200, height }, elements: [] },
 ];
-const read = async (text: string | null, opts: { manual?: boolean; height?: number } = {}) =>
+const read = async (
+  text: string | null,
+  opts: { manual?: boolean; height?: number; failure?: 'ocr' | 'capture' } = {},
+) =>
   act(async () =>
     mockScanner.onResult!({
       lines: text ? lines(text, opts.height) : [],
       crop: { width: 400, height: 100 },
       manual: opts.manual ?? false,
+      failure: opts.failure,
     }),
   );
 
@@ -157,6 +161,30 @@ describe('plate scanning', () => {
     expect(await screen.findByText('Plate found')).toBeTruthy();
   });
 
+  test('a value that is not plate-shaped is never shown as Plate found (device misread)', async () => {
+    await startScan();
+    await press('Capture plate');
+    await read('PTIUI4t', { manual: true });
+    expect(screen.getByText("Couldn't read the plate. Try again, or type it.")).toBeTruthy();
+    expect(screen.queryByText('Plate found')).toBeNull();
+    // Live reads of it never become stable either.
+    await read('PTIUI4t');
+    await read('PTIUI4t');
+    await read('PTIUI4t');
+    expect(screen.queryByText('Plate found')).toBeNull();
+  });
+
+  test('Capture: a native OCR error and a camera image problem each have their own message', async () => {
+    await startScan();
+    await press('Capture plate');
+    await read(null, { manual: true, failure: 'ocr' });
+    expect(screen.getByText('Text reading failed. Try again, or type it.')).toBeTruthy();
+    await press('Capture plate');
+    await read(null, { manual: true, failure: 'capture' });
+    expect(screen.getByText("Couldn't get an image from the camera. Try again, or type it.")).toBeTruthy();
+    expect(screen.queryByText("Couldn't read the plate. Try again, or type it.")).toBeNull();
+  });
+
   test('OCR unavailable: the screen says so and Type it still works', async () => {
     mockScanner.available = false;
     await startScan();
@@ -187,6 +215,16 @@ describe('chassis scanning', () => {
     await press('Skip');
     await screen.findByText('Scan chassis number');
   }
+
+  test('Capture failures show the OCR error or camera message, not "couldn\'t read"', async () => {
+    await toChassis();
+    await press(/Capture/);
+    await read(null, { manual: true, failure: 'ocr' });
+    expect(screen.getByText('Text reading failed. Try again, or type it.')).toBeTruthy();
+    await press(/Capture/);
+    await read(null, { manual: true, failure: 'capture' });
+    expect(screen.getByText("Couldn't get an image from the camera. Try again, or type it.")).toBeTruthy();
+  });
 
   test('a stable read opens Vehicle details with it filled in, not padded to 17', async () => {
     await toChassis();

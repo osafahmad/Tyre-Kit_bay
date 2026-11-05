@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  CommonResolutions,
-  HybridFrameConverter,
-  useFrameOutput,
-  type Frame,
-} from 'react-native-vision-camera';
+import { Platform } from 'react-native';
+import { CommonResolutions, useFrameOutput, type Frame } from 'react-native-vision-camera';
 import type { Image } from 'react-native-nitro-image';
 import { createSynchronizable, scheduleOnRN } from 'react-native-worklets';
 import { captureConfig } from '../../config/capture';
 import { inspectionConfig } from '../../config/inspection';
 import { CaptureSession, type SessionSnapshot } from './captureSession';
 import { classifyFrame, measureLuma, thumbDifference, type FrameIssue } from './quality';
-import { guideToImageRect, uprightRotation, type Rect, type Size } from './guideGeometry';
+import type { Rect, Size } from './guideGeometry';
+import { cropFrameToGuide } from './frameCrop';
 import { deleteQuietly, isNoSpace, newTempFramePath, type CaptureStage } from './frameFiles';
 
 type Geometry = { guide: Rect; view: Size } | null;
+
+const PLATFORM = Platform.OS;
 
 const TICK_MS = 250;
 
@@ -113,7 +112,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
       let path: string | null = null;
       try {
         path = await newTempFramePath();
-        await image.saveToFileAsync(path, 'jpg', captureConfig.jpegQuality);
+        await image.saveToFileAsync(path, 'jpg', captureConfig.jpegQualityPercent);
         if (unmounted.current) {
           await deleteQuietly([path]);
         } else {
@@ -183,24 +182,17 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
             sync.busy.setBlocking(true);
             sync.lastAccept.setBlocking(now);
             sync.lastAcceptedThumb.setBlocking(metrics.thumb);
-            try {
-              const converted = HybridFrameConverter.convertFrameToImage(frame);
-              const degrees = uprightRotation(frame.orientation);
-              const upright = degrees === 0 ? converted : converted.rotate(degrees);
-              if (upright !== converted) converted.dispose();
-              const g = sync.geometry.getBlocking();
-              const rect = g
-                ? guideToImageRect(g.guide, g.view, { width: upright.width, height: upright.height }, guideMargin)
-                : null;
-              let out = upright;
-              if (rect) {
-                out = upright.crop(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
-                upright.dispose();
-              }
-              scheduleOnRN(onFrameImage, out, metrics.sharpness);
-            } catch {
-              sync.busy.setBlocking(false);
-            }
+            // Upright once, crop to the guide; intermediates are disposed inside.
+            // Before the guide is laid out the whole upright frame is kept.
+            const g = sync.geometry.getBlocking();
+            const result = cropFrameToGuide(
+              frame,
+              g ? { guide: g.guide, view: g.view, margin: guideMargin } : null,
+              PLATFORM,
+              false,
+            );
+            if (result.ok) scheduleOnRN(onFrameImage, result.image, metrics.sharpness);
+            else sync.busy.setBlocking(false);
           }
         }
         scheduleOnRN(onSample, issue);

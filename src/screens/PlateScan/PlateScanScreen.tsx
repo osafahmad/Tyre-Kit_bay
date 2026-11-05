@@ -22,9 +22,15 @@ import { plateCandidate } from '../../ml/ocr/textCandidates';
 import { plateSearchKey } from '../../features/inspection/validation';
 import { feedback } from '../../features/feedback/feedback';
 import { colors } from '../../theme';
+import { ocrConfig } from '../../config/capture';
 
 export const OCR_UNAVAILABLE = "Text reading isn't available. Type it instead.";
 export const OCR_FAILING = "Text can't be read right now. Use Capture, or type it.";
+/** Capture press: ML Kit itself failed (native error), as opposed to reading no text. */
+export const OCR_ERROR = 'Text reading failed. Try again, or type it.';
+/** Capture press: no usable camera image reached text reading. */
+export const CAMERA_IMAGE_ERROR = "Couldn't get an image from the camera. Try again, or type it.";
+export const PLATE_NOT_READ = "Couldn't read the plate. Try again, or type it.";
 
 /**
  * 08 Scan number plate (PlateScan.dc.html). OCR runs only on the guide box.
@@ -55,12 +61,17 @@ export function PlateScanScreen() {
     navigation.navigate('PlateConfirm', { plate });
   };
 
-  const onResult = ({ lines, manual }: ScanResult) => {
+  const onResult = ({ lines, manual, failure }: ScanResult) => {
     if (leaving) return;
+    if (failure) {
+      if (manual) setMessage(failure === 'ocr' ? OCR_ERROR : CAMERA_IMAGE_ERROR);
+      return;
+    }
+    // OCR-only rules: a value that isn't plate-shaped is never shown as "Plate found".
     const value = plateCandidate(lines);
     if (manual) {
       if (value) found(value);
-      else setMessage("Couldn't read the plate. Try again, or type it.");
+      else setMessage(PLATE_NOT_READ);
       return;
     }
     const stable = stabilizer.current.push(value);
@@ -138,9 +149,9 @@ export function PlateScanScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.black },
   guide: {
-    width: 260,
+    width: ocrConfig.plateGuideWidth,
     maxWidth: '86%',
-    height: 86,
+    height: ocrConfig.plateGuideHeight,
     borderWidth: 3,
     borderColor: colors.cameraBlue,
     borderRadius: 10,

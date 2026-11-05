@@ -21,7 +21,12 @@ import { ReadStabilizer } from '../../features/capture/readStabilizer';
 import { chassisCandidate } from '../../ml/ocr/textCandidates';
 import { useInspectionStore } from '../../features/inspection/store';
 import { feedback } from '../../features/feedback/feedback';
-import { OCR_FAILING, OCR_UNAVAILABLE } from '../PlateScan/PlateScanScreen';
+import {
+  CAMERA_IMAGE_ERROR,
+  OCR_ERROR,
+  OCR_FAILING,
+  OCR_UNAVAILABLE,
+} from '../PlateScan/PlateScanScreen';
 import { colors, radius } from '../../theme';
 
 /**
@@ -56,8 +61,12 @@ export function ChassisScanScreen() {
     navigation.navigate('VehicleDetails');
   };
 
-  const onResult = ({ lines, crop, manual }: ScanResult) => {
+  const onResult = ({ lines, crop, manual, failure }: ScanResult) => {
     if (leaving) return;
+    if (failure) {
+      if (manual) setMessage(failure === 'ocr' ? OCR_ERROR : CAMERA_IMAGE_ERROR);
+      return;
+    }
     const read = chassisCandidate(lines, crop.height);
     setTooSmall(read.tooSmall);
     if (manual) {

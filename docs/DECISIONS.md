@@ -108,7 +108,7 @@ Xcode 27 needed the Metal toolchain component (`xcodebuild -downloadComponent Me
 - **Permission flow.** `Start scan` opens Camera access first when the permission hasn't been asked (`Allow camera` → system prompt; either answer, or `Not now`, continues to Scan number plate). On the scan screens the viewfinder shows `Allow camera access` / `Allow camera` while the system can still ask, and `Camera access is off` / `Turn it on in Settings to scan tyres.` / `Open Settings` once it can't. Access is re-checked when the app comes back from Settings. First-launch Camera access still goes Home after either answer.
 - **Android "permanently denied".** Android allows one more prompt after the first denial and then stops showing it silently. The app treats a denial as permanent once it has asked in the current session. After an app restart, the first `Allow camera` tap on a permanently denied Android phone shows no prompt, then the screen switches to `Open Settings`. Verified on the emulator: deny → `Allow camera` again → deny → `Camera access is off`; grant from Settings → access refreshed on return.
 - **Camera states.** No back camera → `No camera found`; start error → `The camera stopped` with `Try again`; system interruption → `Camera paused`. Capture is disabled while the camera can't run. `Type it` and `Skip` always work.
-- **How OCR runs (VisionCamera v5 only).** A `useFrameOutput` frame processor worklet, at most one frame at a time: `HybridFrameConverter.convertFrameToImage` → rotate upright from `frame.orientation` → crop to the guide box (mapped through the `cover` preview, plus 8% margin) → hand the crop to JS. Every frame is `dispose()`d in a `finally`, and every intermediate image is disposed. On JS the crop is written to a temporary JPEG, read by ML Kit (Latin, bundled), then the file is deleted. Passes are spaced at least 350 ms apart.
+- **How OCR runs (VisionCamera v5 only).** A `useFrameOutput` frame processor worklet, at most one frame at a time: `HybridFrameConverter.convertFrameToImage` → rotate upright from `frame.orientation` → crop (**superseded**: the extra rotation was a bug, see "Plate OCR real-device fix" below) to the guide box (mapped through the `cover` preview, plus 8% margin) → hand the crop to JS. Every frame is `dispose()`d in a `finally`, and every intermediate image is disposed. On JS the crop is written to a temporary JPEG, read by ML Kit (Latin, bundled), then the file is deleted. Passes are spaced at least 350 ms apart.
 - **Library choice.** `rn-mlkit-ocr` only accepts an image file, so frames go through a temporary file rather than a frame-processor plugin. Nothing leaves the phone.
 - **Stable read.** The same value read 3 times within the last 5 reads (plates compared ignoring spaces and hyphens) → success haptic → Confirm plate, or for chassis → Vehicle details with the number filled in. `Capture` uses the next single read; if nothing readable is found it says so and stays.
 - **No guessing.** Plate text is only uppercased and stripped of characters other than letters, digits, spaces and hyphens; the tallest line in the guide with 2–10 letters/digits is used. Chassis text is the longest run of words on one line making 5–17 letters/digits with at least one digit; a leading `VIN`/`CHASSIS`/`NO` label is dropped. Letters and digits are never swapped (O/0, I/1, B/8), nothing is padded to 17, and no format is enforced. Anything not read stays empty.
@@ -153,7 +153,7 @@ Unchanged after the bundle ID change: ML Kit setup not modified, decision still 
 - **Timeout counts active time only:** camera live, screen focused, app in front, no dialog open, storage OK.
 - **Real reason on Capture problem** = the most common rejection: too dark → `dark`, overexposed → `glare` (**Too much glare**), blurred → `blur`, moving → `unsteady` (**Hold the phone steady**). With no single cause (standing still on the tread, no usable frames) → `too_few_frames` (**Not enough clear frames**, tips per stage). **`The tyre wasn't detected` is only used once a real detector reports it** (owner decision 3). The dark title says "sidewall" on the sidewall stage (**owner accepted**).
 - **Retry is always one tap:** Capture problem → `Scan sidewall again` / `Scan tread again` (or `Skip this tyre`); camera error → `Try again`; permission off → `Allow camera` or `Open Settings`; low storage or a failed save → `Try again`; Sidewall captured → `Scan sidewall again`; Frames captured → `Scan tread again`.
-- **Frame storage.** Accepted frames are cropped to the guide (plus 8% margin) and written as JPEG (quality 0.9) to a temp folder in caches, then the kept ones are moved to `Documents/frames/<inspection>/<tyre>/<stage>_<time>_<n>.jpg`. Inspections store paths **relative** to Documents (the iOS container path changes across updates). Discarded candidates are deleted right away.
+- **Frame storage.** Accepted frames are cropped to the guide (plus 8% margin) and written as JPEG (quality 0.9 — **bug**, nitro-image's scale is 0–100; now 90, see "Plate OCR real-device fix") to a temp folder in caches, then the kept ones are moved to `Documents/frames/<inspection>/<tyre>/<stage>_<time>_<n>.jpg`. Inspections store paths **relative** to Documents (the iOS container path changes across updates). Discarded candidates are deleted right away.
 - **Deleting abandoned frames:** a new capture of a stage replaces that stage's frames; `Scan this tyre again` and `Skip this tyre` delete the tyre's folder; deleting an unfinished inspection deletes its folder; at startup, leftover temp frames and folders of deleted inspections are removed.
 - **Resume.** Frame paths and the tyre's step are saved as soon as a stage finishes. At startup, saved inspections are checked against the files on disk; a tyre whose frames are missing goes back to the step that needs them. After the sidewall, resume now opens **Sidewall captured** (to review the details) instead of jumping to the tread. A capture interrupted mid-stage restarts that stage.
 - **Low storage (spec §8):** checked before capturing (60 MB free) and on write errors; shows `There isn't enough storage to save these frames. Free up some space and try again.` with `Try again`. Other write failures show `The frames couldn't be saved. Try again.`
@@ -195,3 +195,68 @@ Kept: `Too bright` (overexposed), `Keep moving` (tread: frame too like the last 
 - **Not changed (design files):** `docs/design/source/Main.dc.html` and `Home.dc.html`, and their renders `docs/design/screens/01-welcome.png` and `06-home.png`, still show the old logo label. Design files are reference material and aren't edited.
 - **Welcome shows the name twice** now: the logo label and the `Tyre Kit Bay` title (the design had a different short label above the title). The final logo is still an owner input.
 - **Local Xcode signing:** Xcode stores the signing team in the project file, which was renamed. Reselect the team on the `TyreKitBay` target; don't commit it.
+
+## Plate OCR real-device fix
+
+A clear plate gave "Couldn't read the plate" on an iPhone (Release). Panel data with the phone upright: frame 1920×1080 `left` → converted 1080×1920 → `rotate(90)` → 1920×1080, sideways crop, empty OCR text. Sideways phone: `up`, no rotation, OCR read `PTIUI4t`, shown as "Plate found: PTLUI4T" for the plate ABH514.
+
+### Causes (from the library sources)
+- **Double rotation.** VisionCamera v5's `convertFrameToImage` already applies `frame.orientation`: on iOS it sets the UIImage orientation flag (so `width`/`height` are already upright), and on Android it physically rotates and mirrors the Bitmap (`Matrix.postRotate`). The app then rotated again by the orientation. nitro-image's default `rotate()` on iOS redraws honouring the flag, so the result was turned twice.
+- **Frames followed the phone, not the screen.** `<Camera>` defaults to `orientationSource="device"`. The iPhone UI is locked to portrait, so with the phone sideways the frames were landscape-upright while the preview and guide stayed portrait. The crop no longer matched the guide.
+- **JPEG quality 0.9 on a 0–100 scale** (nitro-image divides by 100 on iOS and passes it to `Bitmap.compress` as an int on Android, which makes it 0). Crops were saved at about 1 % quality. This also affected chassis OCR and saved tyre frames.
+- **Crop and save on iOS ignore the orientation flag.** nitro-image's `crop` uses `cgImage.cropping(to:)` on the raw pixels, and `jpegData` stores the flag as an EXIF tag instead of rotating pixels. So the flag must be baked into the pixels before cropping.
+
+### Fix (JS only, no native change)
+- `CaptureCamera` sets `orientationSource="interface"`: frames follow the screen, like the preview (the iOS preview always follows the interface orientation) and the guide drawn on it.
+- `uprightPlan()` (pure, `guideGeometry.ts`) decides: never rotate by the orientation again; on iOS, when the orientation isn't `up` (or the frame is mirrored), bake the flag once with `rotate(0, false)`. (**Superseded** by the 180° fix below.) That redraws through `UIGraphicsImageRenderer` at scale 1, so the pixels are upright with orientation `.up` and the saved JPEG doesn't depend on an EXIF tag. Android uses the converter's Bitmap as is.
+- `cropFrameToGuide()` (`frameCrop.ts`) is shared by OCR and tyre capture: convert → upright → crop. It disposes the converted and baked images on every path, errors included. The caller owns and disposes the result.
+- JPEG quality is `JPEG_QUALITY_PERCENT = 90` (`config/capture.ts`), named as a percent and checked by a unit test, for plate OCR, chassis OCR and saved tyre frames.
+
+### Capture presses always end visibly
+- A Capture press is answered by the next pass. It's also answered if the camera-thread conversion or crop fails, the guide isn't laid out, or the crop rect is null. If no frame answers within `manualCaptureTimeoutMs` (3 s, estimate), a timeout answers it.
+- Native OCR errors and "no text found" are separate in code (`ScanResult.failure`: `ocr` or `capture`; nothing read means no failure and no lines) and have separate messages:
+  - `ocr`: `Text reading failed. Try again, or type it.`
+  - `capture` (no usable camera image, or saving the crop failed): `Couldn't get an image from the camera. Try again, or type it.`
+  - Nothing plate-shaped read: unchanged `Couldn't read the plate. Try again, or type it.` (chassis: unchanged messages).
+  - These two new strings aren't in the spec.
+
+### Plate reading rules (owner decision)
+- No word filter: `PUNJAB`, `ET&NC` and similar aren't removed by name.
+- A two-line plate is joined into one value with one space (`BKE 2090`), kept as written (`LEA-12 8197`).
+- Lines are joined only when they are stacked, overlap horizontally and have similar text height. Small text above or below the main number is not joined. Thresholds (all estimates, `ocrConfig`): shorter line ≥ 0.7 of the taller line's height; horizontal overlap ≥ 0.5 of the narrower line; gap ≤ 1.0 × the taller line's height; vertical overlap ≤ 0.3 of the shorter line. At most two lines are joined.
+- An OCR candidate must start with a letter, contain digits and end with a digit (and still have 2–10 letters/digits). Otherwise there's no result: a Capture press shows `Couldn't read the plate. Try again, or type it.`, and it is never shown as "Plate found". Of the candidates that pass, the tallest is used.
+- This check is OCR-only. Typed plates are unchanged (letters, numbers, spaces, hyphens; no format).
+- This replaces the M4 behaviour where values like `BOSS` or `12 345` were accepted from OCR.
+
+### Plate guide size (uncalibrated)
+- The plate guide is 260 × **150** pt (`ocrConfig.plateGuideWidth/plateGuideHeight`), up from the design's 260 × 86, so a two-line bike plate fits. Only the height changed; the chassis guide is unchanged.
+- **Differs from the design**: `PlateScan.dc.html` and `08-scan-number-plate.png` show 260 × 86. The design files aren't edited.
+- The size is uncalibrated: check on a phone with real car and bike plates.
+
+### Needs a real phone
+- iOS: the baked image is upright (not upside down or mirrored) in portrait. With the phone sideways or upside down, frames still match the portrait UI.
+- Android: the direction of VisionCamera's `Matrix.postRotate` is assumed correct. The Android activity isn't locked to portrait, so the UI (and with `interface`, the frames) can rotate; check that the guide still matches after rotation.
+- `rotate(0, false)` cost on a full 1920×1080 frame per OCR pass and per accepted tyre frame.
+- Join thresholds and guide height with real two-line plates.
+
+## 180° orientation fix (second device test)
+
+After the fix above: phone upright, plate and chassis OCR read nothing; phone upside down, both read correctly. So the OCR image was rotated 180° from the preview, not mirrored.
+
+### Root cause (react-native-vision-camera 5.2.4 source)
+- `frame.orientation` is right. VisionCamera documents `'left'` as pixel data rotated −90°, so the scene's top is on the buffer's left and it needs 90° clockwise to be upright. On iPhone the frame connection keeps AVFoundation's default `landscapeRight`, which `AV+CameraOrientation` maps to `.left` (device panel: `left`).
+- **iOS:** `CameraOrientation.toUIImageOrientation` maps `.left → UIImage.Orientation.left`. UIKit displays `.left` turned 90° counter-clockwise (EXIF 8). The flag for this buffer is `.right` (90° clockwise, EXIF 6, the flag iPhone portrait photos use). So the converter's UIImage is upright-minus-180°. nitro-image's `rotate(0, false)` just redraws with that flag, so the error went through to the crop and the JPEG unchanged. `up` and `down` are mapped correctly.
+- **Android, same error:** CameraX `rotationDegrees` (the clockwise turn to make it upright, 90 in portrait) → `fromDegrees(90)` = `LEFT` → `LEFT.degrees` = 270 → `toBitmap` does `postRotate(270)`. That's −rotationDegrees instead of +rotationDegrees, so it's 180° off for 90/270 and right for 0/180. Proven from source plus the documented CameraX and Matrix behaviour; **not verified on a device.**
+
+### Fix
+- One shared place: `uprightPlan()` adds a 180° correction for `left`/`right` on both platforms. `cropFrameToGuide()` applies it in the same single redraw: `rotate(180, false)` on iOS (flag applied, then 180°, pixels `.up`) and a physical `rotate(180)` on Android. No phone-position check, no OCR retries.
+- A 180° turn commutes with mirroring, so mirrored frames are corrected too (not used: the back camera isn't mirrored).
+- Plate OCR, chassis OCR and saved tyre frames all use `cropFrameToGuide()`.
+- **Saved tyre frames:** from the first fix until this one, frames saved on an iPhone held upright were upside down. Before that they were sideways. Any frames saved during device testing are wrong and should be retaken.
+- If a later VisionCamera release fixes `toUIImageOrientation` or Android `toBitmap`, this correction becomes a 180° error. Re-check on every VisionCamera upgrade (`orientationModel.test.ts` describes the expected chain; see the orientation retest item in RELEASE_CHECKLIST.md). `react-native-vision-camera` is pinned to exactly `5.2.4` for this reason.
+
+### Why earlier tests missed it
+The fake images only tracked width and height, and the fake converter returned an image assumed upright. A 180° turn doesn't change width or height, so every size and call assertion passed. `orientationModel.test.ts` now models the pixels through each documented native step. It reproduces both device results (sideways before the first fix, upside down after it) and shows the corrected chain upright for every orientation. It still can't prove the native libraries behave as modelled; only a device can.
+
+### Diagnostic panel removed
+The iPhone device test passed with upright frames, thumbnails matching the guide box, and correct plate and chassis reads. The temporary `TEMP_OCR_DIAGNOSTIC` panel and its collection code were then removed. Android remains unverified on a device.
