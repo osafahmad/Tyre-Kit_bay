@@ -3,7 +3,11 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText, Button, DarkContentHeader } from '../../components';
 import { useRootNavigation } from '../../app/navigation';
-import { useCurrentInspection, useInspectionStore } from '../../features/inspection/store';
+import {
+  nextTyre,
+  useCurrentInspection,
+  useInspectionStore,
+} from '../../features/inspection/store';
 import {
   DEFAULT_TYRE_COUNT,
   TYRE_COUNTS,
@@ -87,13 +91,14 @@ export function SelectTyresScreen() {
 
   const onContinue = () => {
     selectTyres(ordered);
-    const first = useInspectionStore
-      .getState()
-      .inspections.find(i => i.id === inspection?.id)
-      ?.tyres.find(t => t.state !== 'done' && t.state !== 'skipped');
+    const updated = useInspectionStore.getState().inspections.find(i => i.id === inspection?.id);
+    const first = updated ? nextTyre(updated) : null;
     if (first) {
       updateTyre(first.id, { state: 'capturing_sidewall' });
       navigation.navigate('SidewallCapture', { tyreId: first.id });
+    } else if (updated) {
+      // Every selected tyre is already analysed, skipped or waiting for analysis.
+      navigation.navigate('InspectionProgress');
     }
   };
 

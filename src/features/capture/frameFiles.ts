@@ -140,7 +140,8 @@ export async function reconcileFrames(inspections: Inspection[]): Promise<Inspec
       if (state === 'capturing_tread' && sidewallFrames.length < sidewallMinFrames) {
         state = 'capturing_sidewall';
       }
-      if ((state === 'captured' || state === 'analysing' || state === 'failed') &&
+      if ((state === 'captured' || state === 'analysing' || state === 'failed' ||
+           state === 'pending_analysis') &&
           (sidewallFrames.length < sidewallMinFrames || treadFrames.length < treadMinFrames)) {
         state = sidewallFrames.length < sidewallMinFrames ? 'capturing_sidewall' : 'capturing_tread';
       }

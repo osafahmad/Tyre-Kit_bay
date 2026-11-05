@@ -6,12 +6,14 @@ import { resetToReport, useRootNavigation } from '../../app/navigation';
 import {
   analysedTyres,
   nextTyre,
+  scannedTyres,
   useCurrentInspection,
   useInspectionStore,
 } from '../../features/inspection/store';
 import { tyreDetailLine } from '../../features/inspection/format';
 import type { TyreInspection } from '../../features/inspection/types';
 import { isDemoVersion } from '../../ml';
+import { ANALYSIS_PENDING_LABEL } from '../../features/report/summary';
 import { colors, radius, sizes } from '../../theme';
 
 /** 20 Inspection progress (Progress.dc.html). */
@@ -25,6 +27,8 @@ export function InspectionProgressScreen() {
 
   const total = inspection.tyres.length;
   const analysed = analysedTyres(inspection);
+  // Pending tyres were captured, so they count as scanned (they have no result yet).
+  const scanned = scannedTyres(inspection);
   const next = nextTyre(inspection);
   const demo = isDemoVersion(inspection.analyzerVersion) && analysed.length > 0;
 
@@ -46,11 +50,11 @@ export function InspectionProgressScreen() {
           {inspection.plate ?? 'No plate'}
         </AppText>
         <AppText variant="headerTitle" color="white" accessibilityRole="header" style={styles.title}>
-          {`${analysed.length} of ${total} tyres scanned`}
+          {`${scanned.length} of ${total} tyres scanned`}
         </AppText>
         <ProgressSegments
           total={total}
-          filled={analysed.length}
+          filled={scanned.length}
           activeColor="cameraBlue"
           inactiveColor="darkLine"
           accessibilityLabel="Tyres scanned"
@@ -79,7 +83,7 @@ export function InspectionProgressScreen() {
         ) : (
           <Button label="View report" onPress={viewReport} />
         )}
-        {next && analysed.length > 0 ? (
+        {next && scanned.length > 0 ? (
           <Button label="Finish and view report" variant="text" onPress={viewReport} />
         ) : null}
       </View>
@@ -119,7 +123,14 @@ function TyreRow({
       </Pressable>
     );
   }
-  const label = tyre.state === 'skipped' ? 'Not scanned' : isNext ? 'Next' : 'Waiting';
+  const label =
+    tyre.state === 'skipped'
+      ? 'Not scanned'
+      : tyre.state === 'pending_analysis'
+        ? ANALYSIS_PENDING_LABEL
+        : isNext
+          ? 'Next'
+          : 'Waiting';
   return (
     <View style={[styles.row, isNext && styles.next]} accessible accessibilityLabel={`${tyre.position}, ${label}`}>
       <AppText variant="bodySmall" weight={isNext ? 'semibold' : 'medium'}>

@@ -12,7 +12,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AppText, Button, InspectionRow, LogoMark } from '../../components';
 import type { RootStackParamList, TabParamList } from '../../app/routes';
 import {
-  analysedTyres,
+  scannedTyres,
   useCurrentInspection,
   useInspectionStore,
   useSavedInspections,
@@ -91,7 +91,7 @@ export function HomeScreen() {
               {`${current.plate ?? 'No plate'} · ${
                 current.tyres.length === 0
                   ? 'Tyres not chosen yet'
-                  : `${analysedTyres(current).length} of ${current.tyres.length} tyres scanned`
+                  : `${scannedTyres(current).length} of ${current.tyres.length} tyres scanned`
               }`}
             </AppText>
             <Button label="Continue inspection" height={52} onPress={continueCurrent} />
@@ -141,6 +141,7 @@ export function HomeScreen() {
               )}`}
               status={inspectionStatus(i.tyres)}
               isDemo={isDemoVersion(i.analyzerVersion)}
+              pending={i.tyres.some(t => t.state === 'pending_analysis')}
               onPress={() => navigation.navigate('Report', { inspectionId: i.id })}
             />
           ))

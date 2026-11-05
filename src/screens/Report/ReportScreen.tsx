@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check, Info, TriangleAlert } from 'lucide-react-native';
@@ -7,24 +7,41 @@ import { AppText, Button, DemoDataLabel, StatusBadge } from '../../components';
 import type { RootStackParamList } from '../../app/routes';
 import { resetToHome } from '../../app/navigation';
 import { useInspection } from '../../features/inspection/store';
-import { formatLongDateTime, tyreDetailLine } from '../../features/inspection/format';
-import { reportSummary } from '../../features/report/summary';
+import { formatLongDateTime } from '../../features/inspection/format';
+import { reportSummary, reportTyreRows } from '../../features/report/summary';
+import { shareReport } from '../../features/report/shareReport';
 import { isDemoVersion } from '../../ml';
 import { colors, monospaceFont, radius, sizes, statusColors } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Report'>;
 
-/** 21 Final report (Report.dc.html). PDF sharing is added in M6. */
+export const SHARE_FAILED_MESSAGE = "The report couldn't be shared. Try again.";
+
+/** 21 Final report (Report.dc.html). Share makes a PDF on the phone and opens the share sheet. */
 export function ReportScreen({ navigation, route }: Props) {
   const { inspectionId } = route.params;
   const insets = useSafeAreaInsets();
   const inspection = useInspection(inspectionId);
+  const [sharing, setSharing] = useState(false);
   if (!inspection) return null;
 
   const summary = reportSummary(inspection);
   const palette = summary.status ? statusColors[summary.status] : null;
   const SummaryIcon = summary.status === 'good' ? Check : summary.status ? TriangleAlert : Info;
   const demo = isDemoVersion(inspection.analyzerVersion);
+  const rows = reportTyreRows(inspection);
+
+  const onShare = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      await shareReport(inspection, { demo });
+    } catch {
+      Alert.alert('Share report', SHARE_FAILED_MESSAGE);
+    } finally {
+      setSharing(false);
+    }
+  };
 
   return (
     <View style={styles.root}>
@@ -68,34 +85,32 @@ export function ReportScreen({ navigation, route }: Props) {
           </View>
         </View>
         <View style={styles.list}>
-          {inspection.tyres.map(t => {
-            const scanned = t.state === 'done' && t.result !== null;
-            const detail = tyreDetailLine(t.result);
+          {rows.map(r => {
             const content = (
               <>
                 <View style={styles.rowText}>
                   <AppText variant="bodySmall" weight="semibold">
-                    {t.position}
+                    {r.position}
                   </AppText>
-                  {detail ? (
+                  {r.detail ? (
                     <AppText variant="caption" color="textSecondary">
-                      {detail}
+                      {r.detail}
                     </AppText>
                   ) : null}
                 </View>
-                {scanned ? (
-                  <StatusBadge status={t.result!.status} />
+                {r.status ? (
+                  <StatusBadge status={r.status} />
                 ) : (
                   <AppText variant="caption" color="textSecondary">
-                    Not scanned
+                    {r.label}
                   </AppText>
                 )}
               </>
             );
-            return scanned ? (
+            return r.kind === 'result' ? (
               <Pressable
-                key={t.id}
-                onPress={() => navigation.navigate('TyreResult', { inspectionId, tyreId: t.id })}
+                key={r.tyreId}
+                onPress={() => navigation.navigate('TyreResult', { inspectionId, tyreId: r.tyreId })}
                 accessibilityRole="button"
                 accessibilityHint="Opens the tyre result"
                 style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}
@@ -103,7 +118,7 @@ export function ReportScreen({ navigation, route }: Props) {
                 {content}
               </Pressable>
             ) : (
-              <View key={t.id} style={styles.row} accessible>
+              <View key={r.tyreId} style={styles.row} accessible>
                 {content}
               </View>
             );
@@ -112,8 +127,9 @@ export function ReportScreen({ navigation, route }: Props) {
       </ScrollView>
       <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}>
         <Button
-          label="Share report"
-          onPress={() => Alert.alert('Share report', 'PDF sharing is added in a later milestone.')}
+          label={sharing ? 'Preparing report…' : 'Share report'}
+          disabled={sharing}
+          onPress={onShare}
         />
         <Button label="Done" variant="text" height={44} onPress={() => resetToHome(navigation)} />
       </View>

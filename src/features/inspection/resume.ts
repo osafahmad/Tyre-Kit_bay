@@ -1,4 +1,4 @@
-import { analysedTyres, nextTyre } from './store';
+import { nextTyre, scannedTyres } from './store';
 import type { Inspection } from './types';
 import type { RootStackParamList } from '../../app/routes';
 
@@ -17,7 +17,7 @@ export function resumeRoutes(inspection: Inspection): Route[] {
   }
   const tyre = nextTyre(inspection);
   const startedAny =
-    analysedTyres(inspection).length > 0 || inspection.tyres.some(t => t.state === 'skipped');
+    scannedTyres(inspection).length > 0 || inspection.tyres.some(t => t.state === 'skipped');
   const base: Route[] = startedAny ? [{ name: 'InspectionProgress' }] : [];
   if (!tyre) return [{ name: 'InspectionProgress' }];
 

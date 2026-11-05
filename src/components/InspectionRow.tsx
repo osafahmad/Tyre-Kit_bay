@@ -4,25 +4,39 @@ import { colors } from '../theme';
 import type { TyreStatus } from '../features/inspection/types';
 import { AppText } from './AppText';
 import { StatusBadge, statusLabels } from './StatusBadge';
+import { ANALYSIS_PENDING_LABEL } from '../features/report/summary';
 
 type Props = {
   plate: string | null;
   subtitle: string;
   status: TyreStatus | null;
   isDemo: boolean;
+  /** Some tyres are waiting for analysis. Shown as text when there's no status. */
+  pending?: boolean;
   onPress: () => void;
   divider: 'top' | 'bottom';
 };
 
 /** Saved inspection row on Home and History. */
-export function InspectionRow({ plate, subtitle, status, isDemo, onPress, divider }: Props) {
+export function InspectionRow({
+  plate,
+  subtitle,
+  status,
+  isDemo,
+  pending = false,
+  onPress,
+  divider,
+}: Props) {
   const title = plate ?? 'No plate';
+  const note = !status && pending ? ANALYSIS_PENDING_LABEL : null;
   const fullSubtitle = isDemo ? `${subtitle} · Demo data` : subtitle;
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${title}, ${fullSubtitle}${status ? `, ${statusLabels[status]}` : ''}`}
+      accessibilityLabel={`${title}, ${fullSubtitle}${
+        status ? `, ${statusLabels[status]}` : note ? `, ${note}` : ''
+      }`}
       accessibilityHint="Opens the report"
       style={({ pressed }) => [
         styles.row,
@@ -38,7 +52,13 @@ export function InspectionRow({ plate, subtitle, status, isDemo, onPress, divide
           {fullSubtitle}
         </AppText>
       </View>
-      {status ? <StatusBadge status={status} /> : null}
+      {status ? (
+        <StatusBadge status={status} />
+      ) : note ? (
+        <AppText variant="caption" color="textSecondary">
+          {note}
+        </AppText>
+      ) : null}
     </Pressable>
   );
 }

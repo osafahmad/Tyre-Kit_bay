@@ -23,11 +23,11 @@ import {
   formatRim,
 } from '../../features/inspection/format';
 import { isDemoVersion } from '../../ml';
+import { AUTOMATED_CHECK_NOTICE } from '../../features/report/reportHtml';
 import { colors, sizes } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TyreResult'>;
 
-export const AUTOMATED_CHECK_NOTICE = "Automated check. It doesn't replace a professional inspection.";
 
 /** 19 Tyre result (TyreResult.dc.html). */
 export function TyreResultScreen({ navigation, route }: Props) {

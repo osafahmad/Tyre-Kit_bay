@@ -5,6 +5,7 @@ import { Check, Circle, LoaderCircle } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AnalysisRing, AppText, Button, DemoDataLabel } from '../../components';
 import type { RootStackParamList } from '../../app/routes';
+import { resetToProgress } from '../../app/navigation';
 import { useInspectionStore, useTyre } from '../../features/inspection/store';
 import { tyreName } from '../../features/inspection/positions';
 import { feedback } from '../../features/feedback/feedback';
@@ -19,19 +20,32 @@ const steps: { key: AnalysisStep; label: string }[] = [
   { key: 'damage', label: 'Checking for cracks and damage' },
 ];
 
-/** 18 Analysing on phone (Analysing.dc.html). Advances automatically. */
+export const ANALYSIS_PENDING_TITLE = 'Analysis pending';
+
+export function analysisPendingText(name: string): string {
+  return `${name} frames are saved on this phone. The tyre models aren't in this app yet, so there's no result for it.`;
+}
+
+type Outcome = 'running' | 'failed' | 'pending';
+
+/**
+ * 18 Analysing on phone (Analysing.dc.html). Advances automatically.
+ * If the models aren't in this build, the tyre is kept as `Analysis pending`
+ * (frames saved, no result) and the inspection carries on. Nothing is made up.
+ */
 export function AnalysingScreen({ navigation, route }: Props) {
   const { tyreId } = route.params;
   const insets = useSafeAreaInsets();
   const found = useTyre(tyreId);
   const setResult = useInspectionStore(s => s.setResult);
   const setAnalysisFailed = useInspectionStore(s => s.setAnalysisFailed);
+  const setAnalysisPending = useInspectionStore(s => s.setAnalysisPending);
   const updateTyre = useInspectionStore(s => s.updateTyre);
   const resetTyre = useInspectionStore(s => s.resetTyre);
   const analyzer = getAnalyzer();
 
   const [current, setCurrent] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<Outcome>('running');
   const [attempt, setAttempt] = useState(0);
   const mounted = useRef(true);
   useEffect(
@@ -46,7 +60,7 @@ export function AnalysingScreen({ navigation, route }: Props) {
   const run = useCallback(async () => {
     const tyre = latestTyre(tyreId);
     if (!tyre) return;
-    setError(null);
+    setOutcome('running');
     setCurrent(0);
     updateTyre(tyreId, { state: 'analysing' });
     try {
@@ -70,20 +84,38 @@ export function AnalysingScreen({ navigation, route }: Props) {
       navigation.replace('TyreResult', { inspectionId: found!.inspection.id, tyreId });
     } catch (e) {
       if (!mounted.current) return;
+      if (e instanceof AnalyzerUnavailableError) {
+        // No models: keep the frames and record no result.
+        setAnalysisPending(tyreId);
+        setOutcome('pending');
+        feedback.warning(`${ANALYSIS_PENDING_TITLE}. The frames are saved.`);
+        return;
+      }
       setAnalysisFailed(tyreId);
-      setError(e instanceof AnalyzerUnavailableError ? e.message : null);
+      setOutcome('failed');
       feedback.warning("This tyre couldn't be analysed.");
     }
     // `found` is read once per run; re-running is driven by `attempt`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analyzer, navigation, setAnalysisFailed, setResult, tyreId, updateTyre, attempt]);
+  }, [
+    analyzer,
+    navigation,
+    setAnalysisFailed,
+    setAnalysisPending,
+    setResult,
+    tyreId,
+    updateTyre,
+    attempt,
+  ]);
 
   useEffect(() => {
     run();
   }, [run]);
 
   if (!found) return null;
-  const failed = error !== null || found.tyre.state === 'failed';
+  const pending = outcome === 'pending';
+  const failed = outcome === 'failed' || (outcome !== 'pending' && found.tyre.state === 'failed');
+  const stopped = failed || pending;
 
   return (
     <View
@@ -94,20 +126,24 @@ export function AnalysingScreen({ navigation, route }: Props) {
     >
       <View style={styles.body}>
         <View style={styles.ring}>
-          <AnalysisRing progress={failed ? 0 : (current + 0.5) / steps.length} />
+          <AnalysisRing progress={stopped ? 0 : (current + 0.5) / steps.length} />
         </View>
         <AppText variant="headerTitle" align="center" accessibilityRole="header" style={styles.title}>
-          {failed ? "This tyre couldn't be analysed." : 'Analysing tyre'}
+          {pending
+            ? ANALYSIS_PENDING_TITLE
+            : failed
+              ? "This tyre couldn't be analysed."
+              : 'Analysing tyre'}
         </AppText>
         <AppText variant="bodySmall" color="textSecondary" align="center" style={styles.lead}>
-          {failed && error ? error : `${name} · Running on this phone`}
+          {pending ? analysisPendingText(name) : `${name} · Running on this phone`}
         </AppText>
-        {analyzer.isDemo && !failed ? (
+        {analyzer.isDemo && !stopped ? (
           <View style={styles.demo}>
             <DemoDataLabel />
           </View>
         ) : null}
-        {failed ? null : (
+        {stopped ? null : (
           <View style={styles.steps} accessibilityLiveRegion="polite">
             {steps.map((s, i) => {
               const Icon = i < current ? Check : i === current ? LoaderCircle : Circle;
@@ -131,6 +167,12 @@ export function AnalysingScreen({ navigation, route }: Props) {
           </View>
         )}
       </View>
+      {pending ? (
+        <View style={styles.actions}>
+          <Button label="Next tyre" onPress={() => resetToProgress(navigation)} />
+          <Button label="Try again" variant="text" onPress={() => setAttempt(a => a + 1)} />
+        </View>
+      ) : null}
       {failed ? (
         <View style={styles.actions}>
           <Button label="Try again" onPress={() => setAttempt(a => a + 1)} />

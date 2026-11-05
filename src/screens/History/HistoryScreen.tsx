@@ -93,6 +93,7 @@ export function HistoryScreen() {
               subtitle={`${when} · ${formatTyreCount(item.tyres.length)}`}
               status={inspectionStatus(item.tyres)}
               isDemo={isDemoVersion(item.analyzerVersion)}
+              pending={item.tyres.some(t => t.state === 'pending_analysis')}
               onPress={() => navigation.navigate('Report', { inspectionId: item.id })}
             />
           );

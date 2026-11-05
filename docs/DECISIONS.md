@@ -275,3 +275,29 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 - **Choosing between reads on a frame:** standard VIN beats JDM beats tier 3; within a tier the longer read wins.
 - `Move closer` is only shown for small text that would otherwise have passed the validator.
 - The stored chassis is the normalised value (no hyphen). The tiers are uncalibrated against real plates; check on a phone with real VIN plates, JDM frame stamps and bike frames.
+
+## M6: inspection flow without models, report and PDF sharing
+
+### Analysis pending (owner request; differs from spec)
+- New `TyreFlowState` value `pending_analysis` (not in spec §6's union). When the analyzer throws `AnalyzerUnavailableError` (release build, models not bundled), the tyre keeps its sidewall/tread frames and confirmed sidewall details, gets **no result**, and the inspection moves on. Nothing is estimated.
+- Before this, a release build stopped at the first tyre: analysis failed and the only options were `Try again` or rescan.
+- Analysing shows `Analysis pending` and `{Tyre name} frames are saved on this phone. The tyre models aren't in this app yet, so there's no result for it.`, with `Next tyre` (→ Inspection progress) and `Try again`. Real analysis errors (the model ran and failed) still show the spec's `This tyre couldn't be analysed.` screen.
+- Counting: pending tyres count as scanned in `X of N tyres scanned`, the progress segments and Home's unfinished card, and enable `Finish and view report` (spec: "when at least one tyre is analysed"). They never get a status and are ignored by `inspectionStatus` (spec §5 rule 6).
+- Report: pending rows show size (only if read/typed and confirmed) and `N frames saved`, labelled `Analysis pending` in secondary text, not a status colour. Summary: only pending → headline `Analysis pending`; otherwise the worst real result leads and `1 tyre is waiting for analysis.` / `N tyres are waiting for analysis.` is added. Home and History rows show `Analysis pending` when there's no status.
+- Restart: a pending tyre whose frames are missing goes back to capture, as for `captured`/`failed`.
+- **Not built:** re-analysing pending tyres in a finished inspection once models ship (M7). The frames are kept for that.
+
+### PDF and sharing
+- `reportHtml()` (`features/report/reportHtml.ts`): self-contained HTML (no remote fonts, images or scripts), every user value escaped, theme colours only, status colours only with labels, `Demo data` notice for demo inspections, the automated-check footer.
+- `shareReport()`: `generatePDF` with no `directory`, so the file goes to iOS `NSTemporaryDirectory()` / Android `cacheDir` (react-native-share's FileProvider covers `cache-path /`). Passing `directory` on Android would write to external storage, so it isn't used. The previous PDF is deleted when the next one is made, not right after sharing, because the receiving app may still be reading it. `Inspection.reportPath` stays `null`.
+- File name `tyre-report-YYYYMMDD-HHmm`. It has no plate, because other apps can see the file name.
+- New strings not in the spec: `Preparing report…` (button while the PDF is made) and `The report couldn't be shared. Try again.`
+- Report rows come from one function, `reportTyreRows()`, used by both the screen and the PDF.
+
+### Not changed
+- Tyre layouts stay as spec §4.12 (2 / 4 / 6, those positions). No spare position: the spec leaves custom layouts out of the first release.
+- Report rows don't show frame thumbnails. `21-final-report.png` has none. The saved-frame count stands in until a design is agreed.
+
+### Needs a real phone
+- PDF rendering on iOS (WKWebView) and Android (PrintDocumentAdapter), share sheet to Mail/WhatsApp/Files, and opening the PDF in the receiving app on Android via the FileProvider.
+- Release build: analysis-pending path end to end.

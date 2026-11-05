@@ -67,3 +67,13 @@ jest.mock('@dr.pogodin/react-native-fs', () => ({
   readDir: jest.fn(async () => []),
   getFSInfo: jest.fn(async () => ({ freeSpace: 10e9, totalSpace: 64e9 })),
 }));
+
+// PDF and share sheet are native. Tests inspect the calls.
+jest.mock('react-native-html-to-pdf', () => ({
+  generatePDF: jest.fn(async options => ({ filePath: `/tmp/${options.fileName}.pdf` })),
+}));
+
+jest.mock('react-native-share', () => ({
+  __esModule: true,
+  default: { open: jest.fn(async () => ({ success: true, message: 'shared' })) },
+}));

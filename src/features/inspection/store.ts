@@ -40,13 +40,30 @@ function newTyre(position: string): TyreInspection {
   };
 }
 
-/** The tyre to scan next: first one not finished or skipped, in scan order. */
+/** States the inspection moves on from: nothing more to capture for this tyre. */
+export function isSettled(tyre: TyreInspection): boolean {
+  return tyre.state === 'done' || tyre.state === 'skipped' || tyre.state === 'pending_analysis';
+}
+
+/** The tyre to scan next: first one not finished, skipped or waiting for analysis, in scan order. */
 export function nextTyre(inspection: Inspection): TyreInspection | null {
-  return inspection.tyres.find(t => t.state !== 'done' && t.state !== 'skipped') ?? null;
+  return inspection.tyres.find(t => !isSettled(t)) ?? null;
 }
 
 export function analysedTyres(inspection: Inspection): TyreInspection[] {
   return inspection.tyres.filter(t => t.state === 'done' && t.result !== null);
+}
+
+/** Captured and saved, but not analysed because the models aren't available. */
+export function pendingTyres(inspection: Inspection): TyreInspection[] {
+  return inspection.tyres.filter(t => t.state === 'pending_analysis');
+}
+
+/** Tyres whose frames were captured: analysed or waiting for analysis. */
+export function scannedTyres(inspection: Inspection): TyreInspection[] {
+  return inspection.tyres.filter(
+    t => (t.state === 'done' && t.result !== null) || t.state === 'pending_analysis',
+  );
 }
 
 type State = {
@@ -67,6 +84,8 @@ type Actions = {
   skipTyre(tyreId: string): void;
   setResult(tyreId: string, result: TyreResult): void;
   setAnalysisFailed(tyreId: string): void;
+  /** Models aren't available: keep the frames, record no result, move on. */
+  setAnalysisPending(tyreId: string): void;
   /** Restart a tyre's capture (Scan this tyre again). */
   resetTyre(tyreId: string): void;
   completeInspection(): string | null;
@@ -169,6 +188,10 @@ export const useInspectionStore = create<InspectionStore>()((set, get) => {
 
     setAnalysisFailed(tyreId) {
       patchTyre(tyreId, t => ({ ...t, state: 'failed', errorReason: 'analysis_failed' }));
+    },
+
+    setAnalysisPending(tyreId) {
+      patchTyre(tyreId, t => ({ ...t, state: 'pending_analysis', result: null, errorReason: null }));
     },
 
     resetTyre(tyreId) {

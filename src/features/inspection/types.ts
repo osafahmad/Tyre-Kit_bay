@@ -10,7 +10,13 @@ export type TyreFlowState =
   | 'analysing'
   | 'done'
   | 'skipped'
-  | 'failed';
+  | 'failed'
+  /**
+   * Not in the spec's union (owner decision, M6): frames are captured and saved,
+   * but the tyre models aren't in this build, so there's no result. Nothing is
+   * made up; the tyre waits for analysis and the inspection carries on.
+   */
+  | 'pending_analysis';
 
 export type TyreResult = {
   status: TyreStatus;
