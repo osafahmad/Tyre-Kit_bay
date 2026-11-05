@@ -306,3 +306,40 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 ### Verified on real devices
 - PDF generation and the system share sheet work offline on a physical iPhone and Android phone.
 - The release-build `Analysis pending` fallback works end to end through a multi-tyre inspection on both platforms.
+
+## M7 Phase 1: inference layer skeleton (no models yet)
+
+**Status: built and unit-tested only. Nothing here has run on a phone or against a real `.tflite` file.** `modelManifest` is still all `null`, so release builds behave exactly as in M6 (`Analysis pending`).
+
+### Library check
+- `react-native-fast-tflite` 3.0.1 (already pinned in M0, built on both platforms then). Nitro-based, peers `react-native: *` and `react-native-nitro-modules: *` (we have 0.37.2). v3 API: `loadTensorflowModel(source, delegates[])`, `model.run(ArrayBuffer[])`, tensors expose `name`, `dataType` and `shape`, but **not quantization scale/zero-point**, so those must come from the manifest. No new packages were installed.
+- **Android release limitation found in the library source:** its `AssetLoader` does `java.net.URL(path).readBytes()`. In an Android release build `require('…tflite')` resolves to a raw-resource name (e.g. `assets_models_tread_model_int8`), which isn't a URL. The loader therefore copies the raw resource to `Caches/models/` with `@dr.pogodin/react-native-fs` `copyFileRes` and opens it as `file://`. iOS release resolves to a `file://` path inside the bundle. Development builds load from Metro's URL; **release builds refuse any `http(s)` model URL**, so models are never downloaded.
+- Frames are decoded with `react-native-nitro-image` (`loadFromFileAsync` → optional `cropAsync` → `resizeAsync` → `toRawPixelDataAsync`); every intermediate image is disposed.
+- `react-native-fast-tflite` and `react-native-nitro-image` are `require`d lazily, only when a model is actually opened or a frame decoded.
+
+### Structure (`src/ml/inference/`)
+- `types.ts`: model handle, load failures, tensor spec, and input/output types for `TyreDetector`, `SidewallExtractor`, `TreadEstimator` and `DamageClassifier`.
+- `modelLoader.ts`: never throws. Order: manifest entry present → entry valid → asset really in the bundle → open with acceleration, falling back to CPU → loaded tensors match the manifest. Failure reasons: `not_in_manifest`, `invalid_manifest`, `asset_missing`, `load_failed`, `manifest_mismatch`.
+- `tensorUtils.ts`: pixel format → RGB/BGR, normalisation, uint8/int8 quantization, NHWC/NCHW, stretch or centre crop; output dequantization, softmax, frame averaging.
+- `pipeline.ts`: sidewall → tread → damage → `tyreStatus()`.
+
+### Choices
+- **Manifest typed more strictly** (it was all `null`, so nothing changed at runtime). Added the fields the pipeline needs, all to come from the training output: `inputLayout`, `colorOrder`, `resize`, `inputQuantization`, `outputType`, `outputQuantization`, `scores` (probabilities or logits), `frames` (which captures a model was trained on), tread `statusByLabel`, damage `damageLabels`. `normalisation` is defined as `(pixel0–255 − mean) / std`.
+- **Sidewall has no TFLite model.** Spec §7 reads the sidewall with ML Kit OCR and parsers, so `SidewallExtractor` uses only the user-confirmed values (same as the demo analyzer). Nothing is guessed.
+- **Required for analysis: tread and damage.** The detector is preview-only (spec §7) and isn't needed. If either model is missing the tyre stays `Analysis pending`; no partial result is shown.
+- **Frames:** each classifier runs on its frames one at a time, and per-frame probabilities are averaged.
+- **Tread:** the top class must reach `confidenceThreshold`, otherwise `This tyre couldn't be analysed.` (retry or rescan). `treadDepthMm` stays `null` (spec: mm only after gauge validation), so the UI shows status without mm. `wearPattern` is `null`.
+- **Damage:** the summed probability of `damageLabels` ≥ `confidenceThreshold` → damage found. `damageConfidence` is the confidence in the reported answer.
+- **Acceleration:** iOS tries `core-ml`, Android tries `android-gpu`, then CPU. NNAPI is not used (M0).
+- **Development builds** switch from the demo analyzer to the real one as soon as tread and damage are in the manifest. Release builds always use the real one.
+- **Analyzer version** saved on inspections: `tflite:tread@<v>,damage@<v>` (or `tflite-unconfigured`).
+- **New string** (bundled models that fail to open or don't match the manifest): `{Tyre} frames are saved on this phone. The tyre models couldn't be loaded, so there's no result for it yet.` Title stays `Analysis pending`, with `Try again` (the load is retried).
+
+### Not built yet (Phase 2+)
+- Tyre detector output decoding (YOLOX grid decode/NMS) and running it in the preview frame processor. This needs the exported model's output layout. `isTyreDetectorAvailable()` is unchanged.
+- Re-analysing pending tyres in finished inspections.
+
+### Needs a real phone
+- Android: copying the raw resource and loading it with `android-gpu`, then falling back to CPU. iOS: `core-ml` delegate with an int8 model.
+- Nitro Image pixel formats actually returned on each platform (handled: RGB/BGR/RGBA/BGRA/ARGB/ABGR and X variants).
+- Memory, time and heat for 10 tread + 8 sidewall inferences per tyre on a low-end Android phone.
