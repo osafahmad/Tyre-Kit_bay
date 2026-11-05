@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { Camera, useCameraDevice, type CameraFrameOutput } from 'react-native-vision-camera';
 import { AppText, Button } from '../../components';
 import { colors } from '../../theme';
 import { openAppSettings, useCameraAccess } from './useCameraAccess';
 import { useAppActive } from './useAppActive';
+import { describeError, isControlCancellation } from './cameraErrors';
 
 export type CameraIssue = 'no_access' | 'no_camera' | 'error' | null;
 
@@ -42,10 +43,18 @@ export function CaptureCamera({
   const [failed, setFailed] = useState(false);
   const [interrupted, setInterrupted] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  /** Session reported started (Android: CameraX camera OPEN); controls work only then. */
+  const [started, setStarted] = useState(false);
 
   const issue: CameraIssue =
     access !== 'granted' ? 'no_access' : !device ? 'no_camera' : failed ? 'error' : null;
   const live = issue === null && focused && appActive;
+  // VisionCamera sends torchMode to the controller as soon as it exists, before
+  // the camera has opened; on Android that call is rejected ("Camera is not
+  // active"). Leaving it undefined until started skips the call; once started,
+  // the current torch state is applied.
+  const controlsReady = live && started;
+  const torchMode = !controlsReady || !device ? undefined : torchOn && device.hasTorch ? 'on' : 'off';
 
   React.useEffect(() => onIssueChange?.(issue), [issue, onIssueChange]);
   React.useEffect(() => onLiveChange?.(live && !interrupted), [live, interrupted, onLiveChange]);
@@ -65,8 +74,19 @@ export function CaptureCamera({
           // locked to portrait a sideways phone gave frames that no longer
           // matched the guide.
           orientationSource="interface"
-          torchMode={torchOn && device.hasTorch ? 'on' : 'off'}
-          onError={() => setFailed(true)}
+          torchMode={torchMode}
+          onStarted={() => setStarted(true)}
+          onStopped={() => setStarted(false)}
+          onError={error => {
+            // Kept on the phone (device log only), so the native reason isn't lost.
+            const cancelled = isControlCancellation(error);
+            console.warn(
+              `[CaptureCamera] ${Platform.OS} camera ${cancelled ? 'control cancelled' : 'error'}: ${describeError(error)}`,
+            );
+            // A cancelled torch/zoom call isn't a session failure; the torch is
+            // re-applied on the next start.
+            if (!cancelled) setFailed(true);
+          }}
           onInterruptionStarted={() => setInterrupted(true)}
           onInterruptionEnded={() => setInterrupted(false)}
         />
@@ -96,6 +116,7 @@ export function CaptureCamera({
           action="Try again"
           onAction={() => {
             setFailed(false);
+            setStarted(false);
             setAttempt(a => a + 1);
           }}
         />

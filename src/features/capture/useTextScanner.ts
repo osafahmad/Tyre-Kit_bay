@@ -162,6 +162,11 @@ export function useTextScanner({
 
   const frameOutput = useFrameOutput({
     targetResolution: CommonResolutions.HD_16_9,
+    // CPU-readable YUV_420_888. The default ('native') asks CameraX for
+    // ImageAnalysis PRIVATE (GPU) buffers, which some Android HALs (seen on a
+    // MediaTek Redmi 13) can't stream next to the preview: the camera opens and
+    // closes again about a second later. OCR copies frames on the CPU anyway.
+    pixelFormat: 'yuv',
     dropFramesWhileBusy: true,
     onFrame,
   });
