@@ -424,3 +424,81 @@ The owner asked for lightweight baseline/stub MobileNetV3 TFLite classifiers (tr
 - The analyzer flow already runs end to end without models: development builds use `DemoTyreAnalyzer` (labelled `Demo data`), and release builds keep tyres as `Analysis pending` until real models are bundled.
 
 **Unblocks it properly:** trained tread and damage `.tflite` files with their input/output details, labels mapped to the three spec statuses, and the confidence thresholds. Then they register in the manifest like `sidewallTextDetector`, with a test against the real files.
+
+## Sidewall OCR diagnostics (2026-11-06) — temporary parts REMOVED after device calibration (see "Milestone wrap-up" below)
+
+On a physical device, every sidewall field showed `Not read`. Added to find out why:
+- `src/ml/ocr/sidewallDebug.ts`: `sidewallLog()` with tag `[SidewallOCR]`. It's on in development builds (`__DEV__`) and off in release builds and Jest (`setSidewallDebug()` overrides). Output goes to the device log only.
+- Logged:
+  - whether the screen starts reading (OCR available, frame count, empty fields);
+  - detector load or fallback, with the loader's failure reason;
+  - per frame: frame size, letterbox, the **best score per label across all anchors (even below 0.25)**, anchors above threshold, and boxes after NMS;
+  - raw ML Kit lines (text and height) for each crop and each full frame;
+  - each parser's rejection reason;
+  - the final agreement decision per field, and a summary.
+- Full-frame fallback reads the **saved frame** (HD 16:9 camera frame cropped to the guide, about 600–700 px), never the 224×224 detector input.
+- **TEMPORARY rule change:** with exactly one saved frame, 1 read is enough to suggest a value. Sidewall capture needs at least 5 frames, so this rarely applies to real scans; the 2-read rule still holds otherwise.
+
+### Device findings, round 1 (2026-11-06)
+- **Detector `run()` throws `TFLite: Failed to run TFLite Model! Status: error`** (CPU). This comes from `TfLiteInterpreterInvoke` in fast-tflite. Input copying can't cause it: fast-tflite ignores `TfLiteTensorCopyFromBuffer`'s status, so a wrong-sized buffer would run silently instead. Layout is ruled out: the native model reports float32 `[1, 3, 224, 224]`, the loader checks that against the manifest, and we send 602,112 bytes. The model only uses standard ops (CONV_2D, PAD, TRANSPOSE, LOGISTIC, MUL, ADD, SUB, CONCATENATION, MAX_POOL_2D, RESIZE_NEAREST_NEIGHBOR v3, SLICE, RESHAPE, SOFTMAX, QUANTIZE, DEQUANTIZE), and every internal tensor is int8. Runtime: LiteRT 1.4.0 (Android), TensorFlowLiteC 2.17.0 (iOS). Added:
+  - a **zero-input self-test** right after the detector loads. If it also fails, the model or runtime is at fault, not our preprocessing;
+  - on `run()` failure: delegate, manifest vs native tensor shapes, our byte length vs expected, value range, non-finite count, error and stack.
+  - TFLite logs the real reason itself, outside our logger: `adb logcat | grep -iE "tflite|litert"`.
+- **Make from a whole frame (owner request, narrowed):** only when a line contains a name from `src/config/tyreBrands.ts` exactly, as a whole word (case and spacing ignored). It returns the matched text as read. **Not done: "largest text line" as make.** On the device it would have suggested `OUTSIDE` or `Comfortcontact`. Fragments like `iental` never match, and **model is still never read from a whole frame**. On the device tyre, `Continental` is a stylised logo that ML Kit read as `iental`, so this tyre still gets no make suggestion until the detector crop works.
+- **DOT tolerance (owner request, narrowed):** characters OCR put before the word `DOT` are dropped, if no letter touches `DOT`. **Not done: reading `O` as `0` in the date code.** CLAUDE.md says never guess OCR values, and the date code sets the tyre's age, which feeds its status (age ≥ `replaceSoonYears` → Replace soon). A guessed digit could change the result. A misread date code stays `Not read` for the user to type.
+
+### Device findings, round 2 (2026-11-06)
+The detector now runs (float32 model, GPU) and finds about 5 regions per frame with confidence above 0.85, but suggestions were still empty. Changes:
+- **ML Kit minimum size:** `InputImage width and height should be at least 32`. Every OCR crop is now at least `ocrConfig.sidewallMinCropPx` (**36 px**) on each side, grown around its centre and shifted to stay inside the frame (`ocrCropRect`). A frame smaller than that gives the whole frame.
+- **Crop margin** raised from 0.1 to **0.2** of the box size on each side (owner asked for 15–20%). Tight boxes cut letter edges on curved embossed text. Still UNCALIBRATED.
+- **Normalisation** (`cleanOcrText`): punctuation and symbols are trimmed from the ends of make/model reads and spaces are collapsed. Agreement keys (`readKey`) ignore case, spaces and punctuation. Letters and digits are never changed.
+- **Brand matching (owner decision; CLAUDE.md now has a narrow exception)**, inside a detector `Brand` crop only (`brandCandidate`):
+  1. A read containing a `tyreBrands.ts` name (letters and digits, any case) → canonical name.
+  2. A word, or two adjacent words, within **Levenshtein 1** of exactly one brand of **6+ letters** (no other brand as close) → canonical name.
+  3. Otherwise the line as read (the list isn't exhaustive). Fragments like `iental`, two-error reads, short brands and ambiguous matches are never corrected.
+  - The full-frame make fallback is still exact whole-word only, as read.
+- **Model agreement:** reads group when within Levenshtein **2** (1 if either key is under 6 characters) **and their digits are identical**, so `Primacy 3` and `Primacy 4` never merge (`nearSameModel`). The suggestion is always a spelling that was actually read: the most frequent one in the group, then the best detector score. Early stopping still needs the same spelling to agree, so near-identical reads don't stop reading before frames can settle which spelling is right.
+
+### Device findings, round 3 (2026-11-06)
+End to end on the device: model (`ComfortCont`) and make filled, but make came out as the corrupt `Ontnem`, and size and DOT were empty.
+- **Size fallback:** when a frame's `Size` crop gives no size (it often lands on `ComfortContact`), the strict full-frame size parser runs on the **other crops' OCR from the same frame**, then on the **saved high-res frame** (never the 224×224 tensor). That full-frame read also takes a strict DOT if DOT is still open. It's one extra OCR run per frame until size agrees, within the run cap.
+- **DOT in crops:** a misread marker at the start of a `Dot-Code` crop (`D0T`, `DQT`, `D07`, `1D0T`) is dropped, even when glued to the TIN. Whole frames still need the word `DOT`.
+- **DOT date code `O` → `0` (owner decision; CLAUDE.md exception):** only the first of the final 4 characters, only the letter O, and only if the result is a valid week/year. Weeks start with 0–5, and of those only 0 looks like O. The rest of the TIN is kept exactly as read, so device reads like `YG09RURT 0124` (for `1Y6 032MKT 0124`) can still be wrong in the plant/size code.
+- **DOT date-code agreement:** if whole TINs don't agree across frames but their date codes do, only the date code (e.g. `0124`) is suggested. That's the part that gives the tyre's age.
+- **Make (owner decision; CLAUDE.md exception):** inside a `Brand` crop, logo fragments map to a brand when ≥ 80% of the read's letters appear in order in that brand, cover ≥ 40% of it, and it beats the next brand by ≥ 2 letters (`BRAND_FRAGMENT`). Device reads `Ontnem`, `OntneNaj`, `TLenta` → Continental; `OnteM`, `val`, `Roadstone` → nothing.
+- **Behaviour change:** a Brand crop that matches no listed brand now gives **no make suggestion** (it used to give the line as read). Unlisted brands are typed by the user, so add brands to `src/config/tyreBrands.ts` as they come up.
+
+### Device findings, round 4 (2026-11-06)
+Make (`Continental`, via logo fragments) and model (`Comtortconta`, via grouped reads) now fill on the device. Size and DOT were still empty.
+- **DOT, single date code (owner decision):** if the frames' DOT reads contain exactly one distinct valid date code (e.g. `0124 x1`) and no competing date code, that **date code alone** is suggested. A single, unconfirmed full TIN is never suggested, because the device's TIN bodies are badly misread (`YG09RURT` for `1Y6 032MKT`). Different date codes across frames → no DOT suggestion.
+- **Size, band crop:** before reading the whole frame, one extra crop covering the best `Size` and `Model` boxes together is read with the strict size parser. The size usually sits next to the model on the same text band, and the detector's Size box was landing on `ComfortContact`.
+- **Size typo healing — declined.** The device reads `H95/6 50152` and `95/6S` for **195/55 R15**. Healing H→1, S→5, O→0, B→8 turns `H95/6S R15` into **195/65 R15**, a wrong size suggested with confidence, because the second `5` was read as `6` and no rule can recover it. Size stays outside the CLAUDE.md exceptions. Those full-frame fragments point to resolution: the size is too few pixels in a whole-tyre frame. The real fix is more pixels on the text band: higher-resolution sidewall frames, or a closer text-band capture.
+- **Brands:** `tyreBrands.ts` has 59 brands, still including Continental. Case, spacing and punctuation variants match automatically. Brands that are everyday words are left out. **`GT Radial` was tried and removed:** as a fragment, the word `RADIAL` on almost every tyre matched it. A test now checks that common sidewall words never become a brand.
+- **Fragment rule changed:** "beats the next brand by 2 letters" became "**the only brand passing both coverage thresholds**, and leading every other brand". With the longer list, `Ontnem` scored Continental 5 against Roadstone 4. Roadstone doesn't qualify on its own (4 of 6 letters, under 80%), so the old margin rejected a correct match.
+
+### Device findings, round 5 (2026-11-06)
+Make, model and DOT now fill on the device (`Continental`, `colnortcontae`, `0124`). Size was still `Not read`: the Size crop read the end of the model name (`Conta`, `rlConta`, `Contac`), and the full frame read `A95/55`, `81545Vt`, `R154` for 195/55 R 15.
+- **Longer Size crops:** a `Size` crop is lengthened by `ocrConfig.sidewallSizeExtraLengthRatio` (**0.3, UNCALIBRATED**) of its length along its longer side (the direction the text runs), half on each side, inside the frame (`extendAlongText`).
+- **Size joining (no inference):** a fully read `195/55` plus a rim token (`R15`, `R 15`, `ZR15`, or `R154` with a stray digit) on the same line or the next/previous line in reading order → `195/55 R15`. Not across other lines.
+- **Width hundreds digit (owner decision: "rim-gated"; CLAUDE.md exception):** when only two width digits were read (`95/55`, `A95/55`), the width is completed **only** to 175–225 (`1` before 75/85/95, `2` before 05/15/25), and **only** with a rim **R13–R17** read on the same or adjacent line. Bigger rims are excluded because 1xx/2xx is genuinely ambiguous there (`85/45 R20` is almost always 285, never 185). Aspect and rim are never changed, so `A95/6S` still gives nothing.
+- **Note on the device read:** in the logged full frame, `R154` was not on the line next to `A95/55` (`81545Vt` was between them), so that exact read still gives no size. The lengthened Size crop is the main hope, and the next logcat will show it (`crop OCR for size`, `size recovered: …`).
+- **Test fix:** several "no suggestions" assertions used `toMatchObject({ suggestions: {} })`, which matches any suggestions. They now compare exactly. This showed the single-date-code rule (round 4) also fires in a 2-frame case where only one frame read a date code; the test now expects that.
+
+## Sidewall OCR milestone wrap-up (2026-11-06)
+
+**Proven on a real Android phone** (Continental ComfortContact CC7, 195/55 R15, DOT … 0124): all four fields were suggested, Make `Continental`, Model `ComfortContact`, DOT/TIN `0124`, Size `195/55 R15`. The user still confirms or corrects every field on Sidewall captured. Not yet tested on iOS hardware or on other tyres/brands.
+
+### Fields kept on rescan
+- **Scan sidewall again** (Sidewall captured / Capture problem): already kept saved details. `useStageOutcome` carries the tyre's `sidewallDetails` into the new capture, and Sidewall captured fills only empty, untouched fields.
+- **Scan this tyre again** (Analysing / Tyre result): `resetTyre` used to rebuild the tyre from scratch, which **wiped** make, model, size and DOT. It now keeps `sidewallDetails` and clears only frames, result and errors. A rescan that reads only size and DOT therefore keeps make and model from the earlier scan, and a later read never replaces a value already there (tests: `lifecycle.test.ts`, `sidewallSuggestions.test.tsx`).
+
+### Diagnostics cleaned up
+- **Removed:** the detector zero-input self-test, run() tensor diagnostics, the per-frame score dump (`yoloScoreSummary`), raw OCR line dumps, per-step rejection logs, the screen-open log, and the **1-frame agreement relaxation**. Sidewall capture needs 5+ frames, and DOT is covered by the single-date-code rule.
+- **Kept, OFF by default in every build** (`setSidewallDebug(true)` to calibrate on new tyres): heuristic decisions (brand contains / 1-error / fragment match, DOT O→0, size join and rim-gated width, grouped model reads, date-code-only DOT), failures (detector load, detector run, crop/OCR errors) and a one-line summary per read.
+
+### Calibrated heuristics kept (all UNCALIBRATED beyond this one tyre)
+Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame agreement · 24 OCR runs · brand list (59) with contains / Levenshtein 1 / fragment rules · model grouping (≤2 edits, same digits) · DOT crop marker clean-up, O→0 first date-code character, single date code rule · size: one-line parse, adjacent rim join, rim-gated width (175–225, R13–R17), Size+Model band crop, full-frame fallback.
+
+### Still open
+- **Licence: the detector is AGPL-3.0 — active release blocker.**
+- iOS device test; more tyres and brands (lighting, wear, dirt); tread and damage models (owner input).

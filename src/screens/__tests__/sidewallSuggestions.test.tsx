@@ -149,3 +149,27 @@ test('leaving the screen cancels the read', async () => {
   await act(async () => read.resolve(done({ size: '205/55 R16' })));
   expect(details(tyreId).size).toBeNull();
 });
+
+test('a rescan that only reads size and DOT keeps make and model from the earlier scan', async () => {
+  // First scan: make and model were read and saved.
+  const tyreId = seedTyre();
+  mockReader.read.mockResolvedValue(done({ make: 'Continental', model: 'ComfortContact' }));
+  const first = await renderScreen(tyreId);
+  await flush();
+  expect(details(tyreId)).toMatchObject({ make: 'Continental', model: 'ComfortContact', size: null });
+  await first.unmount();
+
+  // Rescan (new frames, details carried over as useStageOutcome does): only size and DOT read.
+  await act(async () =>
+    useInspectionStore.getState().setSidewallCaptured(tyreId, ['frames/c.jpg'], details(tyreId)),
+  );
+  mockReader.read.mockResolvedValue(done({ size: '195/55 R15', dotTin: '0124', make: 'Contnental' }));
+  await renderScreen(tyreId);
+  await flush();
+  expect(details(tyreId)).toEqual({
+    size: '195/55 R15',
+    dotTin: '0124',
+    make: 'Continental', // not replaced by the later read
+    model: 'ComfortContact',
+  });
+});

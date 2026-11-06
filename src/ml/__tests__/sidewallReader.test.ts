@@ -47,7 +47,7 @@ function detectorModel(perRun: Label[][]): LoadedModel<YoloDetectorManifestEntry
 }
 
 /** Which label's box a crop rect came from (fake frames are 224×224, so no letterbox). */
-function labelAt(rect: PixelRect): Label {
+function labelAt(rect: PixelRect): Label | undefined {
   const cx = (rect.x + rect.width / 2) / 224;
   const cy = (rect.y + rect.height / 2) / 224;
   return (Object.keys(BOXES) as Label[]).find(
@@ -73,7 +73,7 @@ function setup(opts: {
   fullFrame?: (frame: string) => OcrLineLike[] | Error;
 } = {}) {
   const detector = opts.detector === undefined ? detectorModel(opts.runs ?? [['Brand', 'Dot-Code', 'Model', 'Size']]) : opts.detector;
-  const crops: { path: string; label: Label; frame: string }[] = [];
+  const crops: { path: string; label: Label | undefined; frame: string }[] = [];
   const deps: SidewallReaderDeps & { [k: string]: unknown } = {
     ocrAvailable: () => opts.ocrAvailable ?? true,
     loadDetector: jest.fn(async () => {
@@ -93,6 +93,7 @@ function setup(opts: {
         if (r instanceof Error) throw r;
         return r;
       }
+      if (!c.label) return []; // A combined crop (e.g. Size+Model band) in tests that don't script it.
       const r = (opts.ocr ?? (l => GOOD_OCR[l]))(c.label, c.frame);
       if (r instanceof Error) throw r;
       return r;
@@ -107,13 +108,19 @@ function setup(opts: {
 
 const FRAMES = ['f1.jpg', 'f2.jpg', 'f3.jpg'];
 
+/** Exact suggestions (toMatchObject with `{}` would match anything). */
+function suggestionsOf(outcome: Awaited<ReturnType<ReturnType<typeof createSidewallReader>['read']>>) {
+  if (outcome.status !== 'done') throw new Error(`read was ${outcome.status}`);
+  return outcome.suggestions;
+}
+
 describe('crop → OCR → field suggestions', () => {
   test('each label is cropped, read and parsed into its field; crops are deleted', async () => {
     const { reader, deps, crops } = setup();
     const outcome = await reader.read(FRAMES);
     expect(outcome).toEqual({
       status: 'done',
-      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN', model: 'Primacy 4' },
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'Michelin', model: 'Primacy 4' },
       detector: 'used',
       regionsFound: 10, // 5 per frame (4 labels + a weaker Size duplicate), 2 frames
       ocrRuns: 8,
@@ -135,7 +142,7 @@ describe('crop → OCR → field suggestions', () => {
     expect(outcome.status === 'done' && outcome.suggestions).toEqual({
       size: '205/55 R16',
       dotTin: '4B7Y ABC 2319',
-      make: 'MICHELIN',
+      make: 'Michelin',
     });
   });
 
@@ -152,14 +159,16 @@ describe('crop → OCR → field suggestions', () => {
       ocr: l => (l === 'Size' ? [line('TUBELESS')] : l === 'Dot-Code' ? [line('DOT 4B7Y ABC 5719')] : []),
     });
     const outcome = await reader.read(FRAMES);
-    expect(outcome).toMatchObject({ status: 'done', suggestions: {}, ocrRuns: 12 });
+    // 4 crops + 1 Size+Model band crop + 1 full-frame size fallback per frame.
+    expect(outcome).toMatchObject({ status: 'done', ocrRuns: 18, fullFrameRuns: 3 });
+    expect(suggestionsOf(outcome)).toEqual({});
   });
 
   test('an OCR or crop error skips that region only', async () => {
     const { reader, deps } = setup({ ocr: (l, f) => (l === 'Brand' && f.endsWith('f1.jpg') ? new Error('ML Kit') : GOOD_OCR[l]) });
     (deps.cropToTempFile as jest.Mock).mockRejectedValueOnce(new Error('crop failed'));
     const outcome = await reader.read(FRAMES);
-    expect(outcome.status === 'done' && outcome.suggestions).toMatchObject({ make: 'MICHELIN', size: '205/55 R16' });
+    expect(outcome.status === 'done' && outcome.suggestions).toMatchObject({ make: 'Michelin', size: '205/55 R16' });
   });
 
   test('a frame the detector fails on is skipped', async () => {
@@ -215,12 +224,9 @@ describe('fallbacks', () => {
 
   test('detector missing or failing to load: full-frame only; retried next time', async () => {
     const missing = setup({ detector: null });
-    expect(await missing.reader.read(FRAMES)).toMatchObject({
-      status: 'done',
-      suggestions: {},
-      detector: 'missing',
-      fullFrameRuns: 3,
-    });
+    const missingOutcome = await missing.reader.read(FRAMES);
+    expect(missingOutcome).toMatchObject({ status: 'done', detector: 'missing', fullFrameRuns: 3 });
+    expect(suggestionsOf(missingOutcome)).toEqual({});
     const broken = setup({ detector: new Error('bad model') });
     expect(await broken.reader.read(FRAMES)).toMatchObject({ status: 'done', detector: 'missing' });
     await broken.reader.read(FRAMES);
@@ -253,22 +259,32 @@ describe('full-frame fallback (no regions): strict size and DOT only', () => {
     { text: '2319', frame: { x: 0, y: 210, width: 40, height: 14 } },
   ];
 
-  test('size and the DOT line are suggested; make and model are not', async () => {
+  test('size, the DOT line and a known brand are suggested; model is not', async () => {
     const { reader } = setup({ runs: [[]], fullFrame: () => SIDEWALL });
     const outcome = await reader.read(FRAMES);
     expect(outcome).toMatchObject({
       status: 'done',
-      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319' },
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
       fullFrameRuns: 2, // agreed after two frames
     });
-    expect(outcome.status === 'done' && outcome.suggestions).not.toHaveProperty('make');
+    expect(outcome.status === 'done' && outcome.suggestions).not.toHaveProperty('model');
+  });
+
+  test('the device read: brand fragments and other words never become a make', async () => {
+    // ML Kit's real output on a Continental ComfortContact CC7 (2026-11-06 device log).
+    const device: OcrLineLike[] = ['Comfortcontact', 'iental', 'OUTSIDE', 'RADIAL', 'TUBELESS'].map((text, i) => ({
+      text,
+      frame: { x: 0, y: i * 40, width: 200, height: 30 },
+    }));
+    const { reader } = setup({ runs: [[]], fullFrame: () => device });
+    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({});
   });
 
   test('works without the detector too', async () => {
     const { reader } = setup({ detector: null, fullFrame: () => SIDEWALL });
     expect(await reader.read(FRAMES)).toMatchObject({
       detector: 'missing',
-      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319' },
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
     });
   });
 
@@ -276,23 +292,26 @@ describe('full-frame fallback (no regions): strict size and DOT only', () => {
     const loose: OcrLineLike[] = [
       { text: '2319', frame: { x: 0, y: 0, width: 40, height: 14 } }, // date code without DOT
       { text: 'DOT 2319', frame: { x: 0, y: 30, width: 40, height: 14 } }, // too short for a TIN
-      { text: '205/55', frame: { x: 0, y: 60, width: 60, height: 14 } }, // size split over lines
-      { text: 'R16', frame: { x: 70, y: 60, width: 30, height: 14 } },
+      { text: '205/55', frame: { x: 0, y: 60, width: 60, height: 14 } }, // no rim anywhere near
+      { text: 'MADE IN GERMANY', frame: { x: 0, y: 75, width: 90, height: 14 } },
       { text: '900/99R40', frame: { x: 0, y: 90, width: 90, height: 14 } }, // not a real size
+      { text: '85/45', frame: { x: 0, y: 120, width: 60, height: 14 } }, // short width, rim R20: never inferred
+      { text: 'R20', frame: { x: 70, y: 120, width: 30, height: 14 } },
     ];
     const { reader } = setup({ runs: [[]], fullFrame: () => loose });
-    expect(await reader.read(FRAMES)).toMatchObject({ suggestions: {} });
+    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({});
   });
 
-  test('a frame with regions is not read whole, even if a field is still missing', async () => {
+  test('a frame with regions is read whole only for a missing size (strict size and DOT)', async () => {
     const { reader } = setup({
       runs: [['Brand']],
       ocr: () => [line('MICHELIN')],
       fullFrame: () => SIDEWALL,
     });
     expect(await reader.read(FRAMES)).toMatchObject({
-      suggestions: { make: 'MICHELIN' },
-      fullFrameRuns: 0,
+      // Make is never taken from the whole frame here: it came from the Brand crop.
+      suggestions: { make: 'Michelin', size: '205/55 R16', dotTin: '4B7Y ABC 2319' },
+      fullFrameRuns: 2,
     });
   });
 
@@ -300,8 +319,206 @@ describe('full-frame fallback (no regions): strict size and DOT only', () => {
     let n = 0;
     const { reader } = setup({ runs: [[]], fullFrame: () => (n++ === 0 ? new Error('ML Kit') : SIDEWALL) });
     expect(await reader.read(FRAMES)).toMatchObject({
-      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319' },
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
       fullFrameRuns: 3,
     });
+  });
+});
+
+describe('agreement and calibration logs', () => {
+  test('a single captured frame needs 2 agreeing reads like any other (no test relaxation)', async () => {
+    const { reader } = setup();
+    // Only the date code survives, through the single-date-code rule.
+    expect(suggestionsOf(await reader.read(['only.jpg']))).toEqual({ dotTin: '4B7Y ABC 2319'.slice(-4) });
+  });
+
+  test('logs are off by default, even in development', async () => {
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await setup().reader.read(FRAMES);
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test('when turned on: tagged, heuristic decisions and a summary only', async () => {
+    const { setSidewallDebug, SIDEWALL_LOG_TAG } = require('../ocr/sidewallDebug') as typeof import('../ocr/sidewallDebug');
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    setSidewallDebug(true);
+    try {
+      const brands = [[line('Ontnem')], [line('TLenta')]];
+      let n = 0;
+      const { reader } = setup({ ocr: l => (l === 'Brand' ? brands[n++ % 2] : GOOD_OCR[l]) });
+      await reader.read(['f1.jpg', 'f2.jpg']);
+      const out = log.mock.calls.map(c => c.join(' '));
+      expect(out.every(m => m.startsWith(SIDEWALL_LOG_TAG))).toBe(true);
+      expect(out.some(m => m.includes('brand matched (logo fragment)'))).toBe(true);
+      expect(out.some(m => m.includes('read done'))).toBe(true);
+      // The temporary device diagnostics are gone: no raw OCR dumps or tensor stats.
+      expect(out.some(m => /crop OCR for|maxScoreByLabel|self-test|tensorByteLength/.test(m))).toBe(false);
+    } finally {
+      setSidewallDebug(false);
+      log.mockRestore();
+    }
+  });
+
+  test('a detector run() failure is logged and the frame falls back to full-frame reading', async () => {
+    const { setSidewallDebug } = require('../ocr/sidewallDebug') as typeof import('../ocr/sidewallDebug');
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    setSidewallDebug(true);
+    try {
+      const { reader, detector } = setup({ fullFrame: () => [line('195/55 R15 85V')] });
+      (detector as ReturnType<typeof detectorModel>).model.run.mockRejectedValue(new Error('Status: error'));
+      const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+      expect(suggestionsOf(outcome)).toEqual({ size: '195/55 R15' });
+      expect(log.mock.calls.map(c => c.join(' ')).some(m => m.includes('detector failed on f1.jpg'))).toBe(true);
+    } finally {
+      setSidewallDebug(false);
+      log.mockRestore();
+    }
+  });
+});
+
+describe('device round 2: noisy crops agree after normalisation', () => {
+  function noisyReader(model: OcrLineLike[][]) {
+    const brand = [[line('Contnental.')], [line('-CONTINENTAL')], [line('Continental')]];
+    const n = { Brand: 0, Model: 0 };
+    return setup({
+      ocr: l =>
+        l === 'Brand' ? brand[n.Brand++ % 3] : l === 'Model' ? model[n.Model++ % model.length] : GOOD_OCR[l],
+    }).reader;
+  }
+
+  test('noisy brand and model reads across frames still give suggestions', async () => {
+    const reader = noisyReader([
+      [line('ComfortContac CC7')],
+      [line('ComfortContact CC7 .')],
+      [line('ComfortContact CC7')],
+    ]);
+    expect(await reader.read(FRAMES)).toMatchObject({
+      suggestions: { make: 'Continental', model: 'ComfortContact CC7' },
+    });
+  });
+
+  test('a 1–1 tie between spellings suggests one real read (best detector score)', async () => {
+    const reader = noisyReader([[line('ComfortContac CC7')], [line('ComfortContact CC7')]]);
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(['ComfortContac CC7', 'ComfortContact CC7']).toContain(
+      outcome.status === 'done' && outcome.suggestions.model,
+    );
+  });
+});
+
+describe('device round 3', () => {
+  test('Size crop on the wrong text: size comes from another crop in the same frame', async () => {
+    const { reader, deps } = setup({
+      ocr: l =>
+        l === 'Size'
+          ? [line('ComfortContact')]
+          : l === 'Model'
+            ? [line('ComfortContact CC7'), line('195/55 R 15 85V', 10)]
+            : GOOD_OCR[l],
+      fullFrame: () => [line('should not be needed')],
+    });
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(outcome).toMatchObject({ suggestions: { size: '195/55 R15' }, fullFrameRuns: 0 });
+    expect((deps.recognizeLines as jest.Mock).mock.calls.map(c => c[0])).not.toContain('/docs/f1.jpg');
+  });
+
+  test('…and from the saved high-res frame when no crop has it', async () => {
+    const { reader, deps } = setup({
+      ocr: l => (l === 'Size' ? [line('ComfortContact')] : l === 'Model' ? [line('ComfortContact CC7')] : GOOD_OCR[l]),
+      fullFrame: () => [line('Continental'), line('195/55 R 15 85V')],
+    });
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(outcome).toMatchObject({ suggestions: { size: '195/55 R15' }, fullFrameRuns: 2 });
+    // The saved frame itself, not a crop or the 224x224 tensor.
+    expect((deps.recognizeLines as jest.Mock).mock.calls.map(c => c[0])).toContain('/docs/f1.jpg');
+  });
+
+  test('noisy TINs that disagree still give the agreed date code', async () => {
+    const tins = [[line('D0TYG09RURT'), line('O124', 30)], [line('D07 1Y6 O32MKT'), line('0124', 30)]];
+    let n = 0;
+    const { reader } = setup({ ocr: l => (l === 'Dot-Code' ? tins[n++ % 2] : GOOD_OCR[l]) });
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(outcome.status === 'done' && outcome.suggestions.dotTin).toBe('0124');
+  });
+
+  test('device Brand reads across frames → Continental; corrupt ones alone → empty', async () => {
+    const brands = [[line('Ontnem')], [line('TLenta')]];
+    let n = 0;
+    const one = setup({ ocr: l => (l === 'Brand' ? brands[n++ % 2] : GOOD_OCR[l]) });
+    expect(await one.reader.read(['f1.jpg', 'f2.jpg'])).toMatchObject({ suggestions: { make: 'Continental' } });
+
+    const corrupt = setup({ ocr: l => (l === 'Brand' ? [line('val')] : GOOD_OCR[l]) });
+    const outcome = await corrupt.reader.read(['f1.jpg', 'f2.jpg']);
+    expect(outcome.status === 'done' && outcome.suggestions).not.toHaveProperty('make');
+  });
+});
+
+describe('device round 4', () => {
+  test('one valid date code read and no competing date code → date code suggested', async () => {
+    const dots = [[line('D0TYG09RURT'), line('O124', 30)], [line('DOT')]]; // 2nd frame: nothing valid
+    let n = 0;
+    const { reader } = setup({ ocr: l => (l === 'Dot-Code' ? dots[n++ % 2] : GOOD_OCR[l]) });
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    // Only the date code: the single, unconfirmed TIN body (YG09RURT) is not suggested.
+    expect(outcome.status === 'done' && outcome.suggestions.dotTin).toBe('0124');
+  });
+
+  test('competing date codes across frames → no DOT suggestion', async () => {
+    const dots = [[line('DOT 1Y6 032MKT 0124')], [line('DOT 1Y6 032MKT 0724')]];
+    let n = 0;
+    const { reader } = setup({ ocr: l => (l === 'Dot-Code' ? dots[n++ % 2] : GOOD_OCR[l]) });
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(outcome.status === 'done' && outcome.suggestions).not.toHaveProperty('dotTin');
+  });
+
+  test('size from one crop spanning the Size and Model boxes, before the full frame', async () => {
+    const { reader, deps, crops } = setup({
+      ocr: l => (l === 'Size' ? [line('ort Conta')] : l === 'Model' ? [line('ComfortContact')] : GOOD_OCR[l]),
+      fullFrame: () => [line('H95/6 50152')],
+    });
+    // The band crop has no single label; answer it with the whole size line.
+    (deps.recognizeLines as jest.Mock).mockImplementation(async (path: string) => {
+      const c = crops.find(x => x.path === path);
+      if (!c) return [line('H95/6 50152')];
+      if (c.label === undefined) return [line('ComfortContact CC7'), line('195/55 R 15 85V', 20)];
+      return c.label === 'Size' ? [line('ort Conta')] : c.label === 'Model' ? [line('ComfortContact')] : GOOD_OCR[c.label];
+    });
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(outcome).toMatchObject({ suggestions: { size: '195/55 R15' }, fullFrameRuns: 0 });
+  });
+
+  test('noisy size fragments are never healed into a size', async () => {
+    const { reader } = setup({
+      ocr: l => (l === 'Size' ? [line('ort Conta')] : l === 'Model' ? [line('95/6S')] : GOOD_OCR[l]),
+      fullFrame: () => [line('H95/6 50152'), line('95/6S')],
+    });
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(outcome.status === 'done' && outcome.suggestions).not.toHaveProperty('size');
+  });
+});
+
+describe('device round 5: size', () => {
+  test('lengthened Size crop reads model tail + partial width + rim → size suggested', async () => {
+    const { reader, deps } = setup({
+      ocr: l => (l === 'Size' ? [line('rlConta'), line('A95/55'), line('R15')] : GOOD_OCR[l]),
+    });
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(suggestionsOf(outcome).size).toBe('195/55 R15');
+    // The Size crop is longer along the text than the other crops (same box size in this test).
+    const calls = (deps.cropToTempFile as jest.Mock).mock.calls as [string, PixelRect][];
+    const widths = calls.map(([, r]) => r.width);
+    expect(Math.max(...widths)).toBeGreaterThan(Math.min(...widths));
+  });
+
+  test('partial width with a large rim is not suggested', async () => {
+    const { reader } = setup({
+      ocr: l => (l === 'Size' ? [line('A85/45'), line('R20')] : GOOD_OCR[l]),
+      fullFrame: () => [line('A85/45 R20')],
+    });
+    expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg']))).not.toHaveProperty('size');
   });
 });

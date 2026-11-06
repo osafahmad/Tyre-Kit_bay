@@ -39,6 +39,13 @@
 	<string>Tyre Kit Bay does not access your photo library unless a feature you choose needs it.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Inter-Medium.ttf</string>
+		<string>Inter-Bold.ttf</string>
+		<string>Inter-Regular.ttf</string>
+		<string>Inter-SemiBold.ttf</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -75,12 +82,5 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
-	<key>UIAppFonts</key>
-	<array>
-		<string>Inter-Medium.ttf</string>
-		<string>Inter-Bold.ttf</string>
-		<string>Inter-Regular.ttf</string>
-		<string>Inter-SemiBold.ttf</string>
-	</array>
 </dict>
 </plist>

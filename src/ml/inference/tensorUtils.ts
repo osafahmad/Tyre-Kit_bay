@@ -422,18 +422,57 @@ export function detectionToFrameRect(d: Detection, lb: LetterboxInfo): PixelRect
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }
 
-/** Box grown by `marginRatio` on each side → whole-pixel crop inside the frame. */
+/** Grows [start, end) around its centre to at least `min`, kept inside [0, limit]. */
+function growSpan(start: number, end: number, min: number, limit: number): [number, number] {
+  if (end - start >= min || limit <= 0) return [start, end];
+  const size = Math.min(min, limit);
+  let s = Math.round((start + end) / 2 - size / 2);
+  s = Math.max(0, Math.min(s, limit - size));
+  return [s, s + size];
+}
+
+/**
+ * Lengthens a crop along its longer side (the direction the text runs) by
+ * `ratio` of that length, half on each side, kept inside the frame.
+ */
+export function extendAlongText(
+  rect: PixelRect,
+  frameWidth: number,
+  frameHeight: number,
+  ratio: number,
+): PixelRect {
+  if (ratio <= 0) return rect;
+  if (rect.width >= rect.height) {
+    const extra = Math.round((rect.width * ratio) / 2);
+    const x1 = Math.max(0, rect.x - extra);
+    const x2 = Math.min(frameWidth, rect.x + rect.width + extra);
+    return { ...rect, x: x1, width: x2 - x1 };
+  }
+  const extra = Math.round((rect.height * ratio) / 2);
+  const y1 = Math.max(0, rect.y - extra);
+  const y2 = Math.min(frameHeight, rect.y + rect.height + extra);
+  return { ...rect, y: y1, height: y2 - y1 };
+}
+
+/**
+ * Box grown by `marginRatio` on each side → whole-pixel crop inside the frame,
+ * at least `minSize` pixels on each side (grown around its centre) when the
+ * frame is big enough.
+ */
 export function ocrCropRect(
   box: PixelRect,
   frameWidth: number,
   frameHeight: number,
   marginRatio: number,
+  minSize = 0,
 ): PixelRect {
   const mx = box.width * marginRatio;
   const my = box.height * marginRatio;
-  const x1 = Math.max(0, Math.floor(box.x - mx));
-  const y1 = Math.max(0, Math.floor(box.y - my));
-  const x2 = Math.min(frameWidth, Math.ceil(box.x + box.width + mx));
-  const y2 = Math.min(frameHeight, Math.ceil(box.y + box.height + my));
+  let x1 = Math.max(0, Math.floor(box.x - mx));
+  let y1 = Math.max(0, Math.floor(box.y - my));
+  let x2 = Math.min(frameWidth, Math.ceil(box.x + box.width + mx));
+  let y2 = Math.min(frameHeight, Math.ceil(box.y + box.height + my));
+  [x1, x2] = growSpan(x1, x2, minSize, frameWidth);
+  [y1, y2] = growSpan(y1, y2, minSize, frameHeight);
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }

@@ -193,3 +193,73 @@ describe('boxes back to frame pixels for OCR', () => {
     });
   });
 });
+
+describe('ML Kit minimum crop size', () => {
+  test('small crops grow around their centre to the minimum', () => {
+    // 20x10 box at (100, 50) with 20% margin → 28x14, then grown to 36x36.
+    expect(ocrCropRect({ x: 100, y: 50, width: 20, height: 10 }, 448, 224, 0.2, 36)).toEqual({
+      x: 92,
+      y: 37,
+      width: 36,
+      height: 36,
+    });
+  });
+
+  test('grown crops stay inside the frame (shifted at edges)', () => {
+    expect(ocrCropRect({ x: 0, y: 220, width: 10, height: 4 }, 448, 224, 0.2, 36)).toEqual({
+      x: 0,
+      y: 188,
+      width: 36,
+      height: 36,
+    });
+  });
+
+  test('a frame smaller than the minimum gives the whole frame', () => {
+    expect(ocrCropRect({ x: 1, y: 1, width: 1, height: 1 }, 20, 30, 0.2, 36)).toEqual({
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 30,
+    });
+  });
+
+  test('big enough crops are unchanged', () => {
+    expect(ocrCropRect({ x: 100, y: 50, width: 100, height: 40 }, 448, 224, 0.2, 36)).toEqual({
+      x: 80,
+      y: 42,
+      width: 140,
+      height: 56,
+    });
+  });
+});
+
+describe('Size crops lengthened along the text', () => {
+  const { extendAlongText } = require('../tensorUtils') as typeof import('../tensorUtils');
+
+  test('wide box: 30% longer, half on each side', () => {
+    expect(extendAlongText({ x: 100, y: 50, width: 100, height: 30 }, 448, 224, 0.3)).toEqual({
+      x: 85,
+      y: 50,
+      width: 130,
+      height: 30,
+    });
+  });
+
+  test('tall box (text running down the arc): lengthened vertically', () => {
+    expect(extendAlongText({ x: 10, y: 50, width: 30, height: 100 }, 448, 224, 0.3)).toEqual({
+      x: 10,
+      y: 35,
+      width: 30,
+      height: 130,
+    });
+  });
+
+  test('clamped to the frame', () => {
+    expect(extendAlongText({ x: 0, y: 0, width: 100, height: 30 }, 110, 224, 0.3)).toEqual({
+      x: 0,
+      y: 0,
+      width: 110,
+      height: 30,
+    });
+  });
+});

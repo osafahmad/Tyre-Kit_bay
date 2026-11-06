@@ -114,6 +114,24 @@ test('Scan this tyre again from pending restarts its capture', () => {
   expect(nextTyre(current())?.id).toBe(id);
 });
 
+test('Scan this tyre again keeps the sidewall details already filled in', () => {
+  store().startInspection('tflite-unconfigured');
+  store().selectTyres(positionsFor(2));
+  const id = captureNext();
+  store().setSidewallDetails(id, { size: null, dotTin: '0124', make: 'Continental', model: 'ComfortContact' });
+  store().setAnalysisPending(id);
+  store().resetTyre(id);
+  const tyre = current().tyres[0];
+  expect(tyre.sidewallFrames).toEqual([]);
+  expect(tyre.result).toBeNull();
+  expect(tyre.sidewallDetails).toEqual({
+    size: null,
+    dotTin: '0124',
+    make: 'Continental',
+    model: 'ComfortContact',
+  });
+});
+
 test('a resumed inspection with a pending first tyre continues at the second', () => {
   store().startInspection('tflite-unconfigured');
   store().selectTyres(positionsFor(2));

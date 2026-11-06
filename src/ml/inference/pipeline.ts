@@ -13,6 +13,7 @@ import {
   imageFileToTensor,
   meanVectors,
   ocrCropRect,
+  extendAlongText,
   tensorSpecFromManifest,
   type ImageDecoder,
 } from './tensorUtils';
@@ -111,6 +112,8 @@ export function createSidewallTextDetector(
   loaded: NonNullable<AnalysisModels['sidewallText']>,
   deps: PipelineDeps,
   marginRatio: number = ocrConfig.sidewallRegionMarginRatio,
+  minCropPx: number = ocrConfig.sidewallMinCropPx,
+  sizeExtraLength: number = ocrConfig.sidewallSizeExtraLengthRatio,
 ): SidewallTextDetector {
   const spec = tensorSpecFromManifest(loaded.entry);
   return {
@@ -120,8 +123,9 @@ export function createSidewallTextDetector(
       const lb = input.letterbox;
       const [output] = await loaded.model.run([input.tensor]);
       if (!output) throw new AnalysisFailedError('The sidewall text detector returned nothing.');
+      const detections = decodeYoloDetections(output, loaded.entry);
       const regions: SidewallTextRegion[] = [];
-      for (const d of decodeYoloDetections(output, loaded.entry)) {
+      for (const d of detections) {
         const box = detectionToFrameRect(d, lb);
         if (!box) continue;
         regions.push({
@@ -129,7 +133,13 @@ export function createSidewallTextDetector(
           label: d.label,
           score: d.score,
           box,
-          cropRect: ocrCropRect(box, lb.sourceWidth, lb.sourceHeight, marginRatio),
+          cropRect: (() => {
+            const rect = ocrCropRect(box, lb.sourceWidth, lb.sourceHeight, marginRatio, minCropPx);
+            // Size boxes stop short of the numbers: lengthen them along the text.
+            return d.label === 'Size'
+              ? extendAlongText(rect, lb.sourceWidth, lb.sourceHeight, sizeExtraLength)
+              : rect;
+          })(),
         });
       }
       return regions;

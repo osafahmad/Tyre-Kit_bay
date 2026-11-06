@@ -13,6 +13,11 @@ Read `docs/TYRE_KIT_BAY_SPEC.md` before making changes. It is the source of trut
 - Screens call the `TyreAnalyzer` interface, not TFLite directly.
 - `DemoTyreAnalyzer` runs only in development and must show `Demo data`. Never show made-up results as real in a release build.
 - Never guess OCR values. Leave missing values empty and let the user correct them.
+  - Narrow exceptions (owner decisions 2026-11-06), nothing else:
+    - Make, inside a detector `Brand` crop only: may be matched to a name in `src/config/tyreBrands.ts` (contained name; Levenshtein ≤ 1 for brands of 6+ letters with one unique closest brand; or a logo fragment whose letters are ≥ 80% an in-order subsequence of one brand, covering ≥ 40% of it, where that is the only brand passing both and it leads every other brand). A read that matches no listed brand is left empty.
+    - DOT/TIN: a letter `O` as the first character of the final 4-character date code is read as `0`, only if the result is a valid week/year. No other character in a DOT/TIN is ever changed.
+    - Size, width hundreds digit only: when OCR read just the last two width digits (`95/55`), it may be completed to 175–225 (`1` before 75/85/95, `2` before 05/15/25) only if a rim R13–R17 was read on the same or adjacent line. Aspect ratio and rim are never changed or inferred.
+    - Never for model, plate or chassis.
 - If `treadDepthMm` is null, show the status and hide mm.
 - Don't invent model input, output, or threshold values. Use the manifest and ask the owner if they're missing.
 - Use VisionCamera v5 APIs, dispose every frame, and don't copy v4 examples.

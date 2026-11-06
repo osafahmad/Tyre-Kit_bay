@@ -176,7 +176,8 @@ describe('sidewall text detector in the pipeline', () => {
       frame: 's1.jpg',
       label: 'Size',
       box: { x: 1.5, y: 1.75, width: 1, height: 0.5 },
-      cropRect: { x: 1, y: 1, width: 2, height: 2 },
+      // Grown to the 36 px minimum, clamped to the 4x4 test frame.
+      cropRect: { x: 0, y: 0, width: 4, height: 4 },
     });
     expect(regions[0].score).toBeCloseTo(0.8);
     expect(regions[1]).toMatchObject({ frame: 's1.jpg', label: 'Dot-Code' });

@@ -197,10 +197,14 @@ export const useInspectionStore = create<InspectionStore>()((set, get) => {
     resetTyre(tyreId) {
       const found = findTyre(get().inspections, tyreId);
       if (found) deleteTyreFrames(found.inspection.id, tyreId).catch(() => {});
+      // Frames, result and errors start over. Sidewall details (size, DOT/TIN,
+      // make, model) the user confirmed or accepted are kept: a rescan only
+      // fills fields that are still empty (Sidewall captured).
       patchTyre(tyreId, t => ({
         ...newTyre(t.position),
         id: t.id,
         state: 'capturing_sidewall',
+        sidewallDetails: t.sidewallDetails,
       }));
     },
 
