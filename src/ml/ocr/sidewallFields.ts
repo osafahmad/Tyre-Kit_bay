@@ -119,3 +119,54 @@ export function agreedValue(reads: FieldRead[], minAgreeing: number): string | n
   }
   return winner && winner.count >= minAgreeing ? winner.best.value : null;
 }
+
+// ---------------------------------------------------------------- full frame
+
+// Used only when the text detector found no regions in a frame (or isn't in
+// the build). A whole sidewall frame has lots of other text, so only strict
+// patterns are accepted, and make / model are never read this way.
+
+/** Plausible tyre size ranges (mm width, aspect %, rim inches) for full-frame reads. */
+export const FULL_FRAME_SIZE_LIMITS = { width: [100, 395], aspect: [20, 95], rim: [8, 26] } as const;
+
+const within = (v: number, [lo, hi]: readonly [number, number]) => v >= lo && v <= hi;
+
+/**
+ * Size from a whole frame: one OCR line at a time (never joined across the
+ * frame), parsed by `parseTyreSize`, and within `FULL_FRAME_SIZE_LIMITS`.
+ */
+export function fullFrameSizeCandidate(lines: OcrLineLike[]): string | null {
+  for (const line of readingOrder(lines)) {
+    const p = parseTyreSize(line.text);
+    if (
+      p &&
+      within(p.widthMm, FULL_FRAME_SIZE_LIMITS.width) &&
+      within(p.aspectRatio, FULL_FRAME_SIZE_LIMITS.aspect) &&
+      within(p.rimInches, FULL_FRAME_SIZE_LIMITS.rim)
+    ) {
+      return p.value;
+    }
+  }
+  return null;
+}
+
+/** Fewest letters and digits after `DOT` in a full-frame read: a whole TIN, not a lone number. */
+export const FULL_FRAME_DOT_MIN_CHARS = 8;
+
+/**
+ * DOT/TIN from a whole frame: a line must start with the word `DOT`. That line
+ * alone, or joined with the next line in reading order (TINs often wrap), must
+ * give 8–13 letters and digits after `DOT`, ending in a valid date code.
+ */
+export function fullFrameDotCandidate(lines: OcrLineLike[], now: Date = new Date()): string | null {
+  const ordered = readingOrder(lines);
+  for (let i = 0; i < ordered.length; i++) {
+    if (!/^\s*DOT\b/i.test(ordered[i].text)) continue;
+    const tries = [[ordered[i]], ...(ordered[i + 1] ? [[ordered[i], ordered[i + 1]]] : [])];
+    for (const group of tries) {
+      const value = dotCandidate(group, now);
+      if (value && value.replace(/ /g, '').length >= FULL_FRAME_DOT_MIN_CHARS) return value;
+    }
+  }
+  return null;
+}

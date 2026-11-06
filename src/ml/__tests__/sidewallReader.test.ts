@@ -69,6 +69,8 @@ function setup(opts: {
   ocr?: (label: Label, frame: string) => OcrLineLike[] | Error;
   ocrAvailable?: boolean;
   detector?: LoadedModel<YoloDetectorManifestEntry> | null | Error;
+  /** OCR of a whole frame (full-frame fallback), by frame path. */
+  fullFrame?: (frame: string) => OcrLineLike[] | Error;
 } = {}) {
   const detector = opts.detector === undefined ? detectorModel(opts.runs ?? [['Brand', 'Dot-Code', 'Model', 'Size']]) : opts.detector;
   const crops: { path: string; label: Label; frame: string }[] = [];
@@ -85,7 +87,12 @@ function setup(opts: {
       return path;
     }),
     recognizeLines: jest.fn(async (path: string) => {
-      const c = crops.find(x => x.path === path)!;
+      const c = crops.find(x => x.path === path);
+      if (!c) {
+        const r = (opts.fullFrame ?? (() => []))(path);
+        if (r instanceof Error) throw r;
+        return r;
+      }
       const r = (opts.ocr ?? (l => GOOD_OCR[l]))(c.label, c.frame);
       if (r instanceof Error) throw r;
       return r;
@@ -107,8 +114,10 @@ describe('crop → OCR → field suggestions', () => {
     expect(outcome).toEqual({
       status: 'done',
       suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN', model: 'Primacy 4' },
+      detector: 'used',
       regionsFound: 10, // 5 per frame (4 labels + a weaker Size duplicate), 2 frames
       ocrRuns: 8,
+      fullFrameRuns: 0,
     });
     // Two agreeing frames per field are enough: the third frame isn't read.
     expect(crops.map(c => c.frame)).toEqual([...Array(4).fill('/docs/f1.jpg'), ...Array(4).fill('/docs/f2.jpg')]);
@@ -163,10 +172,20 @@ describe('crop → OCR → field suggestions', () => {
     expect(outcome.status === 'done' && Object.keys(outcome.suggestions)).toHaveLength(4);
   });
 
-  test('frames with no regions → done with no suggestions', async () => {
+  test('frames with no regions and no readable text → done with no suggestions', async () => {
     const { reader, deps } = setup({ runs: [[]] });
-    expect(await reader.read(FRAMES)).toEqual({ status: 'done', suggestions: {}, regionsFound: 0, ocrRuns: 0 });
-    expect(deps.recognizeLines).not.toHaveBeenCalled();
+    expect(await reader.read(FRAMES)).toEqual({
+      status: 'done',
+      suggestions: {},
+      detector: 'used',
+      regionsFound: 0,
+      ocrRuns: 3,
+      fullFrameRuns: 3,
+    });
+    expect((deps.recognizeLines as jest.Mock).mock.calls.map(c => c[0])).toEqual(
+      FRAMES.map(f => `/docs/${f}`),
+    );
+    expect(deps.cropToTempFile).not.toHaveBeenCalled();
   });
 
   test('stops at the OCR run limit and when cancelled', async () => {
@@ -194,11 +213,16 @@ describe('fallbacks', () => {
     expect(await reader.read(['demo://sidewall/1'])).toEqual({ status: 'unavailable', reason: 'no_frames' });
   });
 
-  test('detector missing or failing to load; retried next time', async () => {
+  test('detector missing or failing to load: full-frame only; retried next time', async () => {
     const missing = setup({ detector: null });
-    expect(await missing.reader.read(FRAMES)).toEqual({ status: 'unavailable', reason: 'detector_missing' });
+    expect(await missing.reader.read(FRAMES)).toMatchObject({
+      status: 'done',
+      suggestions: {},
+      detector: 'missing',
+      fullFrameRuns: 3,
+    });
     const broken = setup({ detector: new Error('bad model') });
-    expect(await broken.reader.read(FRAMES)).toEqual({ status: 'unavailable', reason: 'detector_missing' });
+    expect(await broken.reader.read(FRAMES)).toMatchObject({ status: 'done', detector: 'missing' });
     await broken.reader.read(FRAMES);
     expect(broken.deps.loadDetector).toHaveBeenCalledTimes(2);
   });
@@ -216,4 +240,68 @@ test('suggestions fill only empty fields the user has not touched', () => {
   expect(
     applySuggestions(current, { size: '205/55 R16', dotTin: '4B7Y 2319', make: 'MICHELIN', model: 'X' }, new Set(['model'])),
   ).toEqual({ size: '205/55 R16', dotTin: '1234', make: 'MICHELIN', model: '' });
+});
+
+describe('full-frame fallback (no regions): strict size and DOT only', () => {
+  /** A busy sidewall: size and DOT among other moulded text, including a brand and numbers. */
+  const SIDEWALL: OcrLineLike[] = [
+    { text: 'MICHELIN', frame: { x: 0, y: 0, width: 200, height: 60 } },
+    { text: 'Primacy 4', frame: { x: 0, y: 80, width: 120, height: 30 } },
+    { text: '205/55R16 91V', frame: { x: 0, y: 130, width: 150, height: 20 } },
+    { text: 'MAX LOAD 615 KG 2319', frame: { x: 0, y: 160, width: 150, height: 12 } },
+    { text: 'DOT 4B7Y ABC', frame: { x: 0, y: 190, width: 120, height: 14 } },
+    { text: '2319', frame: { x: 0, y: 210, width: 40, height: 14 } },
+  ];
+
+  test('size and the DOT line are suggested; make and model are not', async () => {
+    const { reader } = setup({ runs: [[]], fullFrame: () => SIDEWALL });
+    const outcome = await reader.read(FRAMES);
+    expect(outcome).toMatchObject({
+      status: 'done',
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319' },
+      fullFrameRuns: 2, // agreed after two frames
+    });
+    expect(outcome.status === 'done' && outcome.suggestions).not.toHaveProperty('make');
+  });
+
+  test('works without the detector too', async () => {
+    const { reader } = setup({ detector: null, fullFrame: () => SIDEWALL });
+    expect(await reader.read(FRAMES)).toMatchObject({
+      detector: 'missing',
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319' },
+    });
+  });
+
+  test('loose text is not taken from a whole frame', async () => {
+    const loose: OcrLineLike[] = [
+      { text: '2319', frame: { x: 0, y: 0, width: 40, height: 14 } }, // date code without DOT
+      { text: 'DOT 2319', frame: { x: 0, y: 30, width: 40, height: 14 } }, // too short for a TIN
+      { text: '205/55', frame: { x: 0, y: 60, width: 60, height: 14 } }, // size split over lines
+      { text: 'R16', frame: { x: 70, y: 60, width: 30, height: 14 } },
+      { text: '900/99R40', frame: { x: 0, y: 90, width: 90, height: 14 } }, // not a real size
+    ];
+    const { reader } = setup({ runs: [[]], fullFrame: () => loose });
+    expect(await reader.read(FRAMES)).toMatchObject({ suggestions: {} });
+  });
+
+  test('a frame with regions is not read whole, even if a field is still missing', async () => {
+    const { reader } = setup({
+      runs: [['Brand']],
+      ocr: () => [line('MICHELIN')],
+      fullFrame: () => SIDEWALL,
+    });
+    expect(await reader.read(FRAMES)).toMatchObject({
+      suggestions: { make: 'MICHELIN' },
+      fullFrameRuns: 0,
+    });
+  });
+
+  test('a full-frame OCR error skips that frame', async () => {
+    let n = 0;
+    const { reader } = setup({ runs: [[]], fullFrame: () => (n++ === 0 ? new Error('ML Kit') : SIDEWALL) });
+    expect(await reader.read(FRAMES)).toMatchObject({
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319' },
+      fullFrameRuns: 3,
+    });
+  });
 });

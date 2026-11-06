@@ -11,6 +11,8 @@ import {
   FIELD_BY_LABEL,
   agreedValue,
   fieldCandidate,
+  fullFrameDotCandidate,
+  fullFrameSizeCandidate,
   type FieldRead,
   type SidewallField,
 } from './ocr/sidewallFields';
@@ -23,6 +25,11 @@ import type { OcrLineLike } from './ocr/textCandidates';
  * parser. The result is a set of suggestions for Sidewall captured; the user
  * confirms or corrects them. Any failure (no OCR, no detector, unreadable
  * frame or crop) just means fewer suggestions; it never throws.
+ *
+ * Full-frame fallback: when the detector finds no regions in a frame (or
+ * isn't in the build), the whole frame is read with ML Kit, and only the
+ * strict size and DOT patterns are taken from it. Make and model need a
+ * detector crop.
  */
 export interface SidewallReader {
   /** Whether reading these frames is possible at all (cheap, synchronous). */
@@ -33,13 +40,17 @@ export interface SidewallReader {
 export type SidewallSuggestions = Partial<Record<SidewallField, string>>;
 
 export type SidewallReadOutcome =
-  | { status: 'unavailable'; reason: 'ocr_missing' | 'no_frames' | 'detector_missing' }
+  | { status: 'unavailable'; reason: 'ocr_missing' | 'no_frames' }
   | {
       status: 'done';
       suggestions: SidewallSuggestions;
+      /** Whether the text detector was available. Without it, only full-frame size / DOT reads run. */
+      detector: 'used' | 'missing';
       /** Regions the detector found across all frames read. */
       regionsFound: number;
+      /** OCR runs on region crops plus whole frames. */
       ocrRuns: number;
+      fullFrameRuns: number;
     };
 
 export type SidewallReaderDeps = {
@@ -91,6 +102,15 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
     }
   }
 
+  /** Reads a whole saved frame. Null if it can't be read. */
+  async function ocrFullFrame(frame: string): Promise<OcrLineLike[] | null> {
+    try {
+      return await deps.recognizeLines(localFramePath(frame, deps.pipeline));
+    } catch {
+      return null;
+    }
+  }
+
   return {
     canRead: frames => deps.ocrAvailable() && frames.some(isRealFrame),
 
@@ -99,28 +119,46 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       const real = frames.filter(isRealFrame);
       if (real.length === 0) return { status: 'unavailable', reason: 'no_frames' };
       const model = await getDetector();
-      if (!model) return { status: 'unavailable', reason: 'detector_missing' };
-      const textDetector = createSidewallTextDetector(model, deps.pipeline);
+      const textDetector = model ? createSidewallTextDetector(model, deps.pipeline) : null;
 
       const reads: Record<SidewallField, FieldRead[]> = { size: [], dotTin: [], make: [], model: [] };
       const agreed = (field: SidewallField) =>
         agreedValue(reads[field], deps.minAgreeingReads) !== null;
       let regionsFound = 0;
       let ocrRuns = 0;
+      let fullFrameRuns = 0;
+      const stop = () => isCancelled() || ocrRuns >= deps.maxOcrRuns;
 
       for (const frame of real) {
-        if (isCancelled() || ocrRuns >= deps.maxOcrRuns || FIELDS.every(agreed)) break;
-        let regions: SidewallTextRegion[];
-        try {
-          regions = await textDetector.detect(frame);
-        } catch {
-          continue; // Unreadable frame: try the next one.
+        if (stop() || FIELDS.every(agreed)) break;
+        let regions: SidewallTextRegion[] = [];
+        if (textDetector) {
+          try {
+            regions = await textDetector.detect(frame);
+          } catch {
+            regions = []; // Detector error on this frame: treated as no regions.
+          }
         }
         regionsFound += regions.length;
+
+        if (regions.length === 0) {
+          // Full-frame fallback: strict size / DOT patterns only.
+          if (agreed('size') && agreed('dotTin')) continue;
+          ocrRuns += 1;
+          fullFrameRuns += 1;
+          const lines = await ocrFullFrame(frame);
+          if (!lines) continue;
+          const size = agreed('size') ? null : fullFrameSizeCandidate(lines);
+          const dot = agreed('dotTin') ? null : fullFrameDotCandidate(lines, deps.now());
+          if (size) reads.size.push({ value: size, score: 0 });
+          if (dot) reads.dotTin.push({ value: dot, score: 0 });
+          continue;
+        }
+
         for (const region of bestPerLabel(regions)) {
           const field = FIELD_BY_LABEL[region.label];
           if (!field || agreed(field)) continue;
-          if (isCancelled() || ocrRuns >= deps.maxOcrRuns) break;
+          if (stop()) break;
           ocrRuns += 1;
           const lines = await ocrRegion(region);
           const value = lines ? fieldCandidate(field, lines, deps.now()) : null;
@@ -133,7 +171,14 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         const value = agreedValue(reads[field], deps.minAgreeingReads);
         if (value) suggestions[field] = value;
       }
-      return { status: 'done', suggestions, regionsFound, ocrRuns };
+      return {
+        status: 'done',
+        suggestions,
+        detector: textDetector ? 'used' : 'missing',
+        regionsFound,
+        ocrRuns,
+        fullFrameRuns,
+      };
     },
   };
 }

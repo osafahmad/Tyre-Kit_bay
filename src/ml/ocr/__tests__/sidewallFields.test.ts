@@ -3,6 +3,8 @@ import {
   agreedValue,
   dotCandidate,
   fieldCandidate,
+  fullFrameDotCandidate,
+  fullFrameSizeCandidate,
   nameCandidate,
   sizeCandidate,
 } from '../sidewallFields';
@@ -95,5 +97,24 @@ describe('agreement across frames', () => {
         2,
       ),
     ).toBe('B2');
+  });
+});
+
+describe('full-frame parsers', () => {
+  test('size: one line at a time, real tyre ranges only', () => {
+    expect(fullFrameSizeCandidate([line('MICHELIN'), line('205/55R16 91V', 30)])).toBe('205/55 R16');
+    expect(fullFrameSizeCandidate([line('205/55'), line('R16', 0, 20, 120)])).toBeNull();
+    expect(fullFrameSizeCandidate([line('900/99R40')])).toBeNull();
+    expect(fullFrameSizeCandidate([line('100/90R17')])).toBe('100/90 R17'); // motorcycle
+    expect(fullFrameSizeCandidate([line('095/90R17')])).toBeNull(); // width below 100
+  });
+
+  test('DOT: needs a line starting with DOT and a whole TIN, maybe wrapped to the next line', () => {
+    expect(fullFrameDotCandidate([line('DOT 4B7Y ABC 2319')], NOW)).toBe('4B7Y ABC 2319');
+    expect(fullFrameDotCandidate([line('DOT 4B7Y ABC'), line('2319', 30)], NOW)).toBe('4B7Y ABC 2319');
+    expect(fullFrameDotCandidate([line('4B7Y ABC 2319')], NOW)).toBeNull(); // no DOT
+    expect(fullFrameDotCandidate([line('DOT 2319')], NOW)).toBeNull(); // too short
+    expect(fullFrameDotCandidate([line('ENDOT 4B7Y ABC 2319')], NOW)).toBeNull();
+    expect(fullFrameDotCandidate([line('DOT 4B7Y ABC 5719')], NOW)).toBeNull(); // week 57
   });
 });

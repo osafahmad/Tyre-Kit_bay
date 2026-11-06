@@ -387,7 +387,7 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 ### Where it runs
 - **On Sidewall captured, not in the post-capture analyzer.** Suggestions must reach the user before they confirm, and the analyzer only runs after tread capture (and only once tread and damage models exist). `SidewallCapturedScreen` calls `getSidewallReader()` (`src/ml/sidewallReader.ts`) when it opens. Screens never touch TFLite or ML Kit directly.
 - Read results **only fill fields that are still empty and that the user hasn't edited** (`applySuggestions`). Values already saved for the tyre are never replaced. Filled fields stay editable: the screen's existing "Check the details and correct anything that's wrong" is the confirmation step, and pressing `Scan tread` saves what's shown.
-- **New placeholder (differs from spec):** while reading, empty fields show `Reading…` instead of `Not read`, so a field doesn't claim "not read" and then fill in a moment later. It becomes `Not read` once reading ends with nothing, or as soon as the user edits that field.
+- **New placeholder (differs from spec, owner accepted 2026-11-06):** while reading, empty fields show `Reading…` instead of `Not read`, so a field doesn't claim "not read" and then fill in a moment later. It becomes `Not read` once reading ends with nothing, or as soon as the user edits that field.
 
 ### Pipeline (`createSidewallReader`)
 1. For each saved sidewall frame: text detector (Phase 2b), then the **best-scoring region per label**.
@@ -401,9 +401,12 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 
 ### Fallbacks (never throws; fields stay `Not read`)
 - No ML Kit in the build (e.g. iOS simulator builds), or only `demo://` frames: nothing is read, and the placeholder stays `Not read`.
-- Detector missing or failing to load: no suggestions. The load is retried next time, and a loaded detector is reused.
+- Detector missing or failing to load: full-frame fallback only (below). The load is retried next time, and a loaded detector is reused.
 - Detector error on a frame, crop/save error, OCR error, no text, or text that fails its parser: that region or frame is skipped.
-- **No full-frame OCR fallback** when the detector is unavailable. Without regions, which text is the make or model would be a guess.
+- **Full-frame fallback (owner decision 2026-11-06): size and DOT only.** When the detector finds no regions in a frame (or isn't in the build, or fails on that frame), the whole frame is read with ML Kit, and only strict patterns are taken. A frame with any regions is not read whole. **Make and model are never read from a whole frame:** picking which text is the brand would be a guess.
+  - Size (`fullFrameSizeCandidate`): one OCR line at a time, never joined across the frame, parsed by `parseTyreSize`, and within `FULL_FRAME_SIZE_LIMITS` (width 100–395 mm, aspect 20–95, rim 8–26 in, so motorcycle sizes like 100/90-17 pass).
+  - DOT (`fullFrameDotCandidate`): a line must start with the word `DOT`, alone or joined with the next line in reading order, giving 8–13 letters and digits after `DOT` ending in a valid date code. A lone date code, which a crop can accept, isn't taken from a whole frame.
+  - The same 2-frame agreement and OCR run cap apply. Full-frame reads count as OCR runs.
 
 ### Offline
 - Everything runs on the phone: TFLite (bundled model), ML Kit Latin (bundled models), and files in app storage and caches. No new packages and no network calls.
@@ -412,3 +415,12 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 - ML Kit accuracy on cropped sidewall regions (moulded black-on-black text), and whether the 10% crop margin and 2-frame agreement are right.
 - Time to read 8 frames (8 detector runs + up to 24 OCR runs) on a low-end Android phone. The `Reading…` wait has no limit other than the run cap.
 - The detector and a later analyzer each load their own copy of the model (about 3.3 MB each). That's acceptable for now; share a loader if memory is tight.
+
+## Tread and damage stub models — declined (2026-11-06)
+
+The owner asked for lightweight baseline/stub MobileNetV3 TFLite classifiers (tread: good / adequate / replace_soon / danger; damage: normal / damaged), registered in the manifest so the analyzer runs. **Not done**, because:
+- An untrained or placeholder classifier outputs arbitrary scores. `TfliteTyreAnalyzer` has `isDemo = false` and is the only analyzer in release builds, so those results would be **shown and saved as real tyre condition**, including in release builds. That breaks the rules "Never show made-up results as real in a release build" and "Don't invent model input, output, or threshold values" (CLAUDE.md, spec §7). For a safety check, a wrong `Good` on a worn tyre is the worst outcome.
+- Spec §7 defines three tread classes (Good, Replace soon, Replace now), and `statusByLabel` must map every label to one of those statuses. `adequate` and `danger` have no defined status mapping, and choosing one would be inventing thresholds.
+- The analyzer flow already runs end to end without models: development builds use `DemoTyreAnalyzer` (labelled `Demo data`), and release builds keep tyres as `Analysis pending` until real models are bundled.
+
+**Unblocks it properly:** trained tread and damage `.tflite` files with their input/output details, labels mapped to the three spec statuses, and the confidence thresholds. Then they register in the manifest like `sidewallTextDetector`, with a test against the real files.

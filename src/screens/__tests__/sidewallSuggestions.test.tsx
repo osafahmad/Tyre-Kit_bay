@@ -52,8 +52,10 @@ function renderScreen(tyreId: string) {
 const done = (suggestions: Record<string, string>): SidewallReadOutcome => ({
   status: 'done',
   suggestions,
+  detector: 'used',
   regionsFound: 4,
   ocrRuns: 4,
+  fullFrameRuns: 0,
 });
 
 beforeEach(() => {
@@ -108,7 +110,7 @@ test('values already confirmed are kept; only empty fields are filled', async ()
 test('nothing read, reader unavailable or failing: fields stay empty and show Not read', async () => {
   for (const outcome of [
     () => Promise.resolve(done({})),
-    () => Promise.resolve({ status: 'unavailable', reason: 'detector_missing' } as SidewallReadOutcome),
+    () => Promise.resolve({ status: 'unavailable', reason: 'no_frames' } as SidewallReadOutcome),
     () => Promise.reject(new Error('boom')),
   ]) {
     const tyreId = seedTyre();
