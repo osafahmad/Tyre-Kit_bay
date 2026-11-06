@@ -102,7 +102,20 @@ export type ModelManifest = {
   sidewallTextDetector: YoloDetectorManifestEntry | null;
   tread: TreadManifestEntry | null;
   damage: DamageManifestEntry | null;
+  /**
+   * Finds tread wear patterns (centre wear, cupping, feather edge…) on a tread
+   * frame. Optional and separate from `tread`: it says what kind of wear there
+   * is, never Good / Replace soon / Replace now.
+   */
+  treadWear: YoloDetectorManifestEntry | null;
 };
+
+/** Keys whose entries are `YoloDetectorManifestEntry`. */
+export const YOLO_MODELS = ['sidewallTextDetector', 'treadWear'] as const satisfies readonly ModelKey[];
+
+export function isYoloModel(key: ModelKey): key is (typeof YOLO_MODELS)[number] {
+  return (YOLO_MODELS as readonly ModelKey[]).includes(key);
+}
 
 export type ModelKey = keyof ModelManifest;
 
@@ -150,6 +163,54 @@ export const modelManifest: ModelManifest = {
   },
   tread: null,
   damage: null,
+  /**
+   * `tread_wear.tflite`, supplied by the owner 2026-11-06. Values are read
+   * from the file (tensor details and its Ultralytics metadata.json) and match
+   * the owner's export notes. `__tests__/manifest.test.ts` checks them.
+   * - Ultralytics 8.4.203 YOLOv8n, `task: detect`, `end2end: false` (no NMS in
+   *   the graph), 1029 anchors (28² + 14² + 7²). Labels are the metadata `names`.
+   * - normalisation, letterbox with grey 114, normalised boxes (`_NormalizeCoords`
+   *   in the graph): same Ultralytics export as the sidewall text detector.
+   * - confidenceThreshold 0.25 and iouThreshold 0.45: owner values 2026-11-06.
+   *   maxDetections 300: Ultralytics' default. Calibrate on real tread frames.
+   * Licence AGPL-3.0 (from the file's metadata): release blocker, see DECISIONS.md.
+   */
+  treadWear: {
+    file: require('../../assets/models/tread_wear.tflite'),
+    version: 'yolov8n-ultralytics-8.4.203-2026-11-06T15:37:03Z',
+    inputShape: [1, 3, 224, 224],
+    inputLayout: 'NCHW',
+    inputType: 'float32',
+    colorOrder: 'RGB',
+    resize: 'letterbox',
+    letterboxPadValue: 114,
+    normalisation: { mean: [0, 0, 0], std: [255, 255, 255] },
+    inputQuantization: null,
+    labels: [
+      'Alternate Lug Wear',
+      'Center Wear',
+      'Cupping _Scallop Wear',
+      'Diagonal Wear',
+      'Eccentric and Out-of-Round Wear',
+      'Feather Edge',
+      'Heel and Toe Wear',
+      'Rip Depression and Punch Wear',
+      'River_Channel Erosion Wear',
+      'Shoulder Step Chamfer Wear',
+      'Shoulder Wear Left',
+      'Shoulder Wear Right',
+      'Spotty Wear',
+      'Wavy Wear',
+    ],
+    confidenceThreshold: 0.25,
+    outputFormat: 'yolov8_raw',
+    outputType: 'float32',
+    outputQuantization: null,
+    outputShape: [1, 18, 1029],
+    boxFormat: 'cxcywh_normalised',
+    iouThreshold: 0.45,
+    maxDetections: 300,
+  },
 };
 
 export function missingModels(manifest: ModelManifest = modelManifest): ModelKey[] {

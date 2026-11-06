@@ -502,3 +502,31 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 ### Still open
 - **Licence: the detector is AGPL-3.0 — active release blocker.**
 - iOS device test; more tyres and brands (lighting, wear, dirt); tread and damage models (owner input).
+
+## M7 Phase 3: tread wear detector (`tread_wear.tflite`)
+
+**Status: manifest entry checked against the real file; decoding, service and hook unit-tested with synthetic tensors and fakes. Not yet loaded or run on a phone, and no screen uses it yet.**
+
+### What the file is (read from the file, 2026-11-06)
+- Ultralytics 8.4.203 YOLOv8n, `task: detect`, `end2end: false`, `imgsz` 224×224, 14 wear classes (`Alternate Lug Wear` … `Wavy Wear`, metadata `names` order).
+- Input float32 `[1, 3, 224, 224]` NCHW; output float32 `[1, 18, 1029]` (4 box + 14 class scores per anchor). Matches the owner's export notes. `_NormalizeCoords` is in the graph, so boxes are 0–1.
+- **Licence AGPL-3.0**: same release blocker as the sidewall text detector. Replace or license before any commercial release.
+
+### Choices (owner decisions, 2026-11-06)
+- **Registered as `modelManifest.treadWear`** (a `YoloDetectorManifestEntry`), separate from `tread`. It says what kind of wear there is, never Good / Replace soon / Replace now. `tread` and `damage` stay `null`, so analysis is still pending.
+- **One decoder.** `parseTreadWearOutput` (`src/ml/utils/treadWearPostProcess.ts`) reuses `decodeYoloDetections` (best class per anchor, confidence 0.25, greedy per-class NMS at IoU 0.45, max 300). It then normalises boxes to `[x, y, w, h]` and clamps them to [0, 1] after NMS, as Ultralytics does. The loader's YOLO checks now apply to every key in `YOLO_MODELS`.
+- **Preprocessing:** letterbox with grey 114, RGB / 255, planar NCHW float32: the existing `imageFileToModelInput`. Not a plain stretch to 224×224, so frames keep the aspect ratio the model was trained on.
+- **Delegates:** Core ML (iOS) / GPU (Android), then CPU, from the shared loader (`ACCELERATION_BY_PLATFORM`). **No NNAPI**, although the original brief asked for it (M0 decision).
+- **`src/ml/config/treadWearConfig.ts`** only gives the manifest values a typed shape (`TREAD_MODEL_CONFIG`, `TREAD_WEAR_CLASSES`, `TreadWearClass`). The class list is checked against the manifest and the file.
+- **Severity:** `critical` when any wear class is at **≥ 0.60** confidence (`TREAD_WEAR_SEVERITY`, owner value, uncalibrated). Below that it is `detected`; with no findings it is `none`. It is an indicator in `useTyreInspection` only and **never changes the tyre status**.
+- **State:** `useTyreInspection(tyreId)` keeps wear detections in hook state. They are not persisted, and the store's tyre, result and `sidewallDetails` are not written. `scanTreadWear()` runs only on saved tread frames, after capture; `demo://` frames are reported as `no_frames`, never as a result.
+- **Diagnostics:** `setTreadDebug(true)` (`src/ml/services/treadDebug.ts`), off by default, device log only, tag `[TreadWear]`. Logs frame indexes, not paths.
+- **File location:** `assets/models/tread_wear.tflite`. The native copies (`ios/tread_wear.tflite` with its 4 `project.pbxproj` lines, and `android/app/src/main/assets/tread_wear.tflite`) were **removed on owner request**. They were byte-identical and the loader never used them.
+
+### Not done yet
+- No screen calls `scanTreadWear`, and `runTyrePipeline` still sets `TyreResult.wearPattern` to null. Wiring wear into Tyre result (e.g. as an optional model in the analyzer, like the sidewall text detector) needs a decision on how wear class names are shown to users.
+
+### Needs a real phone
+- Loading through `core-ml` / `android-gpu` with CPU fallback, and the loaded tensors matching the manifest.
+- That real output boxes are 0–1 and land on worn areas; the 0.25 confidence and 0.60 critical values on real tread frames.
+- Time, memory and heat for 10 tread frames on a low-end Android phone.

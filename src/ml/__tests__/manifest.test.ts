@@ -1,5 +1,6 @@
 import { hasAnalysisModels, missingModels, modelManifest } from '../manifest';
 import { isTyreDetectorAvailable } from '../tyreDetector';
+import { TREAD_MODEL_CONFIG, TREAD_WEAR_CLASSES } from '../config/treadWearConfig';
 import {
   checkModelMatchesManifest,
   loadModel,
@@ -109,6 +110,91 @@ describe('shipped manifest: sidewallTextDetector (tyre_detector.tflite)', () => 
     expect(
       validateManifestEntry('sidewallTextDetector', { ...entry, outputShape: [1, 7, 1029] }),
     ).toContain('outputShape needs 4 box values + 4 label scores, has 7');
+  });
+});
+
+const TREAD_PATH = `${ROOT}/assets/models/tread_wear.tflite`;
+const treadWear = modelManifest.treadWear!;
+const treadFile = readTfliteFile(readFile(TREAD_PATH));
+
+describe('shipped manifest: treadWear (tread_wear.tflite)', () => {
+  const treadModel = (): InferenceModel => ({ inputs: treadFile.inputs, outputs: treadFile.outputs, run: jest.fn() });
+
+  test('is registered with the values from the model file', () => {
+    expect(treadWear).toEqual(
+      expect.objectContaining({
+        inputShape: [1, 3, 224, 224],
+        inputLayout: 'NCHW',
+        inputType: 'float32',
+        colorOrder: 'RGB',
+        resize: 'letterbox',
+        letterboxPadValue: 114,
+        normalisation: { mean: [0, 0, 0], std: [255, 255, 255] },
+        inputQuantization: null,
+        confidenceThreshold: 0.25,
+        outputFormat: 'yolov8_raw',
+        outputType: 'float32',
+        outputQuantization: null,
+        outputShape: [1, 18, 1029],
+        boxFormat: 'cxcywh_normalised',
+        iouThreshold: 0.45,
+        maxDetections: 300,
+      }),
+    );
+    expect(treadWear.labels).toEqual([...TREAD_WEAR_CLASSES]);
+    expect(validateManifestEntry('treadWear', treadWear)).toEqual([]);
+  });
+
+  test('matches the tensors and metadata inside the bundled .tflite file', () => {
+    expect(treadFile.inputs).toEqual([
+      expect.objectContaining({ shape: treadWear.inputShape, dataType: 'float32', quantized: false }),
+    ]);
+    expect(treadFile.outputs).toEqual([
+      expect.objectContaining({ shape: treadWear.outputShape, dataType: 'float32', quantized: false }),
+    ]);
+    const meta = treadFile.ultralytics!;
+    expect(meta.task).toBe('detect');
+    expect(meta.end2end).toBe(false);
+    expect(meta.imgsz).toEqual([224, 224]);
+    expect(Object.values(meta.names as Record<string, string>)).toEqual(treadWear.labels);
+    expect(checkModelMatchesManifest('treadWear', treadModel(), treadWear)).toEqual([]);
+  });
+
+  test('the loader opens it, trying the hardware delegate before CPU', async () => {
+    const createModel = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('no GPU'))
+      .mockResolvedValueOnce(treadModel());
+    const deps = fakeLoaderDeps({
+      resolveAssetUri: f => (f === treadWear.file ? 'file:///bundle/tread_wear.tflite' : null),
+      createModel,
+      acceleration: ['core-ml'],
+    });
+    const r = await loadModel('treadWear', modelManifest, deps);
+    expect(r.ok && r.model.delegate).toBe('cpu');
+    expect(createModel.mock.calls).toEqual([
+      ['file:///bundle/tread_wear.tflite', ['core-ml']],
+      ['file:///bundle/tread_wear.tflite', []],
+    ]);
+  });
+
+  test('the loader rejects an entry whose output shape does not fit 14 classes', () => {
+    expect(validateManifestEntry('treadWear', { ...treadWear, outputShape: [1, 8, 1029] })).toContain(
+      'outputShape needs 4 box values + 14 label scores, has 8',
+    );
+  });
+
+  test('config: 224 × 224 × 3 NCHW, Core ML / GPU then CPU, no NNAPI', () => {
+    expect(TREAD_MODEL_CONFIG).toEqual({
+      inputWidth: 224,
+      inputHeight: 224,
+      channels: 3,
+      layout: 'NCHW',
+      delegates: { ios: ['core-ml'], android: ['android-gpu'], fallback: 'cpu' },
+      confidenceThreshold: 0.25,
+      iouThreshold: 0.45,
+      maxDetections: 300,
+    });
   });
 });
 

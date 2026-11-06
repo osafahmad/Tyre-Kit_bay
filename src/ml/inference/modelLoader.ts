@@ -7,13 +7,14 @@ import {
   mkdir,
 } from '@dr.pogodin/react-native-fs';
 import type { TyreStatus } from '../../features/inspection/types';
-import type {
-  ClassifierManifestEntry,
-  DamageManifestEntry,
-  ModelKey,
-  ModelManifest,
-  TreadManifestEntry,
-  YoloDetectorManifestEntry,
+import {
+  isYoloModel,
+  type ClassifierManifestEntry,
+  type DamageManifestEntry,
+  type ModelKey,
+  type ModelManifest,
+  type TreadManifestEntry,
+  type YoloDetectorManifestEntry,
 } from '../manifest';
 import type {
   InferenceModel,
@@ -48,6 +49,17 @@ export type ModelLoaderDeps = {
   acceleration: ModelDelegate[];
 };
 
+/**
+ * Hardware delegates tried first, per platform; CPU is always the last resort.
+ * iOS: Core ML delegate is enabled in the Podfile. Android: GPU (OpenCL),
+ * declared optional in the manifest. NNAPI is not used (deprecated on
+ * Android 15, DECISIONS.md M0).
+ */
+export const ACCELERATION_BY_PLATFORM: Readonly<Record<'ios' | 'android', readonly ModelDelegate[]>> = {
+  ios: ['core-ml'],
+  android: ['android-gpu'],
+};
+
 export function defaultModelLoaderDeps(): ModelLoaderDeps {
   return {
     isDev: __DEV__,
@@ -64,9 +76,7 @@ export function defaultModelLoaderDeps(): ModelLoaderDeps {
         require('react-native-fast-tflite') as typeof import('react-native-fast-tflite');
       return loadTensorflowModel({ url }, delegates);
     },
-    // iOS: Core ML delegate is enabled in the Podfile. Android: GPU (OpenCL),
-    // declared optional in the manifest. NNAPI is not used (DECISIONS.md M0).
-    acceleration: Platform.OS === 'ios' ? ['core-ml'] : ['android-gpu'],
+    acceleration: [...ACCELERATION_BY_PLATFORM[Platform.OS === 'ios' ? 'ios' : 'android']],
   };
 }
 
@@ -136,7 +146,7 @@ export function validateManifestEntry(
       }
     }
   }
-  if (key === 'sidewallTextDetector') {
+  if (isYoloModel(key)) {
     const d = entry as YoloDetectorManifestEntry;
     if (d.outputFormat !== 'yolov8_raw') p.push(`outputFormat ${String(d.outputFormat)} is not supported`);
     if (d.outputType !== 'float32') {
@@ -201,7 +211,7 @@ export function checkModelMatchesManifest(
     }
   }
   if (model.outputs.length === 0) p.push('model has no outputs');
-  if (key === 'sidewallTextDetector' && model.outputs.length > 0) {
+  if (isYoloModel(key) && model.outputs.length > 0) {
     const d = entry as YoloDetectorManifestEntry;
     if (model.outputs.length !== 1) p.push(`expected 1 output tensor, model has ${model.outputs.length}`);
     const out = model.outputs[0];
