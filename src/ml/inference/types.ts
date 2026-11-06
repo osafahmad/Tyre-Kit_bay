@@ -3,8 +3,10 @@ import type {
   ClassifierManifestEntry,
   DamageManifestEntry,
   ModelKey,
+  ModelManifest,
   TensorDType,
   TreadManifestEntry,
+  YoloDetectorManifestEntry,
 } from '../manifest';
 
 // Structures for the on-device pipeline (spec §7). Screens never see these;
@@ -50,9 +52,11 @@ export type TensorSpec = {
   layout: 'NHWC' | 'NCHW';
   dtype: TensorDType;
   colorOrder: 'RGB' | 'BGR';
-  resize: 'stretch' | 'center_crop';
+  resize: NonNullable<ModelManifest[ModelKey]>['resize'];
   normalisation: { mean: number[]; std: number[] } | null;
   quantization: { scale: number; zeroPoint: number } | null;
+  /** 0–255 padding grey for `letterbox`. */
+  padValue: number;
 };
 
 /** Tightly or loosely packed 8-bit pixels, as Nitro Image returns them. */
@@ -84,7 +88,47 @@ export interface TyreDetector {
   detect(input: TyreDetectorInput): Promise<TyreDetectorOutput>;
 }
 
-// ---- Sidewall: OCR plus parsers (spec §7), no TFLite model. ----
+// ---- Sidewall: OCR plus parsers (spec §7). The text detector only finds regions. ----
+
+/** Rectangle in pixels of the original (saved) frame. */
+export type PixelRect = { x: number; y: number; width: number; height: number };
+
+/** How the model input was made from a frame, to map boxes back to frame pixels. */
+export type LetterboxInfo = {
+  sourceWidth: number;
+  sourceHeight: number;
+  /** Model input pixels per source pixel. */
+  scale: number;
+  padX: number;
+  padY: number;
+};
+
+/** One detector box after NMS, in model-input pixels. */
+export type Detection = {
+  label: string;
+  labelIndex: number;
+  score: number;
+  /** Corners in model-input pixels. */
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
+/** A sidewall text region found in one saved frame, ready for an OCR crop. */
+export type SidewallTextRegion = {
+  frame: string;
+  label: string;
+  score: number;
+  /** The box in frame pixels, clipped to the frame. */
+  box: PixelRect;
+  /** `box` grown by the OCR margin, as whole pixels inside the frame. */
+  cropRect: PixelRect;
+};
+
+export interface SidewallTextDetector {
+  detect(frame: string): Promise<SidewallTextRegion[]>;
+}
 
 export type SidewallExtractorInput = {
   frames: string[];
@@ -92,10 +136,19 @@ export type SidewallExtractorInput = {
   userDetails: Partial<TyreResult>;
 };
 
-export type SidewallExtractorOutput = Pick<
+export type SidewallValues = Pick<
   TyreResult,
   'size' | 'rimInches' | 'make' | 'model' | 'dotTin' | 'ageYears' | 'ageMonths'
 >;
+
+export type SidewallExtractorOutput = SidewallValues & {
+  /**
+   * Where Brand / DOT / Model / Size text is, per frame, for OCR cropping.
+   * Empty when the detector isn't in the build or found nothing. Never used to
+   * fill in values: those come only from what the user confirmed.
+   */
+  textRegions: SidewallTextRegion[];
+};
 
 export interface SidewallExtractor {
   extract(input: SidewallExtractorInput): Promise<SidewallExtractorOutput>;
@@ -135,4 +188,6 @@ export interface DamageClassifier {
 export type AnalysisModels = {
   tread: LoadedModel<TreadManifestEntry>;
   damage: LoadedModel<DamageManifestEntry>;
+  /** Optional: analysis works without it, just with no text regions. */
+  sidewallText?: LoadedModel<YoloDetectorManifestEntry>;
 };

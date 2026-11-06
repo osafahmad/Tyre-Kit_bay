@@ -1,3 +1,4 @@
+import { ocrConfig } from '../../config/capture';
 import type { TyreResult } from '../../features/inspection/types';
 import { tyreStatus } from '../../features/inspection/status';
 import { parseDotAge, parseTyreSize } from '../ocr/parsers';
@@ -6,8 +7,12 @@ import type { ClassifierManifestEntry } from '../manifest';
 import {
   argmax,
   classifierProbabilities,
+  decodeYoloDetections,
+  detectionToFrameRect,
+  imageFileToModelInput,
   imageFileToTensor,
   meanVectors,
+  ocrCropRect,
   tensorSpecFromManifest,
   type ImageDecoder,
 } from './tensorUtils';
@@ -21,6 +26,9 @@ import type {
   SidewallExtractor,
   SidewallExtractorInput,
   SidewallExtractorOutput,
+  SidewallTextDetector,
+  SidewallTextRegion,
+  SidewallValues,
   TreadEstimator,
   TreadEstimatorInput,
   TreadEstimatorOutput,
@@ -38,7 +46,23 @@ export type PipelineDeps = {
   /** Saved (relative) frame path → path the image decoder can open. */
   resolveFramePath(path: string): string;
   decoder: ImageDecoder;
+  /**
+   * Receives the sidewall text regions found during analysis, for OCR
+   * cropping. They aren't part of the saved `TyreResult`.
+   */
+  onSidewallTextRegions?(regions: SidewallTextRegion[]): void;
 };
+
+/** Saved frame → local file path for the decoder. */
+function localFramePath(frame: string, deps: PipelineDeps): string {
+  let path = deps.resolveFramePath(frame);
+  if (path.startsWith('file://')) path = decodeURI(path.slice('file://'.length));
+  if (/^[a-z]+:\/\//i.test(path)) {
+    // e.g. `demo://` frames from the development capture simulation.
+    throw new AnalysisFailedError('Frame is not a saved file on this phone.');
+  }
+  return path;
+}
 
 /**
  * Runs one classifier over every frame it was trained on, one frame at a time,
@@ -55,13 +79,7 @@ export async function classifyFrames(
   const spec = tensorSpecFromManifest(loaded.entry);
   const perFrame: Float32Array[] = [];
   for (const frame of frames) {
-    let path = deps.resolveFramePath(frame);
-    if (path.startsWith('file://')) path = decodeURI(path.slice('file://'.length));
-    if (/^[a-z]+:\/\//i.test(path)) {
-      // e.g. `demo://` frames from the development capture simulation.
-      throw new AnalysisFailedError('Frame is not a saved file on this phone.');
-    }
-    const tensor = await imageFileToTensor(path, spec, deps.decoder);
+    const tensor = await imageFileToTensor(localFramePath(frame, deps), spec, deps.decoder);
     const [output] = await loaded.model.run([tensor]);
     if (!output) throw new AnalysisFailedError(`The ${loaded.key} model returned nothing.`);
     perFrame.push(classifierProbabilities(output, loaded.entry));
@@ -85,24 +103,82 @@ function framesFor(
   return [...input.sidewallFrames, ...input.treadFrames];
 }
 
-/** Sidewall values come only from what the user confirmed (OCR + parsers). Nothing is guessed. */
-export const confirmedSidewallExtractor: SidewallExtractor = {
-  async extract({ userDetails }: SidewallExtractorInput): Promise<SidewallExtractorOutput> {
-    const size = userDetails.size ?? null;
-    const dotTin = userDetails.dotTin ?? null;
-    const parsedSize = size ? parseTyreSize(size) : null;
-    const age = dotTin ? parseDotAge(dotTin) : null;
-    return {
-      size: parsedSize?.value ?? size,
-      rimInches: parsedSize?.rimInches ?? null,
-      make: userDetails.make ?? null,
-      model: userDetails.model ?? null,
-      dotTin,
-      ageYears: age?.ageYears ?? null,
-      ageMonths: age?.ageMonths ?? null,
-    };
-  },
-};
+/**
+ * Finds Brand / DOT / Model / Size text regions in one saved sidewall frame.
+ * Boxes are mapped back to the frame's pixels and given an OCR crop rect.
+ */
+export function createSidewallTextDetector(
+  loaded: NonNullable<AnalysisModels['sidewallText']>,
+  deps: PipelineDeps,
+  marginRatio: number = ocrConfig.sidewallRegionMarginRatio,
+): SidewallTextDetector {
+  const spec = tensorSpecFromManifest(loaded.entry);
+  return {
+    async detect(frame: string): Promise<SidewallTextRegion[]> {
+      const input = await imageFileToModelInput(localFramePath(frame, deps), spec, deps.decoder);
+      if (!input.letterbox) throw new Error('The sidewall text detector needs letterbox resize.');
+      const lb = input.letterbox;
+      const [output] = await loaded.model.run([input.tensor]);
+      if (!output) throw new AnalysisFailedError('The sidewall text detector returned nothing.');
+      const regions: SidewallTextRegion[] = [];
+      for (const d of decodeYoloDetections(output, loaded.entry)) {
+        const box = detectionToFrameRect(d, lb);
+        if (!box) continue;
+        regions.push({
+          frame,
+          label: d.label,
+          score: d.score,
+          box,
+          cropRect: ocrCropRect(box, lb.sourceWidth, lb.sourceHeight, marginRatio),
+        });
+      }
+      return regions;
+    },
+  };
+}
+
+/**
+ * Sidewall values come only from what the user confirmed (OCR + parsers).
+ * Nothing is guessed. With a text detector, it also returns where the text
+ * regions are in each frame, for OCR cropping. A frame the detector can't
+ * read is skipped: regions are an aid, never a reason to fail the analysis.
+ */
+export function createSidewallExtractor(detector: SidewallTextDetector | null): SidewallExtractor {
+  return {
+    async extract({ frames, userDetails }: SidewallExtractorInput): Promise<SidewallExtractorOutput> {
+      const textRegions: SidewallTextRegion[] = [];
+      if (detector) {
+        for (const frame of frames) {
+          try {
+            textRegions.push(...(await detector.detect(frame)));
+          } catch {
+            // Unreadable frame or detector error: no regions from this frame.
+          }
+        }
+      }
+      return { ...confirmedSidewallValues(userDetails), textRegions };
+    },
+  };
+}
+
+/** Without a text detector: confirmed values only, no regions. */
+export const confirmedSidewallExtractor: SidewallExtractor = createSidewallExtractor(null);
+
+function confirmedSidewallValues(userDetails: Partial<TyreResult>): SidewallValues {
+  const size = userDetails.size ?? null;
+  const dotTin = userDetails.dotTin ?? null;
+  const parsedSize = size ? parseTyreSize(size) : null;
+  const age = dotTin ? parseDotAge(dotTin) : null;
+  return {
+    size: parsedSize?.value ?? size,
+    rimInches: parsedSize?.rimInches ?? null,
+    make: userDetails.make ?? null,
+    model: userDetails.model ?? null,
+    dotTin,
+    ageYears: age?.ageYears ?? null,
+    ageMonths: age?.ageMonths ?? null,
+  };
+}
 
 export function createTreadEstimator(
   loaded: AnalysisModels['tread'],
@@ -159,10 +235,12 @@ export async function runTyrePipeline(
   deps: PipelineDeps,
 ): Promise<TyreResult> {
   onStep('sidewall');
-  const sidewall = await confirmedSidewallExtractor.extract({
+  const detector = models.sidewallText ? createSidewallTextDetector(models.sidewallText, deps) : null;
+  const { textRegions, ...sidewall } = await createSidewallExtractor(detector).extract({
     frames: input.sidewallFrames,
     userDetails: input.userDetails,
   });
+  deps.onSidewallTextRegions?.(textRegions);
 
   onStep('tread');
   const tread = await createTreadEstimator(models.tread, deps).estimate({

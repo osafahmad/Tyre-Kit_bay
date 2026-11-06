@@ -23,6 +23,7 @@ const spec = (over: Partial<TensorSpec> = {}): TensorSpec => ({
   resize: 'stretch',
   normalisation: null,
   quantization: null,
+  padValue: 0,
   ...over,
 });
 

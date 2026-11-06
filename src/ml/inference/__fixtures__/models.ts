@@ -52,6 +52,7 @@ export const damageEntry: DamageManifestEntry = {
 
 export const fullManifest: ModelManifest = {
   tyreDetector: null,
+  sidewallTextDetector: null,
   tread: treadEntry,
   damage: damageEntry,
 };

@@ -13,6 +13,8 @@ export {
   runTyrePipeline,
   classifyFrames,
   confirmedSidewallExtractor,
+  createSidewallExtractor,
+  createSidewallTextDetector,
   createTreadEstimator,
   createDamageClassifier,
   AnalysisFailedError,

@@ -343,3 +343,39 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 - Android: copying the raw resource and loading it with `android-gpu`, then falling back to CPU. iOS: `core-ml` delegate with an int8 model.
 - Nitro Image pixel formats actually returned on each platform (handled: RGB/BGR/RGBA/BGRA/ARGB/ABGR and X variants).
 - Memory, time and heat for 10 tread + 8 sidewall inferences per tyre on a low-end Android phone.
+
+## M7 Phase 2a: first model registered (`tyre_detector.tflite`)
+
+**Status: manifest entry and loader checks unit-tested against the real file. Not yet loaded on a phone, and nothing runs the model yet.**
+
+### What the file really is (read from the file, 2026-11-06)
+- Ultralytics 8.4.203 YOLOv8n, `task: detect`, classes `Brand`, `Dot-Code`, `Model`, `Size`, `imgsz` 224×224.
+- Input: **float32 `[1, 3, 224, 224]` (NCHW)**, not quantized. Output: **float32 `[1, 8, 1029]`**: 4 box values + 4 class scores for each of 1029 anchors (28² + 14² + 7²), no NMS (`end2end: false`). The graph contains Ultralytics' `_NormalizeCoords`, so boxes are probably 0–1. **Confirm this on a phone before building the decoder.**
+- The export notes said NHWC / int8. Only the weights are int8. The input and output tensors are float32, and the loader rejects a manifest that doesn't match the file, so the manifest uses the file's values (**owner decision**).
+
+### Choices (owner decisions, 2026-11-06)
+- **Registered as `sidewallTextDetector`, not `tyreDetector`.** The model finds sidewall text regions for OCR. The spec's tyre detector finds the tyre itself (position and distance). `tyreDetector` stays `null`, so `isTyreDetectorAvailable()` is still false and no distance or auto-capture is claimed.
+- `confidenceThreshold: 0.25` is Ultralytics' default, used as a starting value. **Calibrate it on real sidewalls before release.**
+- `normalisation` is pixel / 255 in RGB order, and `resize: 'letterbox'` is the Ultralytics default preprocessing. `letterbox` was added to the manifest type. `imageFileToTensor` throws for it until padding is built, so no classifier can use it by mistake.
+- New manifest type `YoloDetectorManifestEntry` (`outputFormat: 'yolov8_raw'`, `outputType`, `outputQuantization`, `outputShape`). The loader checks that the output shape is `[1, 4 + labels, N]` and that it matches the loaded tensors.
+- **File location:** `assets/models/tyre_detector.tflite`, loaded with `require` like the other models (Metro, then iOS bundle `file://` or the Android raw resource copied to cache). The native copies (`android/app/src/main/assets/` and `ios/tyre_detector.tflite` with its 4 Copy Bundle Resources lines in `project.pbxproj`) were **removed on owner request** (2026-11-06). They were byte-identical and the loader never used them.
+- Jest maps `*.tflite` to a numeric asset-id stub (`jest/tfliteAssetStub.js`). `src/ml/__tests__/manifest.test.ts` reads the real file's flatbuffer and embedded `metadata.json` and checks the manifest against them.
+
+### Risks
+- **ACTIVE RELEASE BLOCKER: licence AGPL-3.0** (Ultralytics, from the file's metadata). Spec §7: closed-source commercial use needs an Ultralytics enterprise licence. **Owner decision (2026-11-06): this model must be replaced (or licensed) before any commercial release.** It is used for development only until then.
+- Spec §7 lists YOLOX-Nano at 320×320 for the detector. This model is a different architecture, at a different size, for a different job.
+
+### Decoder and preprocessing (M7 Phase 2b, 2026-11-06)
+**Status: unit-tested with synthetic tensors. Not run on a phone and not checked against real detector output.**
+- **Letterbox** (`letterboxPlan`, `padPixels`, `imageFileToModelInput` in `tensorUtils.ts`): scale to fit and keep the aspect ratio, using Ultralytics' `round(d ± 0.1)` padding split. Padding is grey 114 (`letterboxPadValue`, Ultralytics' training value). The result is RGB / 255 as float32 NCHW. The geometry (`scale`, `padX`, `padY`) is returned so boxes can be mapped back. Every intermediate image is disposed.
+- **Decoding** (`decodeYoloDetections`): reads `[1, 4 + labels, anchors]` attribute-major and takes the best label per anchor. Anchors below `confidenceThreshold` (0.25) and zero-size boxes are dropped. Then greedy **NMS per label** (Ultralytics' default, not class-agnostic) runs at **IoU 0.45 (owner value)**, keeping at most `maxDetections` (300, Ultralytics' default). A box overlapping a kept box exactly at the threshold is kept, and anything above it is dropped. Scores are used as output, because the YOLOv8 export already applies sigmoid.
+- **`boxFormat: 'cxcywh_normalised'`** is inferred from `_NormalizeCoords` in the graph. **Unverified:** if real output shows pixel values (e.g. cx ≈ 112), switch it to `cxcywh_pixels`. The decoder supports both.
+- **Back to frame pixels** (`detectionToFrameRect`): undoes the letterbox and clips to the frame. Boxes entirely in the padding are dropped. `ocrCropRect` adds `ocrConfig.sidewallRegionMarginRatio` (**0.1, UNCALIBRATED**) on each side, as whole pixels inside the frame.
+- **Pipeline:** `createSidewallTextDetector` runs on each saved sidewall frame, and `createSidewallExtractor(detector)` returns the confirmed values plus `textRegions` (frame, label, score, box, cropRect). `runTyrePipeline` passes the regions to the optional `PipelineDeps.onSidewallTextRegions` hook. **They are not saved in `TyreResult`, and they never fill in values:** size, DOT, make and model still come only from what the user confirmed.
+- **Optional model:** `TfliteTyreAnalyzer` loads the text detector after tread and damage. If it is missing or won't open, analysis runs without regions. A frame the detector can't read (e.g. `demo://`) is skipped and doesn't fail the tyre.
+- **Still not reachable in the app:** the analyzer only runs once the tread and damage models exist, so the detector doesn't run yet. Nothing consumes the regions yet either: OCR on the crops (crop with Nitro Image → `recognizeLines` → parsers → user review) is the next step.
+
+### Needs a real phone
+- The model loading through `core-ml` / `android-gpu` with CPU fallback, and the loaded tensor details matching the manifest.
+- The real output's box format (normalised or pixels) and whether boxes land on the text, on both platforms.
+- The pixel format Nitro Image returns after `resizeAsync`, and the time for 8 sidewall frames on a low-end Android phone.
