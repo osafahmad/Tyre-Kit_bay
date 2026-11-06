@@ -9,7 +9,12 @@ import { resetToProgress } from '../../app/navigation';
 import { useInspectionStore, useTyre } from '../../features/inspection/store';
 import { tyreName } from '../../features/inspection/positions';
 import { feedback } from '../../features/feedback/feedback';
-import { getAnalyzer, AnalyzerUnavailableError, type AnalysisStep } from '../../ml';
+import {
+  getAnalyzer,
+  AnalyzerUnavailableError,
+  ModelUnavailableError,
+  type AnalysisStep,
+} from '../../ml';
 import { colors, sizes } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Analysing'>;
@@ -22,8 +27,13 @@ const steps: { key: AnalysisStep; label: string }[] = [
 
 export const ANALYSIS_PENDING_TITLE = 'Analysis pending';
 
-export function analysisPendingText(name: string): string {
-  return `${name} frames are saved on this phone. The tyre models aren't in this app yet, so there's no result for it.`;
+export function analysisPendingText(
+  name: string,
+  reason: 'missing' | 'load_failed' = 'missing',
+): string {
+  return reason === 'load_failed'
+    ? `${name} frames are saved on this phone. The tyre models couldn't be loaded, so there's no result for it yet.`
+    : `${name} frames are saved on this phone. The tyre models aren't in this app yet, so there's no result for it.`;
 }
 
 type Outcome = 'running' | 'failed' | 'pending';
@@ -47,6 +57,7 @@ export function AnalysingScreen({ navigation, route }: Props) {
   const [current, setCurrent] = useState(0);
   const [outcome, setOutcome] = useState<Outcome>('running');
   const [attempt, setAttempt] = useState(0);
+  const [pendingReason, setPendingReason] = useState<'missing' | 'load_failed'>('missing');
   const mounted = useRef(true);
   useEffect(
     () => () => {
@@ -85,7 +96,8 @@ export function AnalysingScreen({ navigation, route }: Props) {
     } catch (e) {
       if (!mounted.current) return;
       if (e instanceof AnalyzerUnavailableError) {
-        // No models: keep the frames and record no result.
+        // No usable models: keep the frames and record no result.
+        setPendingReason(e instanceof ModelUnavailableError ? e.reason : 'missing');
         setAnalysisPending(tyreId);
         setOutcome('pending');
         feedback.warning(`${ANALYSIS_PENDING_TITLE}. The frames are saved.`);
@@ -136,7 +148,7 @@ export function AnalysingScreen({ navigation, route }: Props) {
               : 'Analysing tyre'}
         </AppText>
         <AppText variant="bodySmall" color="textSecondary" align="center" style={styles.lead}>
-          {pending ? analysisPendingText(name) : `${name} · Running on this phone`}
+          {pending ? analysisPendingText(name, pendingReason) :`${name} · Running on this phone`}
         </AppText>
         {analyzer.isDemo && !stopped ? (
           <View style={styles.demo}>

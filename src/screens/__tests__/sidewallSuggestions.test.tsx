@@ -1,0 +1,149 @@
+import React from 'react';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { SidewallCapturedScreen } from '../SidewallCaptured/SidewallCapturedScreen';
+import { useInspectionStore } from '../../features/inspection/store';
+import type { SidewallReadOutcome } from '../../ml/sidewallReader';
+
+// The reader is mocked; its crop → OCR → parser logic is tested in src/ml/__tests__/sidewallReader.test.ts.
+const mockReader = {
+  canRead: jest.fn((_frames: string[]) => true),
+  read: jest.fn(),
+};
+jest.mock('../../ml/sidewallReader', () => ({
+  ...jest.requireActual('../../ml/sidewallReader'),
+  getSidewallReader: () => mockReader,
+}));
+
+/** Lets the screen's read promise chain settle inside act(). */
+const flush = () => act(async () => new Promise<void>(r => setTimeout(r, 0)));
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>(r => (resolve = r));
+  return { promise, resolve };
+}
+
+function seedTyre(details = { size: null, dotTin: null, make: null, model: null } as Record<string, string | null>) {
+  const store = useInspectionStore.getState();
+  store.replaceAll([], null);
+  store.startInspection('test');
+  store.selectTyres(['FL']);
+  const s = useInspectionStore.getState();
+  const tyreId = s.inspections.find(i => i.id === s.currentId)!.tyres[0].id;
+  store.setSidewallCaptured(tyreId, ['frames/a.jpg', 'frames/b.jpg'], details as never);
+  return tyreId;
+}
+
+const details = (tyreId: string) => {
+  const s = useInspectionStore.getState();
+  return s.inspections.flatMap(i => i.tyres).find(t => t.id === tyreId)!.sidewallDetails;
+};
+
+function renderScreen(tyreId: string) {
+  const navigation = { navigate: jest.fn(), replace: jest.fn() };
+  return render(
+    <SidewallCapturedScreen
+      navigation={navigation as never}
+      route={{ key: 'k', name: 'SidewallCaptured', params: { tyreId } } as never}
+    />,
+  );
+}
+
+const done = (suggestions: Record<string, string>): SidewallReadOutcome => ({
+  status: 'done',
+  suggestions,
+  regionsFound: 4,
+  ocrRuns: 4,
+});
+
+beforeEach(() => {
+  mockReader.canRead.mockReset().mockReturnValue(true);
+  mockReader.read.mockReset();
+});
+
+test('read values fill the fields as suggestions and are saved; the user can still edit them', async () => {
+  const tyreId = seedTyre();
+  const read = deferred<SidewallReadOutcome>();
+  mockReader.read.mockReturnValue(read.promise);
+  await renderScreen(tyreId);
+
+  expect(mockReader.read).toHaveBeenCalledWith(['frames/a.jpg', 'frames/b.jpg'], expect.any(Function));
+  expect(screen.getByLabelText('Tyre size').props.placeholder).toBe('Reading…');
+
+  await act(async () => read.resolve(done({ size: '205/55 R16', dotTin: '4B7Y 2319', make: 'MICHELIN' })));
+  expect(screen.getByLabelText('Tyre size').props.value).toBe('205/55 R16');
+  expect(screen.getByLabelText('Make').props.value).toBe('MICHELIN');
+  expect(screen.getByLabelText('Model').props.value).toBe('');
+  expect(screen.getByLabelText('Model').props.placeholder).toBe('Not read');
+  expect(details(tyreId)).toEqual({ size: '205/55 R16', dotTin: '4B7Y 2319', make: 'MICHELIN', model: null });
+
+  await fireEvent.changeText(screen.getByLabelText('Make'), 'Michelin');
+  expect(details(tyreId).make).toBe('Michelin');
+});
+
+test('fields the user typed in while reading are not overwritten', async () => {
+  const tyreId = seedTyre();
+  const read = deferred<SidewallReadOutcome>();
+  mockReader.read.mockReturnValue(read.promise);
+  await renderScreen(tyreId);
+
+  await fireEvent.changeText(screen.getByLabelText('Tyre size'), '195/65r15');
+  expect(screen.getByLabelText('Tyre size').props.placeholder).toBe('Not read');
+  await act(async () => read.resolve(done({ size: '205/55 R16', model: 'Primacy 4' })));
+
+  expect(screen.getByLabelText('Tyre size').props.value).toBe('195/65R15');
+  expect(screen.getByLabelText('Model').props.value).toBe('Primacy 4');
+});
+
+test('values already confirmed are kept; only empty fields are filled', async () => {
+  const tyreId = seedTyre({ size: '195/65 R15', dotTin: null, make: 'Pirelli', model: null });
+  mockReader.read.mockResolvedValue(done({ size: '205/55 R16', make: 'MICHELIN', dotTin: '2319' }));
+  await renderScreen(tyreId);
+  await flush();
+  expect(screen.getByLabelText('Tyre size').props.value).toBe('195/65 R15');
+  expect(screen.getByLabelText('Make').props.value).toBe('Pirelli');
+  expect(screen.getByLabelText('DOT/TIN').props.value).toBe('2319');
+});
+
+test('nothing read, reader unavailable or failing: fields stay empty and show Not read', async () => {
+  for (const outcome of [
+    () => Promise.resolve(done({})),
+    () => Promise.resolve({ status: 'unavailable', reason: 'detector_missing' } as SidewallReadOutcome),
+    () => Promise.reject(new Error('boom')),
+  ]) {
+    const tyreId = seedTyre();
+    mockReader.read.mockImplementation(outcome);
+    const view = await renderScreen(tyreId);
+    await flush();
+    for (const label of ['Tyre size', 'DOT/TIN', 'Make', 'Model']) {
+      expect(screen.getByLabelText(label).props.value).toBe('');
+      expect(screen.getByLabelText(label).props.placeholder).toBe('Not read');
+    }
+    await view.unmount();
+  }
+});
+
+test('no reading when it is not possible (no OCR / demo frames) or all fields are filled', async () => {
+  mockReader.canRead.mockReturnValue(false);
+  const view = await renderScreen(seedTyre());
+  expect(mockReader.read).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Make').props.placeholder).toBe('Not read');
+  await view.unmount();
+
+  mockReader.canRead.mockReturnValue(true);
+  await renderScreen(seedTyre({ size: 'a', dotTin: 'b', make: 'c', model: 'd' }));
+  expect(mockReader.read).not.toHaveBeenCalled();
+});
+
+test('leaving the screen cancels the read', async () => {
+  const tyreId = seedTyre();
+  const read = deferred<SidewallReadOutcome>();
+  mockReader.read.mockReturnValue(read.promise);
+  const view = await renderScreen(tyreId);
+  const isCancelled = mockReader.read.mock.calls[0][1] as () => boolean;
+  expect(isCancelled()).toBe(false);
+  await view.unmount();
+  expect(isCancelled()).toBe(true);
+  await act(async () => read.resolve(done({ size: '205/55 R16' })));
+  expect(details(tyreId).size).toBeNull();
+});

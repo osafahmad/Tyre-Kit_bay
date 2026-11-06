@@ -12,6 +12,8 @@ import { settings } from '../../features/inspection/settings';
 import { MemoryInspectionRepository } from '../../features/inspection/repository';
 import { resetShareState } from '../../features/report/shareReport';
 import { SHARE_FAILED_MESSAGE } from '../Report/ReportScreen';
+import { analysisPendingText } from '../Analysing/AnalysingScreen';
+import { fakeLoaderDeps, fullManifest } from '../../ml/inference/__fixtures__/models';
 
 let repo: MemoryInspectionRepository;
 const camera = (VC as unknown as { __mock: { device: unknown } }).__mock;
@@ -135,6 +137,20 @@ describe('release build without tyre models', () => {
     expect(await screen.findByText('Analysis pending')).toBeTruthy();
     expect(useInspectionStore.getState().inspections[0].tyres[0].state).toBe('pending_analysis');
   });
+});
+
+test('bundled models that fail to load keep the tyre pending and say so', async () => {
+  const deps = fakeLoaderDeps({
+    createModel: jest.fn(async () => {
+      throw new Error('not a model');
+    }),
+  });
+  jest.spyOn(ml, 'getAnalyzer').mockReturnValue(new TfliteTyreAnalyzer(fullManifest, () => deps));
+  await startTwoTyres('ABC-3');
+  await captureAndAnalyse();
+  expect(await screen.findByText('Analysis pending')).toBeTruthy();
+  expect(screen.getByText(analysisPendingText('Front tyre', 'load_failed'))).toBeTruthy();
+  expect(useInspectionStore.getState().inspections[0].tyres[0].state).toBe('pending_analysis');
 });
 
 test('a real analysis error still shows the failure screen, not pending', async () => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -14,6 +14,7 @@ import type { RootStackParamList } from '../../app/routes';
 import { useInspectionStore, useTyre } from '../../features/inspection/store';
 import { emptyToNull } from '../../features/inspection/validation';
 import type { SidewallDetails } from '../../features/inspection/types';
+import { applySuggestions, getSidewallReader } from '../../ml/sidewallReader';
 import { colors, fonts, radius } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SidewallCaptured'>;
@@ -28,6 +29,11 @@ const fields: { key: keyof SidewallDetails; label: string; upper: boolean }[] = 
 /**
  * 14 Sidewall captured (SidewallDone.dc.html). Fields hold what OCR read;
  * anything it couldn't read stays empty and shows `Not read`.
+ *
+ * On open, the sidewall frames are read on the phone (text detector → crop →
+ * ML Kit → field parsers). Results only fill fields that are still empty and
+ * that the user hasn't edited; they stay editable, so the user confirms or
+ * corrects them. If nothing can be read, fields stay `Not read`.
  */
 export function SidewallCapturedScreen({ navigation, route }: Props) {
   const { tyreId } = route.params;
@@ -41,6 +47,14 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
     model: found?.tyre.sidewallDetails.model ?? '',
   }));
 
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+  const touched = useRef(new Set<keyof SidewallDetails>());
+  const frames = found?.tyre.sidewallFrames;
+  const [reading, setReading] = useState(
+    () => !!frames && Object.values(values).some(v => v === '') && getSidewallReader().canRead(frames),
+  );
+
   const save = (next = values) =>
     setSidewallDetails(tyreId, {
       size: emptyToNull(next.size),
@@ -49,7 +63,35 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
       model: emptyToNull(next.model),
     });
 
+  const saveRef = useRef(save);
+  saveRef.current = save;
+
+  // Runs once per tyre when the screen opens, if there's anything to read.
+  useEffect(() => {
+    if (!reading || !frames) return;
+    let cancelled = false;
+    getSidewallReader()
+      .read(frames, () => cancelled)
+      .then(outcome => {
+        if (cancelled || outcome.status !== 'done') return;
+        const next = applySuggestions(valuesRef.current, outcome.suggestions, touched.current);
+        if (fields.some(f => next[f.key] !== valuesRef.current[f.key])) {
+          setValues(next);
+          saveRef.current(next);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setReading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tyreId]);
+
   const change = (key: keyof SidewallDetails, text: string, upper: boolean) => {
+    touched.current.add(key);
     const next = { ...values, [key]: upper ? text.toUpperCase() : text };
     setValues(next);
     save(next);
@@ -83,7 +125,7 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
             <TextInput
               value={values[f.key]}
               onChangeText={t => change(f.key, t, f.upper)}
-              placeholder="Not read"
+              placeholder={reading && !touched.current.has(f.key) ? 'Reading…' : 'Not read'}
               placeholderTextColor={colors.textSecondary}
               accessibilityLabel={f.label}
               accessibilityHint={values[f.key] === '' ? 'Not read. Type it in if you can see it.' : undefined}

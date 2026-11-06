@@ -54,7 +54,7 @@ export type PipelineDeps = {
 };
 
 /** Saved frame → local file path for the decoder. */
-function localFramePath(frame: string, deps: PipelineDeps): string {
+export function localFramePath(frame: string, deps: PipelineDeps): string {
   let path = deps.resolveFramePath(frame);
   if (path.startsWith('file://')) path = decodeURI(path.slice('file://'.length));
   if (/^[a-z]+:\/\//i.test(path)) {

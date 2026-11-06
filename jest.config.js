@@ -3,6 +3,8 @@ module.exports = {
   setupFiles: ['./jest.setup.js'],
   // Use lucide's prebuilt CommonJS bundle; transforming its ESM icons is very slow.
   moduleNameMapper: {
+    // Metro resolves require('…tflite') to an asset id (a number); do the same in tests.
+    '\\.tflite$': '<rootDir>/jest/tfliteAssetStub.js',
     '^lucide-react-native$': '<rootDir>/node_modules/lucide-react-native/dist/cjs/lucide-react-native.js',
   },
   transformIgnorePatterns: [

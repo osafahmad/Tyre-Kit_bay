@@ -379,3 +379,36 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 - The model loading through `core-ml` / `android-gpu` with CPU fallback, and the loaded tensor details matching the manifest.
 - The real output's box format (normalised or pixels) and whether boxes land on the text, on both platforms.
 - The pixel format Nitro Image returns after `resizeAsync`, and the time for 8 sidewall frames on a low-end Android phone.
+
+## M7 Phase 2c: sidewall text regions → ML Kit OCR → suggestions (2026-11-06)
+
+**Status: unit-tested with a mocked detector and mocked OCR. Not run on a phone. The model is AGPL-3.0, an active release blocker (see Phase 2a).**
+
+### Where it runs
+- **On Sidewall captured, not in the post-capture analyzer.** Suggestions must reach the user before they confirm, and the analyzer only runs after tread capture (and only once tread and damage models exist). `SidewallCapturedScreen` calls `getSidewallReader()` (`src/ml/sidewallReader.ts`) when it opens. Screens never touch TFLite or ML Kit directly.
+- Read results **only fill fields that are still empty and that the user hasn't edited** (`applySuggestions`). Values already saved for the tyre are never replaced. Filled fields stay editable: the screen's existing "Check the details and correct anything that's wrong" is the confirmation step, and pressing `Scan tread` saves what's shown.
+- **New placeholder (differs from spec):** while reading, empty fields show `Reading…` instead of `Not read`, so a field doesn't claim "not read" and then fill in a moment later. It becomes `Not read` once reading ends with nothing, or as soon as the user edits that field.
+
+### Pipeline (`createSidewallReader`)
+1. For each saved sidewall frame: text detector (Phase 2b), then the **best-scoring region per label**.
+2. Crop the saved frame to the region's `cropRect` (Nitro Image `cropAsync`), write a temporary JPEG, run ML Kit `recognizeLines`, then delete the JPEG. Every image is disposed.
+3. Label → field → parser (`src/ml/ocr/sidewallFields.ts`):
+   - `Size` → `size`: existing `parseTyreSize`, per line, then on all lines joined (OCR can split `205/55` and `R16`).
+   - `Dot-Code` → `dotTin`: uppercase, letters, digits and single spaces, leading `DOT` removed. Valid only with 4–13 letters and digits **ending in a real week/year date code** (`parseDotAge`: week 1–53, not in the future). A date-code-only read is accepted.
+   - `Brand` → `make`, `Model` → `model`: the tallest OCR line with ≥2 letters (≤30 chars), as read. **No brand list or fuzzy matching**: that would be guessing.
+   - Characters are never swapped (O/0, I/1…), completed, or reformatted beyond what the parser defines.
+4. **Agreement:** a value is suggested only when `ocrConfig.sidewallMinAgreeingReads` (**2, UNCALIBRATED**) frames read the same text (ignoring case and spaces). Disagreements go to the majority, with ties going to the higher total detector score. A field stops being read once it has agreement. At most `sidewallMaxOcrRuns` (**24, UNCALIBRATED**) OCR runs per sidewall.
+
+### Fallbacks (never throws; fields stay `Not read`)
+- No ML Kit in the build (e.g. iOS simulator builds), or only `demo://` frames: nothing is read, and the placeholder stays `Not read`.
+- Detector missing or failing to load: no suggestions. The load is retried next time, and a loaded detector is reused.
+- Detector error on a frame, crop/save error, OCR error, no text, or text that fails its parser: that region or frame is skipped.
+- **No full-frame OCR fallback** when the detector is unavailable. Without regions, which text is the make or model would be a guess.
+
+### Offline
+- Everything runs on the phone: TFLite (bundled model), ML Kit Latin (bundled models), and files in app storage and caches. No new packages and no network calls.
+
+### Needs a real phone
+- ML Kit accuracy on cropped sidewall regions (moulded black-on-black text), and whether the 10% crop margin and 2-frame agreement are right.
+- Time to read 8 frames (8 detector runs + up to 24 OCR runs) on a low-end Android phone. The `Reading…` wait has no limit other than the run cap.
+- The detector and a later analyzer each load their own copy of the model (about 3.3 MB each). That's acceptable for now; share a loader if memory is tight.
