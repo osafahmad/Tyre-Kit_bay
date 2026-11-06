@@ -5,6 +5,7 @@ import {
   getTreadWearDetector,
   type TreadWearFrameResult,
   type TreadWearScanner,
+  type TreadWearUnavailableReason,
 } from '../ml/services/TreadWearDetector';
 
 // One tyre's inspection data for a screen: the saved tyre and its confirmed
@@ -32,7 +33,7 @@ export type TreadWearFinding = {
 export type TreadWearState =
   | { status: 'idle' }
   | { status: 'scanning' }
-  | { status: 'unavailable'; reason: 'model_missing' | 'no_frames' }
+  | { status: 'unavailable'; reason: TreadWearUnavailableReason }
   | {
       status: 'done';
       /** Strongest first. */
@@ -73,7 +74,25 @@ export function treadWearSeverity(
 export type UseTyreInspectionOptions = {
   /** Injected in tests. Defaults to the app's tread wear detector. */
   treadWearScanner?: TreadWearScanner;
+  /** Scan the saved tread frames as soon as the tyre is shown (Tyre result). */
+  autoScan?: boolean;
 };
+
+type DoneState = Extract<TreadWearState, { status: 'done' }>;
+
+/**
+ * Finished scans for this app session, so reopening a tyre doesn't run the
+ * model again over the same frames. Memory only, never saved. Keyed by tyre
+ * and its frame list, so a rescan of the tyre (new frames) misses the cache.
+ */
+const scanCache = new Map<string, DoneState>();
+const SCAN_CACHE_LIMIT = 24;
+const cacheKey = (tyreId: string, frames: string[]) => `${tyreId}|${frames.join('|')}`;
+
+/** For tests. */
+export function clearTreadWearCache(): void {
+  scanCache.clear();
+}
 
 export function useTyreInspection(tyreId: string, options: UseTyreInspectionOptions = {}) {
   const found = useTyre(tyreId);
@@ -87,7 +106,8 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
   framesRef.current = treadFrames;
 
   useEffect(() => {
-    setTreadWear({ status: 'idle' });
+    const cached = scanCache.get(cacheKey(tyreId, framesRef.current ?? []));
+    setTreadWear(cached ?? { status: 'idle' });
     // The counter object itself, not a DOM node: bumping it at cleanup cancels any running scan.
     const runs = runId;
     return () => {
@@ -100,6 +120,12 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
     const run = ++runId.current;
     const isCancelled = () => run !== runId.current;
     const frames = framesRef.current ?? [];
+    const key = cacheKey(tyreId, frames);
+    const cached = scanCache.get(key);
+    if (cached) {
+      setTreadWear(cached);
+      return cached;
+    }
     setTreadWear({ status: 'scanning' });
     const scanner = scannerRef.current ?? getTreadWearDetector();
     let next: TreadWearState;
@@ -118,6 +144,8 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
           frames: outcome.frames,
           framesFailed: outcome.framesFailed,
         };
+        if (scanCache.size >= SCAN_CACHE_LIMIT) scanCache.delete(scanCache.keys().next().value!);
+        scanCache.set(key, next);
       }
     } catch {
       // The scanner doesn't throw; if it ever does, report no model rather than a made-up result.
@@ -125,7 +153,13 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
     }
     if (!isCancelled()) setTreadWear(next);
     return next;
-  }, []);
+  }, [tyreId]);
+
+  const autoScan = options.autoScan ?? false;
+  const framesKey = (treadFrames ?? []).join('|');
+  useEffect(() => {
+    if (autoScan) scanTreadWear();
+  }, [autoScan, framesKey, scanTreadWear]);
 
   const resetTreadWear = useCallback(() => {
     runId.current++;

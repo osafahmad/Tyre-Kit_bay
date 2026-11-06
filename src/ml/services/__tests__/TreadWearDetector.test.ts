@@ -83,6 +83,12 @@ describe('TreadWearDetector', () => {
     if (outcome.status === 'done') expect(outcome.frames.map(f => f.frame)).toEqual(['b.jpg']);
   });
 
+  test('every frame failing is unavailable (unreadable), never an empty result', async () => {
+    const { detector, run } = setup();
+    run.mockRejectedValue(new Error('file missing'));
+    expect(await detector.scan(['a.jpg', 'b.jpg'])).toEqual({ status: 'unavailable', reason: 'unreadable' });
+  });
+
   test('stops between frames when cancelled', async () => {
     const { detector, run } = setup();
     let cancelled = false;

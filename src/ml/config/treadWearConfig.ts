@@ -67,6 +67,101 @@ export const TREAD_MODEL_CONFIG: TreadModelConfig | null = modelManifest.treadWe
   ? treadModelConfig(modelManifest.treadWear)
   : null;
 
+/** How a wear class is shown to users. `cause` and `severityHint` are null when not supplied. */
+export type TreadWearPresentation = {
+  title: string;
+  cause: string | null;
+  severityHint: string | null;
+};
+
+type KnownPresentation = { title: string; cause: string; severityHint: string };
+
+const SHOULDER: KnownPresentation = {
+  title: 'Shoulder Wear',
+  cause: 'Under-inflation or alignment issue',
+  severityHint: 'Inspect camber and pressure',
+};
+
+const PATCHY: KnownPresentation = {
+  title: 'Patchy Spot Wear',
+  cause: 'Skid flat-spotting or out-of-round assembly',
+  severityHint: 'Inspect roundness and tyre balance',
+};
+
+/**
+ * User-facing titles, likely causes and advice per wear class. Owner-supplied
+ * wording (2026-11-06). Classes not listed here get a cleaned-up title and no
+ * cause or advice: none is made up.
+ */
+export const TREAD_WEAR_PRESENTATION: Readonly<Partial<Record<TreadWearClass, KnownPresentation>>> = {
+  'Center Wear': {
+    title: 'Center Tread Wear',
+    cause: 'Over-inflation',
+    severityHint: 'Adjust tyre pressure',
+  },
+  'Shoulder Wear Left': SHOULDER,
+  'Shoulder Wear Right': SHOULDER,
+  'Cupping _Scallop Wear': {
+    title: 'Cupping / Scalloped Wear',
+    cause: 'Worn suspension or shock absorbers',
+    severityHint: 'Inspect dampers and balance',
+  },
+  'Heel and Toe Wear': {
+    title: 'Heel & Toe Wear',
+    cause: 'Suspension misalignment or rotation overdue',
+    severityHint: 'Rotate tyres and check toe',
+  },
+  'Feather Edge': {
+    title: 'Feathered Wear',
+    cause: 'Toe alignment fault',
+    severityHint: 'Perform wheel alignment',
+  },
+  'Diagonal Wear': {
+    title: 'Diagonal Wear',
+    cause: 'Wheel imbalance or rear axle misalignment',
+    severityHint: 'Rebalance wheel assembly',
+  },
+  'Alternate Lug Wear': {
+    title: 'Lug Tread Wear',
+    cause: 'Aggressive torque or uneven load',
+    severityHint: 'Inspect axle load and drive components',
+  },
+  'Spotty Wear': PATCHY,
+  'Rip Depression and Punch Wear': PATCHY,
+};
+
+/** Words kept lower case inside a title (not first). */
+const MINOR_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to']);
+
+/**
+ * Raw class name → clean title: underscores and extra spaces removed, each word
+ * (and each part of a hyphenated word) capitalised, minor words lower case.
+ * `River_Channel Erosion Wear` → `River Channel Erosion Wear`,
+ * `Eccentric and Out-of-Round Wear` → `Eccentric and Out-of-Round Wear`.
+ */
+export function formatWearTitle(raw: string): string {
+  const words = raw.replace(/_/g, ' ').trim().split(/\s+/).filter(Boolean);
+  return words
+    .map((word, i) =>
+      word
+        .split('-')
+        .map((part, j) => {
+          const lower = part.toLowerCase();
+          if ((i > 0 || j > 0) && MINOR_WORDS.has(lower)) return lower;
+          return lower.charAt(0).toUpperCase() + lower.slice(1);
+        })
+        .join('-'),
+    )
+    .join(' ');
+}
+
+/** Any model label (known or not) → what the user sees. */
+export function describeTreadWear(label: string): TreadWearPresentation {
+  const known = isTreadWearClass(label) ? TREAD_WEAR_PRESENTATION[label] : undefined;
+  if (known) return { ...known };
+  return { title: formatWearTitle(label), cause: null, severityHint: null };
+}
+
 /**
  * Wear severity shown by `useTyreInspection`. Owner decision 2026-11-06:
  * any wear class at or above this confidence is `critical`. A starting value,

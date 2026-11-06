@@ -4,6 +4,7 @@ import { useInspectionStore } from '../../features/inspection/store';
 import type { TreadWearClass } from '../../ml/config/treadWearConfig';
 import type { TreadWearScanOutcome, TreadWearScanner } from '../../ml/services/TreadWearDetector';
 import {
+  clearTreadWearCache,
   summariseTreadWear,
   treadWearSeverity,
   useTyreInspection,
@@ -60,6 +61,8 @@ describe('severity and summary', () => {
 });
 
 describe('useTyreInspection', () => {
+  beforeEach(() => clearTreadWearCache());
+
   test('scans the tyre’s saved tread frames and reports wear without touching the store', async () => {
     const [a] = seed();
     const before = JSON.stringify(store().inspections);

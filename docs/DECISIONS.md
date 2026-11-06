@@ -523,8 +523,23 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - **Diagnostics:** `setTreadDebug(true)` (`src/ml/services/treadDebug.ts`), off by default, device log only, tag `[TreadWear]`. Logs frame indexes, not paths.
 - **File location:** `assets/models/tread_wear.tflite`. The native copies (`ios/tread_wear.tflite` with its 4 `project.pbxproj` lines, and `android/app/src/main/assets/tread_wear.tflite`) were **removed on owner request**. They were byte-identical and the loader never used them.
 
+### Tyre result card (2026-11-06)
+- **Layout change (owner request):** Tyre result has a **`Tread Pattern & Wear` card** below the rows and above the automated-check notice. It isn't in `19-tyre-result.png`. The header, status badge and every row (size, rim, make, model, DOT/TIN, age, wear pattern, damage) are unchanged. The `Wear pattern` row still shows the analyzer's `wearPattern`, which the card doesn't fill.
+- **Labels:** `TREAD_WEAR_PRESENTATION` / `describeTreadWear` in `treadWearConfig.ts` hold the owner's titles, causes and advice for 10 classes. The 4 unlisted classes (`Eccentric and Out-of-Round Wear`, `River_Channel Erosion Wear`, `Shoulder Step Chamfer Wear`, `Wavy Wear`) get a cleaned title only, with no cause or advice.
+- **Card states:**
+  - checking: spinner and `Checking tread wear on this phone…`
+  - `Not checked`: model missing, no saved tread frames, or no frame could be read
+  - `Normal Wear Distribution`: the model ran on at least one frame and found nothing
+  - `Wear pattern found` (< 0.60): title, likely cause and advice
+  - `Maintenance needed` (≥ 0.60): title, likely cause, and `Get this checked as soon as possible: …`
+  - Other classes found are listed under `Also seen`. The outcome is announced to screen readers.
+- **No status colours on the card.** CLAUDE.md keeps green / amber / red for tyre status only. A red wear alert next to a `Good` status badge would read as a status, so the card uses theme tokens: muted grey (normal), a navy outline (warning) and navy fill with white text (critical), each with a text label and its own icon.
+- **When it runs:** when Tyre result opens (`useTyreInspection(tyreId, { autoScan: true })`), on the tyre's saved tread frames only, after capture and analysis. Finished scans are cached in memory for the session (up to 24 tyres) and are never saved. Reopening a tyre doesn't rerun the model; scanning the tyre again (new frames) does.
+- **Fix:** if every frame fails (e.g. files missing), the detector now returns `unavailable: unreadable` instead of an empty `done`, so the card can't say `Normal Wear Distribution` for a tyre it never checked.
+
 ### Not done yet
-- No screen calls `scanTreadWear`, and `runTyrePipeline` still sets `TyreResult.wearPattern` to null. Wiring wear into Tyre result (e.g. as an optional model in the analyzer, like the sidewall text detector) needs a decision on how wear class names are shown to users.
+- `runTyrePipeline` still sets `TyreResult.wearPattern` to null, so wear isn't in the saved result, the report or the PDF.
+- The card isn't in the design images. Check it against the design on a phone (small screens, large text).
 
 ### Needs a real phone
 - Loading through `core-ml` / `android-gpu` with CPU fallback, and the loaded tensors matching the manifest.

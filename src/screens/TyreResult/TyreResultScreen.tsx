@@ -25,6 +25,8 @@ import {
 import { isDemoVersion } from '../../ml';
 import { AUTOMATED_CHECK_NOTICE } from '../../features/report/reportHtml';
 import { colors, sizes } from '../../theme';
+import { useTyreInspection } from '../../hooks/useTyreInspection';
+import { TreadWearCard } from './TreadWearCard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TyreResult'>;
 
@@ -36,6 +38,9 @@ export function TyreResultScreen({ navigation, route }: Props) {
   const inspection = useInspection(inspectionId);
   const currentId = useInspectionStore(s => s.currentId);
   const resetTyre = useInspectionStore(s => s.resetTyre);
+  // Tread wear runs on this tyre's saved tread frames when the result opens.
+  // Shown in its own card; it never changes the status or the rows below.
+  const { treadWear } = useTyreInspection(tyreId, { autoScan: true });
   const tyre = inspection?.tyres.find(t => t.id === tyreId);
   const result = tyre?.result;
   if (!inspection || !tyre || !result) return null;
@@ -90,6 +95,7 @@ export function TyreResultScreen({ navigation, route }: Props) {
         {rows.map(([label, value], i) => (
           <ResultRow key={label} label={label} value={value} last={i === rows.length - 1} />
         ))}
+        <TreadWearCard state={treadWear} />
         <AppText variant="caption" color="textSecondary" style={styles.notice}>
           {AUTOMATED_CHECK_NOTICE}
         </AppText>

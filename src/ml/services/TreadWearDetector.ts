@@ -23,8 +23,15 @@ export type TreadWearFrameDetection = TreadWearDetection & {
 
 export type TreadWearFrameResult = { frame: string; detections: TreadWearFrameDetection[] };
 
+export type TreadWearUnavailableReason = 'model_missing' | 'no_frames' | 'unreadable';
+
 export type TreadWearScanOutcome =
-  | { status: 'unavailable'; reason: 'model_missing' | 'no_frames' }
+  /**
+   * `no_frames`: no saved tread frames (or only simulated ones).
+   * `unreadable`: there were frames, but none could be read or run, so
+   * nothing was checked. Never reported as "no wear found".
+   */
+  | { status: 'unavailable'; reason: TreadWearUnavailableReason }
   | { status: 'cancelled' }
   | {
       status: 'done';
@@ -127,6 +134,10 @@ export class TreadWearDetector implements TreadWearScanner {
       }
     }
     if (isCancelled()) return { status: 'cancelled' };
+    if (results.length === 0) {
+      treadLog('scan read no frames', { framesFailed: failed });
+      return { status: 'unavailable', reason: 'unreadable' };
+    }
     treadLog('scan done', { framesRead: results.length, framesFailed: failed, delegate: loaded.delegate });
     return { status: 'done', frames: results, framesFailed: failed, delegate: loaded.delegate };
   }
