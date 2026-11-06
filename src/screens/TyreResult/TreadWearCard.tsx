@@ -3,7 +3,8 @@ import { AccessibilityInfo, ActivityIndicator, StyleSheet, View } from 'react-na
 import { CircleCheck, CircleHelp, OctagonAlert, TriangleAlert } from 'lucide-react-native';
 import { AppText } from '../../components';
 import type { TreadWearState } from '../../hooks/useTyreInspection';
-import { describeTreadWear } from '../../ml/config/treadWearConfig';
+import { WEAR_SEVERITY_LABELS } from '../../features/inspection/treadWear';
+import type { TreadWearRecord } from '../../features/inspection/types';
 import { colors, radius } from '../../theme';
 
 // "Tread Pattern & Wear" card on Tyre result. Shows what the tread wear model
@@ -66,39 +67,34 @@ export function treadWearCardContent(state: TreadWearState): {
       return { tone: null, badge: null, lines: ['Checking tread wear on this phone…'], title: null, alsoSeen: [] };
     case 'unavailable':
       return { tone: 'neutral', badge: 'Not checked', lines: [UNAVAILABLE_TEXT[state.reason]], title: null, alsoSeen: [] };
-    case 'done': {
-      if (state.severity === 'none') {
-        return {
-          tone: 'normal',
-          badge: 'Normal Wear Distribution',
-          lines: ['No uneven wear pattern was found on the tread.'],
-          title: null,
-          alsoSeen: [],
-        };
-      }
-      const [top, ...rest] = state.findings.map(f => describeTreadWear(f.label));
-      const critical = state.severity === 'critical';
-      const lines: string[] = [];
-      if (top.cause) lines.push(`Likely cause: ${top.cause}`);
-      if (critical) {
-        lines.push(
-          top.severityHint
-            ? `Get this checked as soon as possible: ${top.severityHint.toLowerCase()}.`
-            : 'Get this checked as soon as possible.',
-        );
-      } else if (top.severityHint) {
-        lines.push(`Advice: ${top.severityHint}`);
-      }
-      const alsoSeen = [...new Set(rest.map(r => r.title))].filter(t => t !== top.title);
-      return {
-        tone: critical ? 'critical' : 'warning',
-        badge: critical ? 'Maintenance needed' : 'Wear pattern found',
-        lines,
-        title: top.title,
-        alsoSeen,
-      };
-    }
+    case 'done':
+    case 'saved':
+      return recordContent(state.record);
   }
+}
+
+/** A saved or just-finished check → card content. Same wording as the report. */
+function recordContent(record: TreadWearRecord): ReturnType<typeof treadWearCardContent> {
+  if (record.severity === 'none') {
+    return {
+      tone: 'normal',
+      badge: WEAR_SEVERITY_LABELS.none,
+      lines: ['No uneven wear pattern was found on the tread.'],
+      title: null,
+      alsoSeen: [],
+    };
+  }
+  const critical = record.severity === 'critical';
+  const lines: string[] = [];
+  if (record.cause) lines.push(`Likely cause: ${record.cause}`);
+  if (record.recommendation) lines.push(critical ? record.recommendation : `Advice: ${record.recommendation}`);
+  return {
+    tone: critical ? 'critical' : 'warning',
+    badge: WEAR_SEVERITY_LABELS[record.severity],
+    lines,
+    title: record.title,
+    alsoSeen: record.alsoSeen,
+  };
 }
 
 export function TreadWearCard({ state }: { state: TreadWearState }) {

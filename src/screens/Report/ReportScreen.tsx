@@ -97,6 +97,16 @@ export function ReportScreen({ navigation, route }: Props) {
                       {r.detail}
                     </AppText>
                   ) : null}
+                  {r.wear ? (
+                    <AppText variant="caption" color="black">
+                      {r.wear}
+                    </AppText>
+                  ) : null}
+                  {r.wearRecommendation ? (
+                    <AppText variant="caption" weight="semibold" color="navy">
+                      {r.wearRecommendation}
+                    </AppText>
+                  ) : null}
                 </View>
                 {r.status ? (
                   <StatusBadge status={r.status} />

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useTyre } from '../features/inspection/store';
-import { TREAD_WEAR_SEVERITY, type TreadWearClass } from '../ml/config/treadWearConfig';
+import { useInspectionStore, useTyre } from '../features/inspection/store';
+import { buildTreadWearRecord } from '../features/inspection/treadWear';
+import type { TreadWearRecord } from '../features/inspection/types';
+import type { TreadWearClass } from '../ml/config/treadWearConfig';
 import {
   getTreadWearDetector,
   type TreadWearFrameResult,
@@ -9,17 +11,12 @@ import {
 } from '../ml/services/TreadWearDetector';
 
 // One tyre's inspection data for a screen: the saved tyre and its confirmed
-// sidewall details (from the store, untouched), plus tread wear detections.
-// Wear detections live only in this hook's state: they're never written to
-// the store or the database, and they never change the tyre's status.
+// sidewall details (from the store, untouched), plus the tread wear check.
+// A finished check is saved into the tyre's result (wear pattern and the
+// `treadWear` record only); it never changes the tyre's status.
 
-/**
- * - `none`: the model ran and found no wear pattern.
- * - `detected`: a wear pattern below the critical confidence.
- * - `critical`: a wear pattern at or above `TREAD_WEAR_SEVERITY.criticalMinConfidence`.
- * An indicator only. It's never Good / Replace soon / Replace now.
- */
-export type TreadWearSeverity = 'none' | 'detected' | 'critical';
+export { treadWearSeverity } from '../features/inspection/treadWear';
+export type { TreadWearSeverity } from '../features/inspection/types';
 
 /** One wear class across all frames read. */
 export type TreadWearFinding = {
@@ -34,16 +31,17 @@ export type TreadWearState =
   | { status: 'idle' }
   | { status: 'scanning' }
   | { status: 'unavailable'; reason: TreadWearUnavailableReason }
+  /** Checked just now, and saved. */
   | {
       status: 'done';
+      record: TreadWearRecord;
       /** Strongest first. */
       findings: TreadWearFinding[];
-      severity: TreadWearSeverity;
-      /** Strongest wear class, for `TyreResult.wearPattern`; null if none was found. */
-      wearPattern: TreadWearClass | null;
       frames: TreadWearFrameResult[];
       framesFailed: number;
-    };
+    }
+  /** Checked earlier: the record saved with the tyre result. */
+  | { status: 'saved'; record: TreadWearRecord };
 
 /** Per-frame detections → one finding per wear class, strongest first. */
 export function summariseTreadWear(frames: TreadWearFrameResult[]): TreadWearFinding[] {
@@ -63,51 +61,30 @@ export function summariseTreadWear(frames: TreadWearFrameResult[]): TreadWearFin
   return [...byLabel.values()].sort((a, b) => b.maxConfidence - a.maxConfidence);
 }
 
-export function treadWearSeverity(
-  findings: TreadWearFinding[],
-  criticalMinConfidence: number = TREAD_WEAR_SEVERITY.criticalMinConfidence,
-): TreadWearSeverity {
-  if (findings.length === 0) return 'none';
-  return findings.some(f => f.maxConfidence >= criticalMinConfidence) ? 'critical' : 'detected';
-}
-
 export type UseTyreInspectionOptions = {
   /** Injected in tests. Defaults to the app's tread wear detector. */
   treadWearScanner?: TreadWearScanner;
-  /** Scan the saved tread frames as soon as the tyre is shown (Tyre result). */
+  /**
+   * Check the saved tread frames as soon as the tyre is shown (Tyre result),
+   * unless the result already has a saved wear check.
+   */
   autoScan?: boolean;
 };
 
-type DoneState = Extract<TreadWearState, { status: 'done' }>;
-
-/**
- * Finished scans for this app session, so reopening a tyre doesn't run the
- * model again over the same frames. Memory only, never saved. Keyed by tyre
- * and its frame list, so a rescan of the tyre (new frames) misses the cache.
- */
-const scanCache = new Map<string, DoneState>();
-const SCAN_CACHE_LIMIT = 24;
-const cacheKey = (tyreId: string, frames: string[]) => `${tyreId}|${frames.join('|')}`;
-
-/** For tests. */
-export function clearTreadWearCache(): void {
-  scanCache.clear();
-}
-
 export function useTyreInspection(tyreId: string, options: UseTyreInspectionOptions = {}) {
   const found = useTyre(tyreId);
-  const [treadWear, setTreadWear] = useState<TreadWearState>({ status: 'idle' });
-  // Bumped on every new scan, tyre change and unmount; a stale scan's result is dropped.
+  const [local, setLocal] = useState<TreadWearState>({ status: 'idle' });
+  // Bumped on every new scan, tyre change and unmount; a stale scan's state is dropped.
   const runId = useRef(0);
   const scannerRef = useRef(options.treadWearScanner);
   scannerRef.current = options.treadWearScanner;
   const treadFrames = found?.tyre.treadFrames;
   const framesRef = useRef(treadFrames);
   framesRef.current = treadFrames;
+  const saved = found?.tyre.result?.treadWear ?? null;
 
   useEffect(() => {
-    const cached = scanCache.get(cacheKey(tyreId, framesRef.current ?? []));
-    setTreadWear(cached ?? { status: 'idle' });
+    setLocal({ status: 'idle' });
     // The counter object itself, not a DOM node: bumping it at cleanup cancels any running scan.
     const runs = runId;
     return () => {
@@ -115,56 +92,51 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
     };
   }, [tyreId]);
 
-  /** Runs the wear model on this tyre's saved tread frames. Call after tread capture only. */
+  /**
+   * Runs the wear model on this tyre's saved tread frames (after capture
+   * only) and saves the check into the tyre's result. Status is never changed.
+   */
   const scanTreadWear = useCallback(async (): Promise<TreadWearState> => {
     const run = ++runId.current;
     const isCancelled = () => run !== runId.current;
     const frames = framesRef.current ?? [];
-    const key = cacheKey(tyreId, frames);
-    const cached = scanCache.get(key);
-    if (cached) {
-      setTreadWear(cached);
-      return cached;
-    }
-    setTreadWear({ status: 'scanning' });
+    setLocal({ status: 'scanning' });
     const scanner = scannerRef.current ?? getTreadWearDetector();
     let next: TreadWearState;
     try {
       const outcome = await scanner.scan(frames, isCancelled);
       if (outcome.status === 'cancelled') return { status: 'idle' };
       if (outcome.status === 'unavailable') {
+        // Nothing was checked: nothing is saved, and the Wear pattern row is left as it was.
         next = { status: 'unavailable', reason: outcome.reason };
       } else {
         const findings = summariseTreadWear(outcome.frames);
-        next = {
-          status: 'done',
-          findings,
-          severity: treadWearSeverity(findings),
-          wearPattern: findings[0]?.label ?? null,
-          frames: outcome.frames,
-          framesFailed: outcome.framesFailed,
-        };
-        if (scanCache.size >= SCAN_CACHE_LIMIT) scanCache.delete(scanCache.keys().next().value!);
-        scanCache.set(key, next);
+        const record = buildTreadWearRecord(findings, outcome.modelVersion);
+        // Saved even if the screen has moved on: the store checks the frames still match.
+        useInspectionStore.getState().setTreadWear(tyreId, record, frames);
+        next = { status: 'done', record, findings, frames: outcome.frames, framesFailed: outcome.framesFailed };
       }
     } catch {
       // The scanner doesn't throw; if it ever does, report no model rather than a made-up result.
       next = { status: 'unavailable', reason: 'model_missing' };
     }
-    if (!isCancelled()) setTreadWear(next);
+    if (!isCancelled()) setLocal(next);
     return next;
   }, [tyreId]);
 
   const autoScan = options.autoScan ?? false;
   const framesKey = (treadFrames ?? []).join('|');
+  const hasSaved = saved !== null;
   useEffect(() => {
-    if (autoScan) scanTreadWear();
-  }, [autoScan, framesKey, scanTreadWear]);
+    if (autoScan && !hasSaved) scanTreadWear();
+  }, [autoScan, framesKey, hasSaved, scanTreadWear]);
 
   const resetTreadWear = useCallback(() => {
     runId.current++;
-    setTreadWear({ status: 'idle' });
+    setLocal({ status: 'idle' });
   }, []);
+
+  const treadWear: TreadWearState = local.status === 'idle' && saved ? { status: 'saved', record: saved } : local;
 
   return {
     inspection: found?.inspection ?? null,

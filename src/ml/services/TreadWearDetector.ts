@@ -39,6 +39,8 @@ export type TreadWearScanOutcome =
       /** Frames that couldn't be decoded or run; they're skipped, not guessed. */
       framesFailed: number;
       delegate: ModelDelegate | 'cpu';
+      /** Manifest version of the model that ran. */
+      modelVersion: string;
     };
 
 export type TreadWearDetectorDeps = {
@@ -139,7 +141,13 @@ export class TreadWearDetector implements TreadWearScanner {
       return { status: 'unavailable', reason: 'unreadable' };
     }
     treadLog('scan done', { framesRead: results.length, framesFailed: failed, delegate: loaded.delegate });
-    return { status: 'done', frames: results, framesFailed: failed, delegate: loaded.delegate };
+    return {
+      status: 'done',
+      frames: results,
+      framesFailed: failed,
+      delegate: loaded.delegate,
+      modelVersion: loaded.entry.version,
+    };
   }
 }
 

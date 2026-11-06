@@ -8,9 +8,11 @@ import type {
   CaptureErrorReason,
   Inspection,
   SidewallDetails,
+  TreadWearRecord,
   TyreInspection,
   TyreResult,
 } from './types';
+import { withTreadWear } from './treadWear';
 
 export const emptySidewallDetails: SidewallDetails = {
   size: null,
@@ -83,6 +85,12 @@ type Actions = {
   setCaptureProblem(tyreId: string, reason: CaptureErrorReason): void;
   skipTyre(tyreId: string): void;
   setResult(tyreId: string, result: TyreResult): void;
+  /**
+   * Saves a tread wear check into the tyre's result (wear fields only, never
+   * the status). Ignored if the tyre has no result, or its tread frames are no
+   * longer the ones that were checked (e.g. it was scanned again meanwhile).
+   */
+  setTreadWear(tyreId: string, record: TreadWearRecord, checkedFrames: string[]): void;
   setAnalysisFailed(tyreId: string): void;
   /** Models aren't available: keep the frames, record no result, move on. */
   setAnalysisPending(tyreId: string): void;
@@ -184,6 +192,16 @@ export const useInspectionStore = create<InspectionStore>()((set, get) => {
 
     setResult(tyreId, result) {
       patchTyre(tyreId, t => ({ ...t, state: 'done', result, errorReason: null }));
+    },
+
+    setTreadWear(tyreId, record, checkedFrames) {
+      patchTyre(tyreId, t => {
+        const sameFrames =
+          t.treadFrames.length === checkedFrames.length &&
+          t.treadFrames.every((f, i) => f === checkedFrames[i]);
+        if (!t.result || !sameFrames) return t;
+        return { ...t, result: withTreadWear(t.result, record) };
+      });
     },
 
     setAnalysisFailed(tyreId) {

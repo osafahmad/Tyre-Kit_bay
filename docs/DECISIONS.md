@@ -537,9 +537,17 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - **When it runs:** when Tyre result opens (`useTyreInspection(tyreId, { autoScan: true })`), on the tyre's saved tread frames only, after capture and analysis. Finished scans are cached in memory for the session (up to 24 tyres) and are never saved. Reopening a tyre doesn't rerun the model; scanning the tyre again (new frames) does.
 - **Fix:** if every frame fails (e.g. files missing), the detector now returns `unavailable: unreadable` instead of an empty `done`, so the card can't say `Normal Wear Distribution` for a tyre it never checked.
 
+- Colours and placement approved by the owner (2026-11-06).
+
+### Saved wear and report (owner decision 2026-11-06)
+- **Saved with the result.** `TyreResult.treadWear` (`TreadWearRecord`) is not in the spec's model. It holds the severity, the strongest raw class, title, cause, recommendation, confidence, other titles found, the model version and the check time. `wearPattern` is set to the record's title, so the `Wear pattern` row matches the card. The field is optional, so results saved before it (inspections are stored as JSON) still load. `status` is never changed.
+- **When:** the check runs when Tyre result opens and is saved into the tyre's result (`store.setTreadWear`). It isn't saved if the tyre has no result, or if its tread frames changed while the check ran (scanned again). A tyre whose result already has a check shows it without running the model again, including after a restart. The in-memory cache was removed. Nothing is saved when the check couldn't run (`Not checked`), so the row keeps the analyzer's value (`Not read` for real results).
+- **Wording** comes from one place (`features/inspection/treadWear.ts`). Recommendation: the class advice below 0.60, and `Get this checked as soon as possible: …` at 0.60 or above. Classes without owner wording get no recommendation below 0.60.
+- **Report screen and PDF:** each analysed tyre gets a `Wear: {title}` line, adding ` · Wear pattern found` or ` · Maintenance needed`, and the recommendation below it in navy. The PDF escapes them like other values. Results without a wear check show the analyzer's pattern, or nothing. **The summary headline is unchanged:** it still comes from the tyre status only, so wear can't make the summary say a tyre needs replacing. Adding the wear lines changes the layout of `21-final-report.png`.
+- Demo inspections: the demo analyzer's `Even` now also appears in the demo report (`Wear: Even`), under the existing `Demo data` notice.
+
 ### Not done yet
-- `runTyrePipeline` still sets `TyreResult.wearPattern` to null, so wear isn't in the saved result, the report or the PDF.
-- The card isn't in the design images. Check it against the design on a phone (small screens, large text).
+- The card and the report lines aren't in the design images. Check them on a phone (small screens, large text) and in a shared PDF.
 
 ### Needs a real phone
 - Loading through `core-ml` / `android-gpu` with CPU fallback, and the loaded tensors matching the manifest.

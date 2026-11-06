@@ -1,6 +1,7 @@
 import { inspectionStatus } from '../inspection/status';
 import type { Inspection, TyreStatus } from '../inspection/types';
 import { tyreDetailLine } from '../inspection/format';
+import { wearReportLines } from '../inspection/treadWear';
 
 export type ReportSummary = {
   status: TyreStatus | null;
@@ -86,6 +87,10 @@ export type ReportTyreRow = {
   detail: string;
   /** Label for tyres without a status. */
   label: string | null;
+  /** "Wear: Center Tread Wear · Maintenance needed", or null if no wear result. Results only. */
+  wear: string | null;
+  /** Maintenance recommendation for the wear found, or null. */
+  wearRecommendation: string | null;
 };
 
 const framesSaved = (n: number) => (n === 1 ? '1 frame saved' : `${n} frames saved`);
@@ -94,6 +99,7 @@ const framesSaved = (n: number) => (n === 1 ? '1 frame saved' : `${n} frames sav
 export function reportTyreRows(inspection: Inspection): ReportTyreRow[] {
   return inspection.tyres.map(t => {
     if (t.state === 'done' && t.result) {
+      const wear = wearReportLines(t.result);
       return {
         tyreId: t.id,
         position: t.position,
@@ -101,6 +107,8 @@ export function reportTyreRows(inspection: Inspection): ReportTyreRow[] {
         status: t.result.status,
         detail: tyreDetailLine(t.result),
         label: null,
+        wear: wear?.pattern ?? null,
+        wearRecommendation: wear?.recommendation ?? null,
       };
     }
     if (t.state === 'pending_analysis') {
@@ -113,6 +121,8 @@ export function reportTyreRows(inspection: Inspection): ReportTyreRow[] {
         // Size only if it was read or typed and confirmed; never estimated.
         detail: [t.sidewallDetails.size, framesSaved(frames)].filter(Boolean).join(' · '),
         label: ANALYSIS_PENDING_LABEL,
+        wear: null,
+        wearRecommendation: null,
       };
     }
     return {
@@ -122,6 +132,8 @@ export function reportTyreRows(inspection: Inspection): ReportTyreRow[] {
       status: null,
       detail: '',
       label: 'Not scanned',
+      wear: null,
+      wearRecommendation: null,
     };
   });
 }

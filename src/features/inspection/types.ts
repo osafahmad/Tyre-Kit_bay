@@ -18,11 +18,46 @@ export type TyreFlowState =
    */
   | 'pending_analysis';
 
+/**
+ * - `none`: the wear model ran and found no wear pattern.
+ * - `detected`: a wear pattern below the critical confidence.
+ * - `critical`: a wear pattern at or above the critical confidence.
+ * An indicator only, separate from TyreStatus.
+ */
+export type TreadWearSeverity = 'none' | 'detected' | 'critical';
+
+/** The tread wear check as saved with a tyre result, and as shown in the app and report. */
+export type TreadWearRecord = {
+  severity: TreadWearSeverity;
+  /** Strongest raw model class, or null when none was found. */
+  label: string | null;
+  /** User-facing title, e.g. `Center Tread Wear` or `Normal Wear Distribution`. */
+  title: string;
+  /** Likely cause, or null when there's no owner-supplied wording for the class. */
+  cause: string | null;
+  /** Maintenance recommendation, or null when there's nothing to recommend. */
+  recommendation: string | null;
+  /** Highest confidence of the strongest class, 0–1; null when none was found. */
+  confidence: number | null;
+  /** Titles of other wear patterns found, strongest first, without repeats. */
+  alsoSeen: string[];
+  /** Manifest version of the model that made it. */
+  modelVersion: string;
+  checkedAt: string;
+};
+
 export type TyreResult = {
   status: TyreStatus;
   treadDepthMm: number | null;
   treadConfidence: number | null;
+  /** Shown in the Wear pattern row. Set to `treadWear.title` once the wear model has run. */
   wearPattern: string | null;
+  /**
+   * Not in the spec's model (owner decision 2026-11-06): what the tread wear
+   * model found. Absent on results saved before it existed, null until it runs.
+   * Never changes `status`.
+   */
+  treadWear?: TreadWearRecord | null;
   damageFound: boolean | null;
   damageConfidence: number | null;
   size: string | null;

@@ -5,7 +5,8 @@ import { TyreResultScreen } from '../TyreResult/TyreResultScreen';
 import { TREAD_WEAR_CARD_TITLE, TreadWearCard, treadWearCardContent } from '../TyreResult/TreadWearCard';
 import { useInspectionStore } from '../../features/inspection/store';
 import type { TyreResult } from '../../features/inspection/types';
-import { clearTreadWearCache, type TreadWearState } from '../../hooks/useTyreInspection';
+import { buildTreadWearRecord } from '../../features/inspection/treadWear';
+import type { TreadWearState } from '../../hooks/useTyreInspection';
 import type { TreadWearClass } from '../../ml/config/treadWearConfig';
 import type { TreadWearScanOutcome } from '../../ml/services/TreadWearDetector';
 
@@ -15,14 +16,12 @@ jest.mock('../../ml/services/TreadWearDetector', () => ({
 }));
 
 const finding = (label: TreadWearClass, maxConfidence: number) => ({ label, maxConfidence, frames: 1 });
-const done = (findings: ReturnType<typeof finding>[], severity: 'none' | 'detected' | 'critical'): TreadWearState => ({
-  status: 'done',
-  findings,
-  severity,
-  wearPattern: findings[0]?.label ?? null,
-  frames: [],
-  framesFailed: 0,
-});
+/** A just-finished check. `severity` is what the record builder must have worked out. */
+const done = (findings: ReturnType<typeof finding>[], severity: 'none' | 'detected' | 'critical'): TreadWearState => {
+  const record = buildTreadWearRecord(findings, 'tread-test-1');
+  expect(record.severity).toBe(severity);
+  return { status: 'done', record, findings, frames: [], framesFailed: 0 };
+};
 
 describe('treadWearCardContent', () => {
   test('busy states say the check is running, with no badge', () => {
@@ -142,14 +141,12 @@ describe('Tyre result screen', () => {
 
   beforeEach(() => {
     mockScan.mockReset();
-    clearTreadWearCache();
   });
 
-  test('scans the saved tread frames and shows a critical card; sidewall values stay as saved', async () => {
+  test('scans the saved tread frames, shows a critical card and saves it to the Wear pattern row', async () => {
     let finish!: (o: TreadWearScanOutcome) => void;
     mockScan.mockImplementation(() => new Promise(r => (finish = r)));
     const params = seed();
-    const before = JSON.stringify(useInspectionStore.getState().inspections);
     await show(params);
 
     expect(screen.getByText(TREAD_WEAR_CARD_TITLE)).toBeTruthy();
@@ -162,18 +159,26 @@ describe('Tyre result screen', () => {
         frames: [{ frame: 'frames/t1.jpg', detections: [{ label: 'Center Wear', confidence: 0.72, bbox: [0, 0, 0.5, 0.5], frameRect: null }] }],
         framesFailed: 0,
         delegate: 'cpu',
+        modelVersion: 'tread-test-1',
       });
     });
 
     expect(screen.getByText('Maintenance needed')).toBeTruthy();
-    expect(screen.getByText('Center Tread Wear')).toBeTruthy();
+    // Card title and the Wear pattern row now say the same thing.
+    expect(screen.getAllByText('Center Tread Wear')).toHaveLength(2);
+    expect(screen.getByLabelText('Wear pattern: Center Tread Wear')).toBeTruthy();
     expect(screen.getByText('Likely cause: Over-inflation')).toBeTruthy();
     // Status and sidewall rows unchanged.
     expect(screen.getByText('Good')).toBeTruthy();
     for (const v of ['215/65 R15', 'Bridgestone', 'Ecopia EP150', '4B7K 2JX 2623']) {
       expect(screen.getByText(v)).toBeTruthy();
     }
-    expect(JSON.stringify(useInspectionStore.getState().inspections)).toBe(before);
+    const saved = useInspectionStore.getState().inspections[0].tyres[0].result!;
+    expect(saved).toEqual({
+      ...result,
+      wearPattern: 'Center Tread Wear',
+      treadWear: expect.objectContaining({ severity: 'critical', label: 'Center Wear', confidence: 0.72 }),
+    });
   });
 
   test('model missing shows "Not checked", not a normal result', async () => {
@@ -184,16 +189,18 @@ describe('Tyre result screen', () => {
     expect(screen.queryByText('Normal Wear Distribution')).toBeNull();
   });
 
-  test('reopening the same tyre uses the finished scan instead of running the model again', async () => {
-    mockScan.mockResolvedValue({ status: 'done', frames: [{ frame: 'a', detections: [] }], framesFailed: 0, delegate: 'cpu' });
+  test('reopening the tyre shows the saved check instead of running the model again', async () => {
+    mockScan.mockResolvedValue({ status: 'done', frames: [{ frame: 'a', detections: [] }], framesFailed: 0, delegate: 'cpu', modelVersion: 'tread-test-1' });
     const params = seed();
     await show(params);
     await act(async () => {});
-    expect(screen.getByText('Normal Wear Distribution')).toBeTruthy();
+    expect(screen.getByLabelText('Tread wear: Normal Wear Distribution')).toBeTruthy();
+    expect(screen.getByLabelText('Wear pattern: Normal Wear Distribution')).toBeTruthy();
     await screen.unmount();
     await show(params);
     await act(async () => {});
-    expect(screen.getByText('Normal Wear Distribution')).toBeTruthy();
+    expect(screen.getByLabelText('Tread wear: Normal Wear Distribution')).toBeTruthy();
+    expect(screen.getByLabelText('Wear pattern: Normal Wear Distribution')).toBeTruthy();
     expect(mockScan).toHaveBeenCalledTimes(1);
   });
 });

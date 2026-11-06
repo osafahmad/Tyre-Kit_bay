@@ -50,7 +50,11 @@ export function reportHtml(inspection: Inspection, options: { demo: boolean }): 
         ? badge(r.status)
         : `<span class="label">${escapeHtml(r.label ?? '')}</span>`;
       const detail = r.detail ? `<div class="detail">${escapeHtml(r.detail)}</div>` : '';
-      return `<tr><td><div class="position">${escapeHtml(r.position)}</div>${detail}</td><td class="right">${right}</td></tr>`;
+      const wear = r.wear ? `<div class="wear">${escapeHtml(r.wear)}</div>` : '';
+      const advice = r.wearRecommendation
+        ? `<div class="advice">${escapeHtml(r.wearRecommendation)}</div>`
+        : '';
+      return `<tr><td><div class="position">${escapeHtml(r.position)}</div>${detail}${wear}${advice}</td><td class="right">${right}</td></tr>`;
     })
     .join('');
 
@@ -74,6 +78,8 @@ export function reportHtml(inspection: Inspection, options: { demo: boolean }): 
   td { padding: 12px 0; border-bottom: 1px solid ${colors.border}; vertical-align: middle; }
   .position { font-weight: 600; font-size: 15px; }
   .detail { color: ${colors.textSecondary}; font-size: 13px; margin-top: 3px; }
+  .wear { color: ${colors.black}; font-size: 13px; margin-top: 3px; }
+  .advice { color: ${colors.navy}; font-size: 13px; font-weight: 600; margin-top: 2px; }
   .right { text-align: right; white-space: nowrap; }
   .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
   .label { color: ${colors.textSecondary}; font-size: 13px; }

@@ -1,44 +1,64 @@
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
 import { useInspectionStore } from '../../features/inspection/store';
+import type { TyreResult } from '../../features/inspection/types';
 import type { TreadWearClass } from '../../ml/config/treadWearConfig';
 import type { TreadWearScanOutcome, TreadWearScanner } from '../../ml/services/TreadWearDetector';
-import {
-  clearTreadWearCache,
-  summariseTreadWear,
-  treadWearSeverity,
-  useTyreInspection,
-} from '../useTyreInspection';
+import { summariseTreadWear, treadWearSeverity, useTyreInspection } from '../useTyreInspection';
 
 const store = () => useInspectionStore.getState();
+const tyre = (id: string) => store().inspections[0].tyres.find(t => t.id === id)!;
 
 function det(label: TreadWearClass, confidence: number) {
   return { label, confidence, bbox: [0.1, 0.1, 0.2, 0.2] as [number, number, number, number], frameRect: null };
 }
 
 function done(frames: { frame: string; detections: ReturnType<typeof det>[] }[]): TreadWearScanOutcome {
-  return { status: 'done', frames, framesFailed: 0, delegate: 'cpu' };
+  return { status: 'done', frames, framesFailed: 0, delegate: 'cpu', modelVersion: 'tread-test-1' };
 }
 
 const scanner = (outcome: TreadWearScanOutcome): TreadWearScanner & { scan: jest.Mock } => ({
   scan: jest.fn(async () => outcome),
 });
 
-/** One inspection with two tyres; the first has saved tread frames and sidewall details. */
-function seed(): [string, string] {
+const analysed: TyreResult = {
+  status: 'good',
+  treadDepthMm: 6.2,
+  treadConfidence: 0.9,
+  wearPattern: null,
+  damageFound: false,
+  damageConfidence: 0.8,
+  size: '215/65 R15',
+  rimInches: 15,
+  make: 'Michelin',
+  model: 'Primacy 4',
+  dotTin: '4B7K 2JX 2623',
+  ageYears: 3,
+  ageMonths: 4,
+};
+
+/** One inspection with two tyres; the first is captured (tread frames, sidewall details) and analysed. */
+function seed({ withResult = true } = {}): [string, string] {
   store().replaceAll([], null);
   store().startInspection('test');
   store().selectTyres(['Left front', 'Right front']);
   const [a, b] = store().inspections[0].tyres;
   store().setSidewallCaptured(a.id, ['s1.jpg'], { size: '215/65 R15', dotTin: null, make: 'Michelin', model: null });
   store().setTreadCaptured(a.id, ['t1.jpg', 't2.jpg']);
+  if (withResult) store().setResult(a.id, analysed);
   return [a.id, b.id];
 }
 
 let hook: ReturnType<typeof useTyreInspection>;
-function Harness({ tyreId, s }: { tyreId: string; s: TreadWearScanner }) {
-  hook = useTyreInspection(tyreId, { treadWearScanner: s });
+function Harness({ tyreId, s, autoScan = false }: { tyreId: string; s: TreadWearScanner; autoScan?: boolean }) {
+  hook = useTyreInspection(tyreId, { treadWearScanner: s, autoScan });
   return null;
+}
+
+async function scan() {
+  await act(async () => {
+    await hook.scanTreadWear();
+  });
 }
 
 describe('severity and summary', () => {
@@ -55,51 +75,107 @@ describe('severity and summary', () => {
 
   test('critical at 0.60 and above, detected below, none without findings', () => {
     expect(treadWearSeverity([])).toBe('none');
-    expect(treadWearSeverity([{ label: 'Spotty Wear', maxConfidence: 0.599, frames: 1 }])).toBe('detected');
-    expect(treadWearSeverity([{ label: 'Spotty Wear', maxConfidence: 0.6, frames: 1 }])).toBe('critical');
+    expect(treadWearSeverity([{ label: 'Spotty Wear', maxConfidence: 0.599 }])).toBe('detected');
+    expect(treadWearSeverity([{ label: 'Spotty Wear', maxConfidence: 0.6 }])).toBe('critical');
   });
 });
 
 describe('useTyreInspection', () => {
-  beforeEach(() => clearTreadWearCache());
-
-  test('scans the tyre’s saved tread frames and reports wear without touching the store', async () => {
+  test('saves the check into the result: wear fields only, status and sidewall values untouched', async () => {
     const [a] = seed();
-    const before = JSON.stringify(store().inspections);
-    const s = scanner(done([{ frame: 't1.jpg', detections: [det('Center Wear', 0.65), det('Wavy Wear', 0.3)] }]));
+    const s = scanner(done([{ frame: 't1.jpg', detections: [det('Center Wear', 0.65), det('Feather Edge', 0.3)] }]));
     await render(<Harness tyreId={a} s={s} />);
 
     expect(hook.treadWear).toEqual({ status: 'idle' });
     expect(hook.sidewallDetails).toEqual(expect.objectContaining({ size: '215/65 R15', make: 'Michelin' }));
 
-    await act(async () => {
-      await hook.scanTreadWear();
-    });
+    await scan();
     expect(s.scan).toHaveBeenCalledWith(['t1.jpg', 't2.jpg'], expect.any(Function));
-    expect(hook.treadWear).toEqual(
-      expect.objectContaining({ status: 'done', severity: 'critical', wearPattern: 'Center Wear', framesFailed: 0 }),
-    );
-    // Status, result and sidewall details are untouched.
-    expect(JSON.stringify(store().inspections)).toBe(before);
-    expect(hook.tyre!.result).toBeNull();
+    const record = {
+      severity: 'critical',
+      label: 'Center Wear',
+      title: 'Center Tread Wear',
+      cause: 'Over-inflation',
+      recommendation: 'Get this checked as soon as possible: adjust tyre pressure.',
+      confidence: 0.65,
+      alsoSeen: ['Feathered Wear'],
+      modelVersion: 'tread-test-1',
+      checkedAt: expect.any(String),
+    };
+    expect(hook.treadWear).toEqual(expect.objectContaining({ status: 'done', record, framesFailed: 0 }));
+
+    const saved = tyre(a);
+    expect(saved.result).toEqual({ ...analysed, wearPattern: 'Center Tread Wear', treadWear: record });
+    expect(saved.state).toBe('done');
+    expect(saved.sidewallDetails).toEqual({ size: '215/65 R15', dotTin: null, make: 'Michelin', model: null });
   });
 
-  test('no wear found: severity none and no wear pattern', async () => {
+  test('no wear found: saved as Normal Wear Distribution', async () => {
     const [a] = seed();
     await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [] }]))} />);
-    await act(async () => {
-      await hook.scanTreadWear();
-    });
-    expect(hook.treadWear).toEqual(expect.objectContaining({ status: 'done', severity: 'none', wearPattern: null }));
+    await scan();
+    expect(tyre(a).result).toEqual(
+      expect.objectContaining({
+        status: 'good',
+        wearPattern: 'Normal Wear Distribution',
+        treadWear: expect.objectContaining({ severity: 'none', label: null, recommendation: null, confidence: null }),
+      }),
+    );
   });
 
-  test('model missing is reported as unavailable, never as a result', async () => {
+  test('model missing: reported as unavailable, nothing saved', async () => {
     const [a] = seed();
+    const before = JSON.stringify(store().inspections);
     await render(<Harness tyreId={a} s={scanner({ status: 'unavailable', reason: 'model_missing' })} />);
-    await act(async () => {
-      await hook.scanTreadWear();
-    });
+    await scan();
     expect(hook.treadWear).toEqual({ status: 'unavailable', reason: 'model_missing' });
+    expect(JSON.stringify(store().inspections)).toBe(before);
+  });
+
+  test('a tyre without a result has nothing to save into', async () => {
+    const [a] = seed({ withResult: false });
+    await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [det('Wavy Wear', 0.4)] }]))} />);
+    await scan();
+    expect(hook.treadWear.status).toBe('done');
+    expect(tyre(a).result).toBeNull();
+  });
+
+  test('a saved check is shown, and autoScan does not run the model again', async () => {
+    const [a] = seed();
+    const first = scanner(done([{ frame: 't1.jpg', detections: [det('Spotty Wear', 0.4)] }]));
+    const view = await render(<Harness tyreId={a} s={first} autoScan />);
+    await act(async () => {});
+    expect(first.scan).toHaveBeenCalledTimes(1);
+    await view.unmount();
+
+    const second = scanner(done([]));
+    await render(<Harness tyreId={a} s={second} autoScan />);
+    await act(async () => {});
+    expect(second.scan).not.toHaveBeenCalled();
+    expect(hook.treadWear).toEqual({
+      status: 'saved',
+      record: expect.objectContaining({ title: 'Patchy Spot Wear', severity: 'detected' }),
+    });
+  });
+
+  test('a check of frames the tyre no longer has is not saved', async () => {
+    const [a] = seed();
+    let finish!: (o: TreadWearScanOutcome) => void;
+    await render(<Harness tyreId={a} s={{ scan: () => new Promise(r => (finish = r)) }} />);
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = hook.scanTreadWear();
+    });
+    // Tread scanned again meanwhile: new frames, result kept for this test.
+    await act(async () => {
+      store().updateTyre(a, { treadFrames: ['t3.jpg'] });
+    });
+    await act(async () => {
+      finish(done([{ frame: 't1.jpg', detections: [det('Center Wear', 0.9)] }]));
+      await pending;
+    });
+    expect(tyre(a).result!.treadWear).toBeUndefined();
+    expect(tyre(a).result!.wearPattern).toBeNull();
   });
 
   test('switching tyre resets the wear state and drops a scan still running', async () => {
