@@ -545,6 +545,8 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - **Wording** comes from one place (`features/inspection/treadWear.ts`). Recommendation: the class advice below 0.60, and `Get this checked as soon as possible: …` at 0.60 or above. Classes without owner wording get no recommendation below 0.60.
 - **Report screen and PDF:** each analysed tyre gets a `Wear: {title}` line, adding ` · Wear pattern found` or ` · Maintenance needed`, and the recommendation below it in navy. The PDF escapes them like other values. Results without a wear check show the analyzer's pattern, or nothing. **The summary headline is unchanged:** it still comes from the tyre status only, so wear can't make the summary say a tyre needs replacing. Adding the wear lines changes the layout of `21-final-report.png`.
 - Demo inspections: the demo analyzer's `Even` now also appears in the demo report (`Wear: Even`), under the existing `Demo data` notice.
+- Layout change and demo `Wear: Even` approved by the owner (2026-11-06).
+- **Summary advisory (owner decision 2026-11-06):** if the summary status is Good and any analysed tyre's wear check is `critical`, the report screen and the PDF show `Maintenance attention recommended for detected wear patterns.` beneath the headline (`ReportSummary.advisory`). The headline and status are unchanged. There's no advisory when the status is already Replace soon or Replace now, for wear below 0.60, or for normal or no wear check.
 
 ### Not done yet
 - The card and the report lines aren't in the design images. Check them on a phone (small screens, large text) and in a shared PDF.

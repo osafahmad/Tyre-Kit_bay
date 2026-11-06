@@ -7,7 +7,15 @@ export type ReportSummary = {
   status: TyreStatus | null;
   headline: string;
   detail: string | null;
+  /**
+   * Shown beneath the headline when every analysed tyre is Good but the wear
+   * model found critical wear on at least one (owner decision 2026-11-06).
+   * Never changes `status` or `headline`.
+   */
+  advisory: string | null;
 };
+
+export const CRITICAL_WEAR_ADVISORY = 'Maintenance attention recommended for detected wear patterns.';
 
 /** "Right rear", "Right rear and left rear", "Left front, right front and right rear". */
 export function joinPositions(positions: string[]): string {
@@ -24,6 +32,17 @@ const tyreCountSentence = (n: number, one: string, many: string) =>
 
 /** Summary line for the report, from the worst real result (spec §4.21). */
 export function reportSummary(inspection: Inspection): ReportSummary {
+  const summary = statusSummary(inspection);
+  const criticalWear = inspection.tyres.some(
+    t => t.state === 'done' && t.result?.treadWear?.severity === 'critical',
+  );
+  return {
+    ...summary,
+    advisory: summary.status === 'good' && criticalWear ? CRITICAL_WEAR_ADVISORY : null,
+  };
+}
+
+function statusSummary(inspection: Inspection): Omit<ReportSummary, 'advisory'> {
   const analysed = inspection.tyres.filter(t => t.state === 'done' && t.result);
   const pending = inspection.tyres.filter(t => t.state === 'pending_analysis');
   const notScanned = inspection.tyres.length - analysed.length - pending.length;

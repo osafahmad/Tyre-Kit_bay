@@ -74,6 +74,7 @@ export function reportHtml(inspection: Inspection, options: { demo: boolean }): 
   .demo { margin-top: 16px; padding: 10px 12px; border: 1px solid ${colors.inputBorder}; border-radius: 12px; background: ${colors.surfaceMuted}; font-weight: 600; }
   .summary { margin-top: 16px; padding: 14px 16px; border-radius: 12px; }
   .summary strong { display: block; font-size: 15px; }
+  .advisory { font-weight: 600; margin-top: 2px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   td { padding: 12px 0; border-bottom: 1px solid ${colors.border}; vertical-align: middle; }
   .position { font-weight: 600; font-size: 15px; }
@@ -95,6 +96,7 @@ export function reportHtml(inspection: Inspection, options: { demo: boolean }): 
 ${options.demo ? `<div class="demo">${DEMO_DATA_NOTICE}</div>` : ''}
 <div class="summary" style="background:${summaryColors.background};color:${summaryColors.text}">
   <strong>${escapeHtml(summary.headline)}</strong>
+  ${summary.advisory ? `<div class="advisory">${escapeHtml(summary.advisory)}</div>` : ''}
   ${summary.detail ? `<div>${escapeHtml(summary.detail)}</div>` : ''}
 </div>
 <table>${rowHtml}</table>

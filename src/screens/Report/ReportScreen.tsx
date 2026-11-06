@@ -70,13 +70,18 @@ export function ReportScreen({ navigation, route }: Props) {
             { backgroundColor: palette?.background ?? colors.surfaceMuted },
           ]}
           accessible
-          accessibilityLabel={[summary.headline, summary.detail].filter(Boolean).join('. ')}
+          accessibilityLabel={[summary.headline, summary.advisory, summary.detail].filter(Boolean).join('. ')}
         >
           <SummaryIcon size={28} color={palette?.text ?? colors.black} strokeWidth={2} />
           <View style={styles.summaryText}>
             <AppText variant="bodySmall" weight="bold" style={{ color: palette?.text ?? colors.black }}>
               {summary.headline}
             </AppText>
+            {summary.advisory ? (
+              <AppText variant="caption" weight="semibold" style={{ color: palette?.text ?? colors.black }}>
+                {summary.advisory}
+              </AppText>
+            ) : null}
             {summary.detail ? (
               <AppText variant="caption" style={{ color: palette?.text ?? colors.black }}>
                 {summary.detail}

@@ -1,5 +1,5 @@
 import { reportHtml } from '../../report/reportHtml';
-import { reportTyreRows } from '../../report/summary';
+import { CRITICAL_WEAR_ADVISORY, reportSummary, reportTyreRows } from '../../report/summary';
 import { emptySidewallDetails } from '../store';
 import { buildTreadWearRecord, wearReportLines, withTreadWear } from '../treadWear';
 import type { Inspection, TyreInspection, TyreResult } from '../types';
@@ -159,6 +159,58 @@ describe('report and PDF', () => {
     expect(html.match(/class="advice"/g)).toHaveLength(1);
     expect(html.match(/>Good</g)).toHaveLength(3);
     expect(html).toContain('All scanned tyres are in good condition');
+    expect(html).toContain(`<div class="advisory">${CRITICAL_WEAR_ADVISORY}</div>`);
+  });
+
+  describe('summary advisory', () => {
+    const withTyres = (...tyres: TyreInspection[]): Inspection => ({ ...inspection, tyres });
+    const detected = buildTreadWearRecord([{ label: 'Center Wear', maxConfidence: 0.4 }], 'v1', NOW);
+
+    test('all Good with critical wear: headline unchanged, advisory beneath it', () => {
+      expect(reportSummary(inspection)).toEqual({
+        status: 'good',
+        headline: 'All scanned tyres are in good condition',
+        detail: '1 tyre is waiting for analysis.',
+        advisory: 'Maintenance attention recommended for detected wear patterns.',
+      });
+    });
+
+    test('no advisory for wear below critical, normal wear, or no wear check', () => {
+      expect(
+        reportSummary(
+          withTyres(
+            tyre('A', { state: 'done', result: withTreadWear(result(), detected) }),
+            tyre('B', { state: 'done', result: withTreadWear(result(), normal) }),
+            tyre('C', { state: 'done', result: result({ wearPattern: 'Even' }) }),
+          ),
+        ).advisory,
+      ).toBeNull();
+    });
+
+    test('no advisory when the status is already Replace soon or Replace now', () => {
+      for (const status of ['replace_soon', 'replace_now'] as const) {
+        const s = reportSummary(
+          withTyres(
+            tyre('A', { state: 'done', result: withTreadWear(result(), critical) }),
+            tyre('B', { state: 'done', result: result({ status }) }),
+          ),
+        );
+        expect(s.status).toBe(status);
+        expect(s.advisory).toBeNull();
+      }
+    });
+
+    test('no advisory when no tyre was analysed', () => {
+      expect(reportSummary(withTyres(tyre('A', { state: 'skipped' }))).advisory).toBeNull();
+    });
+
+    test('the PDF leaves the advisory out when there is none', () => {
+      const html = reportHtml(withTyres(tyre('A', { state: 'done', result: withTreadWear(result(), detected) })), {
+        demo: false,
+      });
+      expect(html).not.toContain('class="advisory"');
+      expect(html).not.toContain(CRITICAL_WEAR_ADVISORY);
+    });
   });
 
   test('wear text in the PDF is escaped', () => {

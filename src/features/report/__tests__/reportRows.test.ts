@@ -64,6 +64,7 @@ describe('reportSummary with tyres waiting for analysis', () => {
       status: null,
       headline: ANALYSIS_PENDING_LABEL,
       detail: '2 tyres are waiting for analysis.',
+      advisory: null,
     });
   });
 
