@@ -1,4 +1,4 @@
-import { reportHtml } from '../../report/reportHtml';
+import { escapeHtml, reportHtml } from '../../report/reportHtml';
 import { CRITICAL_WEAR_ADVISORY, reportSummary, reportTyreRows } from '../../report/summary';
 import { emptySidewallDetails } from '../store';
 import { buildTreadWearRecord, wearReportLines, withTreadWear } from '../treadWear';
@@ -109,6 +109,56 @@ describe('wearReportLines', () => {
     expect(wearReportLines(result({ wearPattern: 'Even' }))).toEqual({ pattern: 'Wear: Even', recommendation: null });
     expect(wearReportLines(result())).toBeNull();
     expect(wearReportLines({ ...result(), treadWear: null })).toBeNull();
+  });
+});
+
+describe('wear separator', () => {
+  // Written as · so an editor can't swap it for a lookalike or a bullet.
+  const DOT = '·';
+
+  test.each([
+    [0.4, 'Wear pattern found'],
+    [0.8, 'Maintenance needed'],
+  ])('"Wear: {title} · {severity}" with a U+00B7 and one space each side (confidence %s)', (c, severity) => {
+    const { pattern } = wearReportLines(
+      withTreadWear(result(), buildTreadWearRecord([{ label: 'Center Wear', maxConfidence: c }], 'v1', NOW)),
+    )!;
+    expect(pattern).toBe(`Wear: Center Tread Wear ${DOT} ${severity}`);
+    expect(pattern).toMatch(/^Wear: [^·]+[^ ] · [^ ][^·]+$/);
+  });
+
+  test('HTML escaping keeps the dot and its spacing', () => {
+    expect(escapeHtml(`a ${DOT} b`)).toBe(`a ${DOT} b`);
+  });
+
+  test('the PDF keeps the dot, also when the title needs escaping', () => {
+    const record = { ...buildTreadWearRecord([{ label: 'Center Wear', maxConfidence: 0.8 }], 'v1', NOW), title: 'A & <B>' };
+    const html = reportHtml(
+      {
+        id: 'i',
+        createdAt: NOW.toISOString(),
+        completedAt: null,
+        plate: null,
+        chassis: null,
+        tyres: [
+          {
+            id: 't',
+            position: 'Left front',
+            state: 'done',
+            sidewallFrames: [],
+            treadFrames: [],
+            result: withTreadWear(result(), record),
+            errorReason: null,
+            sidewallDetails: emptySidewallDetails,
+          },
+        ],
+        reportPath: null,
+        analyzerVersion: 'tflite:test',
+      },
+      { demo: false },
+    );
+    expect(html).toContain('<meta charset="utf-8" />');
+    expect(html).toContain(`<div class="wear">Wear: A &amp; &lt;B&gt; ${DOT} Maintenance needed</div>`);
   });
 });
 
