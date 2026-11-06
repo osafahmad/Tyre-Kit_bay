@@ -12,6 +12,7 @@ Read `docs/TYRE_KIT_BAY_SPEC.md` before making changes. It is the source of trut
 - Show Welcome and Walkthrough on first launch only, using `hasSeenWalkthrough`.
 - Screens call the `TyreAnalyzer` interface, not TFLite directly.
 - `DemoTyreAnalyzer` runs only in development and must show `Demo data`. Never show made-up results as real in a release build.
+  - Exception (owner decision 2026-11-06): a staging Release build may use it while the tread and damage models are missing, only with `diagnosticsConfig.allowDemoAnalyzerInRelease` on, and still labelled `Demo data` everywhere. That flag must be off for store builds.
 - Never guess OCR values. Leave missing values empty and let the user correct them.
   - Narrow exceptions (owner decisions 2026-11-06), nothing else:
     - Make, inside a detector `Brand` crop only: may be matched to a name in `src/config/tyreBrands.ts` (contained name; Levenshtein ≤ 1 for brands of 6+ letters with one unique closest brand; or a logo fragment whose letters are ≥ 80% an in-order subsequence of one brand, covering ≥ 40% of it, where that is the only brand passing both and it leads every other brand). A read that matches no listed brand is left empty.

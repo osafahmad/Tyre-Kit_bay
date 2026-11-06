@@ -7,6 +7,7 @@ import Share from 'react-native-share';
 import App from '../../app/App';
 import * as ml from '../../ml';
 import { TfliteTyreAnalyzer } from '../../ml/tfliteAnalyzer';
+import { DemoTyreAnalyzer } from '../../ml/demoAnalyzer';
 import { useInspectionStore } from '../../features/inspection/store';
 import { settings } from '../../features/inspection/settings';
 import { MemoryInspectionRepository } from '../../features/inspection/repository';
@@ -190,4 +191,26 @@ test('demo flow: the shared PDF is labelled Demo data; a PDF failure is reported
   expect(html).toContain('Demo data');
   expect(html).toContain('6.2 mm');
   expect(Share.open).toHaveBeenCalledTimes(1);
+});
+
+
+test('an inspection started without models gets the Demo data label once a staging demo result is saved into it', async () => {
+  // Started under the real analyzer (e.g. before the staging demo flag was on).
+  const real = jest.spyOn(ml, 'getAnalyzer').mockReturnValue(new TfliteTyreAnalyzer());
+  await startTwoTyres('lea-12 8197');
+  await captureAndAnalyse();
+  expect(await screen.findByText('Analysis pending')).toBeTruthy();
+  expect(useInspectionStore.getState().inspections[0].analyzerVersion).toBe('tflite-unconfigured');
+
+  // The build now gives the demo analyzer: the next result is demo data.
+  real.mockReturnValue(new DemoTyreAnalyzer(true, 0));
+  await press('Next tyre');
+  await press('Scan rear tyre');
+  await captureAndAnalyse();
+  await tick(3_000); // demo analyzer steps
+
+  const inspection = useInspectionStore.getState().inspections[0];
+  expect(inspection.tyres[1].state).toBe('done');
+  expect(ml.isDemoVersion(inspection.analyzerVersion)).toBe(true);
+  expect(await screen.findByText('Demo data')).toBeTruthy();
 });

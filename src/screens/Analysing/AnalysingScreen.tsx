@@ -6,11 +6,12 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AnalysisRing, AppText, Button, DemoDataLabel } from '../../components';
 import type { RootStackParamList } from '../../app/routes';
 import { resetToProgress } from '../../app/navigation';
-import { useInspectionStore, useTyre } from '../../features/inspection/store';
+import { findTyre, useInspectionStore, useTyre } from '../../features/inspection/store';
 import { tyreName } from '../../features/inspection/positions';
 import { feedback } from '../../features/feedback/feedback';
 import {
   getAnalyzer,
+  isDemoVersion,
   AnalyzerUnavailableError,
   ModelUnavailableError,
   type AnalysisStep,
@@ -48,6 +49,7 @@ export function AnalysingScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const found = useTyre(tyreId);
   const setResult = useInspectionStore(s => s.setResult);
+  const setAnalyzerVersion = useInspectionStore(s => s.setAnalyzerVersion);
   const setAnalysisFailed = useInspectionStore(s => s.setAnalysisFailed);
   const setAnalysisPending = useInspectionStore(s => s.setAnalysisPending);
   const updateTyre = useInspectionStore(s => s.updateTyre);
@@ -90,6 +92,11 @@ export function AnalysingScreen({ navigation, route }: Props) {
         step => mounted.current && setCurrent(steps.findIndex(s => s.key === step)),
       );
       if (!mounted.current) return;
+      // A demo result must never sit in an inspection that isn't labelled Demo data.
+      const inspection = findTyre(useInspectionStore.getState().inspections, tyreId)?.inspection;
+      if (inspection && analyzer.isDemo && !isDemoVersion(inspection.analyzerVersion)) {
+        setAnalyzerVersion(inspection.id, analyzer.version);
+      }
       setResult(tyreId, result);
       feedback.success('Analysis finished');
       navigation.replace('TyreResult', { inspectionId: found!.inspection.id, tyreId });
@@ -115,6 +122,7 @@ export function AnalysingScreen({ navigation, route }: Props) {
     setAnalysisFailed,
     setAnalysisPending,
     setResult,
+    setAnalyzerVersion,
     tyreId,
     updateTyre,
     attempt,

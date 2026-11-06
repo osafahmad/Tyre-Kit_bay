@@ -86,6 +86,12 @@ type Actions = {
   skipTyre(tyreId: string): void;
   setResult(tyreId: string, result: TyreResult): void;
   /**
+   * Records which analyzer made an inspection's results. Used to mark an
+   * inspection as demo when a demo result is saved into it (e.g. one started
+   * before the staging demo analyzer was switched on), so it shows Demo data.
+   */
+  setAnalyzerVersion(inspectionId: string, analyzerVersion: string): void;
+  /**
    * Saves a tread wear check into the tyre's result (wear fields only, never
    * the status). Ignored if the tyre has no result, or its tread frames are no
    * longer the ones that were checked (e.g. it was scanned again meanwhile).
@@ -192,6 +198,12 @@ export const useInspectionStore = create<InspectionStore>()((set, get) => {
 
     setResult(tyreId, result) {
       patchTyre(tyreId, t => ({ ...t, state: 'done', result, errorReason: null }));
+    },
+
+    setAnalyzerVersion(inspectionId, analyzerVersion) {
+      set(state => ({
+        inspections: state.inspections.map(i => (i.id === inspectionId ? { ...i, analyzerVersion } : i)),
+      }));
     },
 
     setTreadWear(tyreId, record, checkedFrames) {

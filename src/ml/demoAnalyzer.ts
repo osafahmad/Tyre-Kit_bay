@@ -11,9 +11,10 @@ const DEMO_DEPTHS_MM = [6.2, 3.4, 5.8, 1.6];
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /**
- * Development-only stand-in so the full UI can be exercised before real models
- * exist. Every result it makes is demo data and must be shown with a
- * `Demo data` label. It refuses to load outside development builds.
+ * Stand-in so the full UI can be exercised before real models exist. Every
+ * result it makes is demo data and must be shown with a `Demo data` label.
+ * It refuses to load unless allowed: development builds, or a staging Release
+ * build with `diagnosticsConfig.allowDemoAnalyzerInRelease` (see createAnalyzer).
  */
 export class DemoTyreAnalyzer implements TyreAnalyzer {
   version = DEMO_ANALYZER_VERSION;
@@ -21,6 +22,7 @@ export class DemoTyreAnalyzer implements TyreAnalyzer {
   private count = 0;
 
   constructor(
+    /** Development build, or a staging build that opted in. */
     private readonly isDev: boolean = __DEV__,
     private readonly stepDelayMs = 700,
   ) {}

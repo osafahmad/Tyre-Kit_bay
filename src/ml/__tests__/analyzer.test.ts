@@ -1,12 +1,30 @@
-import { createAnalyzer } from '..';
+import { createAnalyzer, isDemoVersion } from '..';
+import { modelManifest } from '../manifest';
+import { fullManifest as fullManifestForChoice } from '../inference/__fixtures__/models';
 import { DemoTyreAnalyzer } from '../demoAnalyzer';
 import { TfliteTyreAnalyzer } from '../tfliteAnalyzer';
 import { AnalyzerUnavailableError } from '../analyzer';
 
-test('release builds never get the demo analyzer', () => {
-  const analyzer = createAnalyzer(false);
+test('store release builds (staging flag off) never get the demo analyzer', () => {
+  const analyzer = createAnalyzer(false, modelManifest, false);
   expect(analyzer).toBeInstanceOf(TfliteTyreAnalyzer);
   expect(analyzer.isDemo).toBe(false);
+});
+
+describe('staging Release builds (allowDemoAnalyzerInRelease)', () => {
+  test('without the tread and damage models: the demo analyzer, labelled as demo', async () => {
+    const analyzer = createAnalyzer(false, modelManifest, true);
+    expect(analyzer).toBeInstanceOf(DemoTyreAnalyzer);
+    expect(analyzer.isDemo).toBe(true);
+    expect(isDemoVersion(analyzer.version)).toBe(true);
+    await expect(analyzer.load()).resolves.toBeUndefined();
+  });
+
+  test('once the real models are in the manifest, the flag is ignored', () => {
+    const analyzer = createAnalyzer(false, fullManifestForChoice, true);
+    expect(analyzer).toBeInstanceOf(TfliteTyreAnalyzer);
+    expect(analyzer.isDemo).toBe(false);
+  });
 });
 
 test('demo analyzer cannot load in release mode', async () => {
@@ -51,7 +69,6 @@ describe('TfliteTyreAnalyzer with the inference layer', () => {
     fakeDecoder,
   } = require('../inference/__fixtures__/models') as typeof import('../inference/__fixtures__/models');
   const { ModelUnavailableError } = require('../analyzer') as typeof import('../analyzer');
-  const { modelManifest } = require('../manifest') as typeof import('../manifest');
 
   const input = { sidewallFrames: ['s1.jpg'], treadFrames: ['t1.jpg'], userDetails: {} };
   const pipelineDeps = () => ({ resolveFramePath: (p: string) => `/docs/${p}`, decoder: fakeDecoder({ width: 4, height: 4 }).decoder });
@@ -107,14 +124,13 @@ describe('TfliteTyreAnalyzer with the inference layer', () => {
   test('development builds switch to the real analyzer once models are in the manifest', () => {
     expect(createAnalyzer(true, fullManifest)).toBeInstanceOf(TfliteTyreAnalyzer);
     expect(createAnalyzer(true, modelManifest)).toBeInstanceOf(DemoTyreAnalyzer);
-    expect(createAnalyzer(false, modelManifest)).toBeInstanceOf(TfliteTyreAnalyzer);
+    expect(createAnalyzer(false, modelManifest, false)).toBeInstanceOf(TfliteTyreAnalyzer);
   });
 });
 
 describe('TfliteTyreAnalyzer and the optional sidewall text detector', () => {
   const { fullManifest, fakeLoaderDeps, fakeDecoder } =
     require('../inference/__fixtures__/models') as typeof import('../inference/__fixtures__/models');
-  const { modelManifest } = require('../manifest') as typeof import('../manifest');
   const textEntry = modelManifest.sidewallTextDetector!;
   const textModel = {
     inputs: [{ name: 'in', dataType: 'float32', shape: textEntry.inputShape }],

@@ -1,14 +1,21 @@
-// Release builds (__DEV__ false) must not be able to simulate captures,
-// seed demo inspections, or use the demo analyzer.
+// Release builds (__DEV__ false) must not be able to simulate captures or
+// seed demo inspections. Store builds (staging flag off) must not use the demo
+// analyzer; staging builds may, and their results are labelled as demo.
 
 declare const global: { __DEV__: boolean };
 
-function inRelease<T>(load: () => T): T {
+function inRelease<T>(load: () => T, allowDemoAnalyzerInRelease?: boolean): T {
   const previous = global.__DEV__;
   global.__DEV__ = false;
   try {
     let result!: T;
     jest.isolateModules(() => {
+      if (allowDemoAnalyzerInRelease !== undefined) {
+        const real = jest.requireActual('../../../config/diagnostics');
+        jest.doMock('../../../config/diagnostics', () => ({
+          diagnosticsConfig: { ...real.diagnosticsConfig, allowDemoAnalyzerInRelease },
+        }));
+      }
       result = load();
     });
     return result;
@@ -27,10 +34,23 @@ test('no simulated capture or demo seeding in release', () => {
   expect(sim.simulatedFrames('tread', 10)).toEqual([]);
 });
 
-test('release builds only get the real analyzer, which refuses to run without models', async () => {
-  const analyzer = inRelease(() => require('../../../ml').getAnalyzer());
+test('store release builds only get the real analyzer, which refuses to run without models', async () => {
+  const analyzer = inRelease(() => require('../../../ml').getAnalyzer(), false);
   expect(analyzer.isDemo).toBe(false);
   await expect(analyzer.load()).rejects.toThrow(/models are missing/);
+});
+
+test('staging release builds get the demo analyzer, whose version marks results as Demo data', async () => {
+  const ml = inRelease(() => require('../../../ml'), true);
+  const analyzer = ml.getAnalyzer();
+  expect(analyzer.isDemo).toBe(true);
+  expect(ml.isDemoVersion(analyzer.version)).toBe(true);
+  await expect(analyzer.load()).resolves.toBeUndefined();
+});
+
+test('the staging flag never turns on capture simulation', () => {
+  const sim = inRelease(() => require('../simulatedCapture'), true);
+  expect(sim.canSimulateCapture).toBe(false);
 });
 
 test('in development the simulation is available and labelled by its demo:// paths', () => {

@@ -15,6 +15,7 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] Android release build and iOS archive succeed.
 
 ## Diagnostics
+- [ ] **`diagnosticsConfig.allowDemoAnalyzerInRelease` is `false`** (`src/config/diagnostics.ts`). On for staging since 2026-11-06 so Release builds use the demo analyzer (labelled `Demo data`) while the tread and damage models are missing. Check a store build shows `Analysis pending`, not `Demo data`.
 - [ ] **`diagnosticsConfig.sidewallOcrLogs` is `false`** (`src/config/diagnostics.ts`). Turned on temporarily on 2026-11-06 so iPhone 13 Release builds log `[SidewallOCR]` lines (enabled in `index.js`).
 
 ## Bundle ID
