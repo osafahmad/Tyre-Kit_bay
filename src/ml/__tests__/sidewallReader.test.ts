@@ -1,9 +1,19 @@
-import { applySuggestions, createSidewallReader, type SidewallReaderDeps } from '../sidewallReader';
+import {
+  applySuggestions,
+  createSidewallReader,
+  defaultSidewallReaderDeps,
+  type SidewallReaderDeps,
+} from '../sidewallReader';
+import { setSidewallDebug, SIDEWALL_LOG_TAG } from '../ocr/sidewallDebug';
+import { fakeLoaderDeps } from '../inference/__fixtures__/models';
+import { readFile, readTfliteFile } from '../inference/__fixtures__/tfliteFile';
 import { modelManifest } from '../manifest';
 import { fakeDecoder } from '../inference/__fixtures__/models';
 import type { LoadedModel, PixelRect } from '../inference/types';
 import type { YoloDetectorManifestEntry } from '../manifest';
 import type { OcrLineLike } from '../ocr/textCandidates';
+
+declare const __dirname: string; // Jest (Node); the project doesn't load Node's types.
 
 const entry = modelManifest.sidewallTextDetector!;
 const N = entry.outputShape[2];
@@ -342,8 +352,7 @@ describe('agreement and calibration logs', () => {
     }
   });
 
-  test('when turned on: tagged, heuristic decisions and a summary only', async () => {
-    const { setSidewallDebug, SIDEWALL_LOG_TAG } = require('../ocr/sidewallDebug') as typeof import('../ocr/sidewallDebug');
+  test('when turned on: every line tagged, heuristic decisions and a summary logged', async () => {
     const log = jest.spyOn(console, 'log').mockImplementation(() => {});
     setSidewallDebug(true);
     try {
@@ -355,7 +364,8 @@ describe('agreement and calibration logs', () => {
       expect(out.every(m => m.startsWith(SIDEWALL_LOG_TAG))).toBe(true);
       expect(out.some(m => m.includes('brand matched (logo fragment)'))).toBe(true);
       expect(out.some(m => m.includes('read done'))).toBe(true);
-      // The temporary device diagnostics are gone: no raw OCR dumps or tensor stats.
+      // The old tensor-stat dumps stay removed. Per-region OCR text is logged again
+      // (owner request 2026-11-06, see the device diagnostics tests below).
       expect(out.some(m => /crop OCR for|maxScoreByLabel|self-test|tensorByteLength/.test(m))).toBe(false);
     } finally {
       setSidewallDebug(false);
@@ -364,7 +374,6 @@ describe('agreement and calibration logs', () => {
   });
 
   test('a detector run() failure is logged and the frame falls back to full-frame reading', async () => {
-    const { setSidewallDebug } = require('../ocr/sidewallDebug') as typeof import('../ocr/sidewallDebug');
     const log = jest.spyOn(console, 'log').mockImplementation(() => {});
     setSidewallDebug(true);
     try {
@@ -520,5 +529,82 @@ describe('device round 5: size', () => {
       fullFrame: () => [line('A85/45 R20')],
     });
     expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg']))).not.toHaveProperty('size');
+  });
+});
+
+
+describe('[SidewallOCR] device diagnostics', () => {
+  let log: jest.SpyInstance;
+  /** Every [SidewallOCR] line as "message JSON". */
+  const lines = () =>
+    log.mock.calls
+      .filter(c => String(c[0]).startsWith(SIDEWALL_LOG_TAG))
+      .map(c => `${c[0]} ${c[1] ?? ''}`);
+  const find = (prefix: string) => lines().find(l => l.startsWith(`${SIDEWALL_LOG_TAG} ${prefix}`));
+
+  beforeEach(() => {
+    log = jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    setSidewallDebug(false);
+    log.mockRestore();
+  });
+
+  test('nothing is logged while off', async () => {
+    await setup().reader.read(FRAMES);
+    expect(lines()).toEqual([]);
+  });
+
+  test('logs each frame’s region boxes and each crop’s OCR text with its parsed value', async () => {
+    setSidewallDebug(true);
+    await setup().reader.read(FRAMES);
+    const frame = find('frame 1/3: ')!;
+    expect(frame).toBeDefined();
+    const regions = JSON.parse(frame.slice(frame.indexOf('{'))).regions;
+    expect(frame).toContain(`${regions.length} regions`);
+    expect(new Set(regions.map((r: { label: string }) => r.label))).toEqual(new Set(['Brand', 'Dot-Code', 'Model', 'Size']));
+    for (const r of regions) {
+      expect(r).toEqual({
+        label: expect.any(String),
+        score: expect.any(Number),
+        box: { x: expect.any(Number), y: expect.any(Number), width: expect.any(Number), height: expect.any(Number) },
+        cropRect: expect.objectContaining({ width: expect.any(Number) }),
+      });
+    }
+    expect(find('ocr Brand crop')).toContain('"text":["MICHELIN","RADIAL"]');
+    expect(find('ocr Brand crop')).toContain('"parsed":"Michelin"');
+    expect(find('ocr Size crop')).toContain('205/55R16 91V');
+    expect(find('read start')).toContain('"frames":3');
+    expect(find('read done')).toBeDefined();
+  });
+
+  test('full-frame OCR logs parsed values only, never the raw text', async () => {
+    setSidewallDebug(true);
+    const { reader } = setup({
+      detector: null,
+      fullFrame: () => [line('KX19 ABC'), line('205/55R16 91V')],
+    });
+    await reader.read(FRAMES);
+    expect(find('full-frame OCR (no regions)')).toContain('"lines":2');
+    expect(find('full-frame OCR (no regions)')).toContain('"size":"205/55 R16"');
+    expect(lines().some(l => l.includes('KX19'))).toBe(false);
+  });
+
+  test('logs each delegate attempt: Core ML failure, then CPU with the tensors it opened', async () => {
+    setSidewallDebug(true);
+    const file = readTfliteFile(readFile(`${__dirname}/../../../assets/models/tyre_detector.tflite`));
+    const loader = fakeLoaderDeps({
+      resolveAssetUri: () => 'file:///bundle/tyre_detector.tflite',
+      acceleration: ['core-ml'],
+      createModel: jest.fn(async (_url: string, delegates: string[]) => {
+        if (delegates.length) throw new Error('Core ML delegate could not be created');
+        return { inputs: file.inputs, outputs: file.outputs, run: jest.fn() };
+      }),
+    });
+    const loaded = await defaultSidewallReaderDeps(modelManifest, () => loader).loadDetector();
+    expect(loaded?.delegate).toBe('cpu');
+    expect(find('detector loading')).toContain('"acceleration":["core-ml"]');
+    expect(find('detector failed to open with core-ml')).toContain('Core ML delegate could not be created');
+    expect(find('detector opened with cpu')).toContain('[1,3,224,224]');
   });
 });

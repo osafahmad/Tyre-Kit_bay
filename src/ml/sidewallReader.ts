@@ -26,6 +26,13 @@ import type { OcrLineLike } from './ocr/textCandidates';
 import { sidewallLog } from './ocr/sidewallDebug';
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const round = (n: number, places = 1) => Number(n.toFixed(places));
+const roundRect = (r: PixelRect): PixelRect => ({
+  x: round(r.x),
+  y: round(r.y),
+  width: round(r.width),
+  height: round(r.height),
+});
 
 /**
  * Reads sidewall details from saved sidewall frames, on the phone: the text
@@ -168,6 +175,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       const real = frames.filter(isRealFrame);
       if (real.length === 0) return { status: 'unavailable', reason: 'no_frames' };
       const minAgreeing = deps.minAgreeingReads;
+      sidewallLog('read start', { frames: real.length, minAgreeing, maxOcrRuns: deps.maxOcrRuns });
       const model = await getDetector();
       const textDetector = model ? createSidewallTextDetector(model, deps.pipeline) : null;
 
@@ -193,6 +201,16 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           }
         }
         regionsFound += regions.length;
+        if (textDetector) {
+          sidewallLog(`frame ${real.indexOf(frame) + 1}/${real.length}: ${regions.length} regions`, {
+            regions: regions.map(r => ({
+              label: r.label,
+              score: round(r.score, 3),
+              box: roundRect(r.box),
+              cropRect: r.cropRect,
+            })),
+          });
+        }
 
         if (regions.length === 0) {
           // Full-frame fallback: strict size / DOT patterns, and make only
@@ -205,6 +223,8 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           const size = agreed('size') ? null : fullFrameSizeCandidate(lines);
           const dot = agreed('dotTin') ? null : fullFrameDotCandidate(lines, deps.now());
           const make = agreed('make') ? null : fullFrameMakeCandidate(lines);
+          // Whole-frame text can include background text (e.g. a plate): only parsed values are logged.
+          sidewallLog('full-frame OCR (no regions)', { lines: lines.length, parsed: { size, dot, make } });
           if (size) reads.size.push({ value: size, score: 0 });
           if (dot) reads.dotTin.push({ value: dot, score: 0 });
           if (make) reads.make.push({ value: make, score: 0 });
@@ -222,6 +242,9 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           if (lines) cropLines.push(...lines);
           const value = lines ? fieldCandidate(field, lines, deps.now()) : null;
           if (value) reads[field].push({ value, score: region.score });
+          if (lines) {
+            sidewallLog(`ocr ${region.label} crop`, { text: lines.map(l => l.text), parsed: value });
+          }
         }
 
         // Size fallback: the Size crop often lands on other text. Try the
@@ -237,6 +260,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
             ocrRuns += 1;
             const lines = await ocrRegion(band);
             fromBand = lines ? fullFrameSizeCandidate(lines) : null;
+            if (lines) sidewallLog('ocr Size+Model band crop', { text: lines.map(l => l.text), parsed: fromBand });
           }
           if (fromCrops || fromBand) {
             reads.size.push({ value: (fromCrops ?? fromBand)!, score: 0 });
@@ -246,6 +270,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
             const lines = await ocrFullFrame(frame);
             const size = lines ? fullFrameSizeCandidate(lines) : null;
             const dot = lines && !agreed('dotTin') ? fullFrameDotCandidate(lines, deps.now()) : null;
+            if (lines) sidewallLog('full-frame OCR (size fallback)', { lines: lines.length, parsed: { size, dot } });
             if (size) reads.size.push({ value: size, score: 0 });
             if (dot) reads.dotTin.push({ value: dot, score: 0 });
           }
@@ -332,7 +357,27 @@ export function defaultSidewallReaderDeps(
   return {
     ocrAvailable: isOcrAvailable,
     loadDetector: async () => {
-      const r = await loadModel('sidewallTextDetector', manifest, loaderDeps());
+      const base = loaderDeps();
+      // Log every delegate attempt: the shared loader falls back to CPU silently.
+      const logged: ModelLoaderDeps = {
+        ...base,
+        createModel: async (url, delegates) => {
+          const delegate = delegates[0] ?? 'cpu';
+          try {
+            const m = await base.createModel(url, delegates);
+            sidewallLog(`detector opened with ${delegate}`, {
+              input: m.inputs.map(t => [t.dataType, t.shape]),
+              output: m.outputs.map(t => [t.dataType, t.shape]),
+            });
+            return m;
+          } catch (e) {
+            sidewallLog(`detector failed to open with ${delegate}`, { error: errorText(e) });
+            throw e;
+          }
+        },
+      };
+      sidewallLog('detector loading', { acceleration: base.acceleration, platform: base.platform });
+      const r = await loadModel('sidewallTextDetector', manifest, logged);
       if (!r.ok) sidewallLog('detector load failed', r.failure);
       return r.ok ? r.model : null;
     },

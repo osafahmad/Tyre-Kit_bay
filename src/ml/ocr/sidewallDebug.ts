@@ -1,12 +1,15 @@
-// Sidewall OCR calibration logs. OFF by default in every build, so nothing
-// is logged unless a developer turns it on while calibrating on real tyres:
+// Sidewall OCR calibration logs. OFF by default, so nothing is logged unless
+// turned on while calibrating on real tyres. (Currently ON in every build via
+// src/config/diagnostics.ts, temporarily, for iPhone 13 Release diagnostics.)
 //
 //   import { setSidewallDebug } from './src/ml/ocr/sidewallDebug';
 //   setSidewallDebug(true);   // then: adb logcat | grep SidewallOCR
 //
-// Only heuristic decisions (brand matches, the DOT O→0 fix, size recovery,
-// grouped model reads, date-code-only DOT), failures and a one-line summary
-// per read are logged. Logs go to the device log only; nothing is sent anywhere.
+// Logged: delegate attempts, per-frame region boxes, each region crop's OCR
+// text and parsed value, heuristic decisions (brand matches, the DOT O→0 fix,
+// size recovery, grouped model reads, date-code-only DOT), failures and a
+// summary per read. Full-frame OCR logs only its parsed values, never its
+// text, since a whole frame can include background text such as a plate. Logs go to the device log only; nothing is sent anywhere.
 
 export const SIDEWALL_LOG_TAG = '[SidewallOCR]';
 

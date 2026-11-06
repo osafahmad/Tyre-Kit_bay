@@ -14,6 +14,9 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] All dependency and model licences checked.
 - [ ] Android release build and iOS archive succeed.
 
+## Diagnostics
+- [ ] **`diagnosticsConfig.sidewallOcrLogs` is `false`** (`src/config/diagnostics.ts`). Turned on temporarily on 2026-11-06 so iPhone 13 Release builds log `[SidewallOCR]` lines (enabled in `index.js`).
+
 ## Bundle ID
 - [x] **Bundle ID / application ID** set to the final `com.velox.tyre.kit.bay` (iOS `PRODUCT_BUNDLE_IDENTIFIER`, Debug and Release; Android `applicationId`, `namespace` and Kotlin package).
 - [ ] `com.velox.tyre.kit.bay` registered as an App ID in the Apple Developer account (Certificates, Identifiers & Profiles), and the app created in App Store Connect and Google Play Console with this ID.
