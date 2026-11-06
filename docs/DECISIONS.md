@@ -555,3 +555,11 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - Loading through `core-ml` / `android-gpu` with CPU fallback, and the loaded tensors matching the manifest.
 - That real output boxes are 0–1 and land on worn areas; the 0.25 confidence and 0.60 critical values on real tread frames.
 - Time, memory and heat for 10 tread frames on a low-end Android phone.
+
+## iOS release: "Analysis pending" on iPhone 13 (2026-11-06)
+
+**Status: diagnosed; no bundling or loader change needed. Covered by `src/ml/inference/__tests__/iosBundleAssets.test.ts`.**
+- **Cause:** `modelManifest.tread` and `modelManifest.damage` are `null`. The tread status classifier (Good / Replace soon / Replace now) and the damage classifier haven't been supplied. `TfliteTyreAnalyzer` needs both, so it throws `ModelUnavailableError('missing')` (`not_in_manifest`), which shows `The tyre models aren't in this app yet`. This is the intended result for this build on every phone. `tread_wear.tflite` is a wear-pattern detector and can't stand in for the tread status model.
+- **Bundling is correct.** `react-native bundle --platform ios --dev false` (Xcode's "Bundle React Native code and images" phase) copies both models into `TyreKitBay.app/assets/assets/models/`, byte-identical to `assets/models/`. React Native's resolver maps them to `file://…/TyreKitBay.app/assets/assets/models/<name>.tflite`, which the loader checks and opens (Core ML, then CPU). No Copy Bundle Resources entries or `MainBundlePath` lookup are needed. Adding them would bundle each model twice (they were removed on owner request).
+- **Consequence:** in a release build no tyre gets a result, so Tyre result (and its wear card) is never shown. Tread wear doesn't run in release builds until the tread and damage models exist, or the owner decides it should run for `Analysis pending` tyres.
+- **Sidewall `Not read` on iOS:** not explained by bundling (the detector resolves and loads in the tests above). It needs device logs: `setSidewallDebug(true)` in a Release-configuration build run from Xcode, then read the `[SidewallOCR]` lines (detector loaded with delegate, regions found, OCR runs).
