@@ -64,26 +64,32 @@ async function scan() {
 describe('severity and summary', () => {
   test('one finding per class: highest confidence, frames counted once each', () => {
     const findings = summariseTreadWear([
-      { frame: 'a', detections: [det('Center Wear', 0.4), det('Center Wear', 0.5), det('Feather Edge', 0.3)] },
-      { frame: 'b', detections: [det('Center Wear', 0.7)] },
+      { frame: 'a', detections: [det('center_wear', 0.4), det('center_wear', 0.5), det('feathering', 0.3)] },
+      { frame: 'b', detections: [det('center_wear', 0.7), det('normal_even_wear', 0.9)] },
     ]);
     expect(findings).toEqual([
-      { label: 'Center Wear', maxConfidence: 0.7, frames: 2 },
-      { label: 'Feather Edge', maxConfidence: 0.3, frames: 1 },
+      { label: 'center_wear', maxConfidence: 0.7, frames: 2 },
+      { label: 'feathering', maxConfidence: 0.3, frames: 1 },
     ]);
+  });
+
+  test('normal_even_wear alone is no finding: severity none', () => {
+    const findings = summariseTreadWear([{ frame: 'a', detections: [det('normal_even_wear', 0.95)] }]);
+    expect(findings).toEqual([]);
+    expect(treadWearSeverity(findings)).toBe('none');
   });
 
   test('critical at 0.60 and above, detected below, none without findings', () => {
     expect(treadWearSeverity([])).toBe('none');
-    expect(treadWearSeverity([{ label: 'Spotty Wear', maxConfidence: 0.599 }])).toBe('detected');
-    expect(treadWearSeverity([{ label: 'Spotty Wear', maxConfidence: 0.6 }])).toBe('critical');
+    expect(treadWearSeverity([{ label: 'flat_spot', maxConfidence: 0.599 }])).toBe('detected');
+    expect(treadWearSeverity([{ label: 'flat_spot', maxConfidence: 0.6 }])).toBe('critical');
   });
 });
 
 describe('useTyreInspection', () => {
-  test('saves the check into the result: wear fields only, status and sidewall values untouched', async () => {
+  test('saves the check into the result: wear fields only when nothing raises the status; sidewall values untouched', async () => {
     const [a] = seed();
-    const s = scanner(done([{ frame: 't1.jpg', detections: [det('Center Wear', 0.65), det('Feather Edge', 0.3)] }]));
+    const s = scanner(done([{ frame: 't1.jpg', detections: [det('center_wear', 0.65), det('feathering', 0.3)] }]));
     await render(<Harness tyreId={a} s={s} />);
 
     expect(hook.treadWear).toEqual({ status: 'idle' });
@@ -93,21 +99,35 @@ describe('useTyreInspection', () => {
     expect(s.scan).toHaveBeenCalledWith(['t1.jpg', 't2.jpg'], expect.any(Function));
     const record = {
       severity: 'critical',
-      label: 'Center Wear',
-      title: 'Center Tread Wear',
-      cause: 'Over-inflation',
-      recommendation: 'Get this checked as soon as possible: adjust tyre pressure.',
+      minimumStatus: null,
+      label: 'center_wear',
+      title: 'Center Wear',
+      cause: null,
+      recommendation: 'Get this checked as soon as possible.',
       confidence: 0.65,
-      alsoSeen: ['Feathered Wear'],
+      alsoSeen: ['Feathering'],
       modelVersion: 'tread-test-1',
       checkedAt: expect.any(String),
     };
     expect(hook.treadWear).toEqual(expect.objectContaining({ status: 'done', record, framesFailed: 0 }));
 
     const saved = tyre(a);
-    expect(saved.result).toEqual({ ...analysed, wearPattern: 'Center Tread Wear', treadWear: record });
+    expect(saved.result).toEqual({ ...analysed, wearPattern: 'Center Wear', treadWear: record });
     expect(saved.state).toBe('done');
     expect(saved.sidewallDetails).toEqual({ size: '215/65 R15', dotTin: null, make: 'Michelin', model: null });
+  });
+
+  test('exposed cords at 0.50 or more: the saved status is raised to Replace now', async () => {
+    const [a] = seed();
+    await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [det('exposed_cords', 0.5)] }]))} />);
+    await scan();
+    expect(tyre(a).result).toEqual(
+      expect.objectContaining({
+        status: 'replace_now',
+        wearPattern: 'Exposed Cords',
+        treadWear: expect.objectContaining({ severity: 'critical', minimumStatus: 'replace_now' }),
+      }),
+    );
   });
 
   test('no wear found: saved as Normal Wear Distribution', async () => {
@@ -134,7 +154,7 @@ describe('useTyreInspection', () => {
 
   test('a tyre without a result has nothing to save into', async () => {
     const [a] = seed({ withResult: false });
-    await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [det('Wavy Wear', 0.4)] }]))} />);
+    await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [det('diagonal_wear', 0.4)] }]))} />);
     await scan();
     expect(hook.treadWear.status).toBe('done');
     expect(tyre(a).result).toBeNull();
@@ -142,7 +162,7 @@ describe('useTyreInspection', () => {
 
   test('a saved check is shown, and autoScan does not run the model again', async () => {
     const [a] = seed();
-    const first = scanner(done([{ frame: 't1.jpg', detections: [det('Spotty Wear', 0.4)] }]));
+    const first = scanner(done([{ frame: 't1.jpg', detections: [det('flat_spot', 0.4)] }]));
     const view = await render(<Harness tyreId={a} s={first} autoScan />);
     await act(async () => {});
     expect(first.scan).toHaveBeenCalledTimes(1);
@@ -154,7 +174,7 @@ describe('useTyreInspection', () => {
     expect(second.scan).not.toHaveBeenCalled();
     expect(hook.treadWear).toEqual({
       status: 'saved',
-      record: expect.objectContaining({ title: 'Patchy Spot Wear', severity: 'detected' }),
+      record: expect.objectContaining({ title: 'Flat Spot', severity: 'detected' }),
     });
   });
 
@@ -171,7 +191,7 @@ describe('useTyreInspection', () => {
       store().updateTyre(a, { treadFrames: ['t3.jpg'] });
     });
     await act(async () => {
-      finish(done([{ frame: 't1.jpg', detections: [det('Center Wear', 0.9)] }]));
+      finish(done([{ frame: 't1.jpg', detections: [det('center_wear', 0.9)] }]));
       await pending;
     });
     expect(tyre(a).result!.treadWear).toBeUndefined();
@@ -198,7 +218,7 @@ describe('useTyreInspection', () => {
     await view.rerender(<Harness tyreId={b} s={slow} />);
     expect(cancelled!()).toBe(true);
     await act(async () => {
-      finish(done([{ frame: 't1.jpg', detections: [det('Center Wear', 0.9)] }]));
+      finish(done([{ frame: 't1.jpg', detections: [det('center_wear', 0.9)] }]));
       await pending;
     });
     expect(hook.treadWear).toEqual({ status: 'idle' });

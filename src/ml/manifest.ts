@@ -96,6 +96,48 @@ export type YoloDetectorManifestEntry = ModelEntryBase & {
   maxDetections: number;
 };
 
+/** torchvision `DefaultBoxGenerator` settings: one anchor set per feature map. */
+export type SsdAnchorConfig = {
+  generator: 'torchvision_default_boxes';
+  /** Square feature map sizes, in head output order (e.g. 20 for 20 × 20). */
+  featureMapSizes: number[];
+  /** Extra aspect ratios per feature map; each adds a w/h and an h/w anchor. */
+  aspectRatios: number[][];
+  minRatio: number;
+  maxRatio: number;
+  /** torchvision `clip=True`: anchor widths and heights clamped to 0–1. */
+  clip: boolean;
+};
+
+/**
+ * SSD / SSDLite head exported without post-processing: one tensor of raw
+ * anchor offsets `[1, anchors, 4]` (dx, dy, dw, dh) and one of class scores
+ * `[1, anchors, labels]`. `labels` includes the background class. Decoding
+ * and NMS are done by the app (`decodeSsdDetections` in inference/tensorUtils.ts).
+ */
+export type SsdDetectorManifestEntry = ModelEntryBase & {
+  outputFormat: 'ssd_raw';
+  /** Index of the background class in `labels`; never reported as a detection. */
+  backgroundIndex: number;
+  outputType: TensorDType;
+  /** Required when `outputType` is uint8 or int8. */
+  outputQuantization: Quantization | null;
+  /** Output tensors by role, in the model's output order (boxes first). */
+  outputs: {
+    boxes: { name: string; shape: number[] };
+    scores: { name: string; shape: number[] };
+  };
+  /** Whether the scores already sum to 1 per anchor or still need a softmax. */
+  scores: 'probabilities' | 'logits';
+  anchors: SsdAnchorConfig;
+  /** torchvision `BoxCoder`: offset weights (wx, wy, ww, wh) and the dw/dh clamp. */
+  boxCoder: { weights: [number, number, number, number]; bboxXformClip: number };
+  /** Overlapping boxes of the same label above this IoU are merged by NMS. */
+  iouThreshold: number;
+  /** Most boxes kept per frame after NMS. */
+  maxDetections: number;
+};
+
 export type ModelManifest = {
   tyreDetector: DetectorManifestEntry | null;
   /** Finds the Brand, DOT code, Model and Size text regions on a sidewall frame. */
@@ -105,16 +147,24 @@ export type ModelManifest = {
   /**
    * Finds tread wear patterns (centre wear, cupping, feather edge…) on a tread
    * frame. Optional and separate from `tread`: it says what kind of wear there
-   * is, never Good / Replace soon / Replace now.
+   * is, plus some damage classes that can raise the status (see
+   * `TREAD_WEAR_STATUS_RULES` in config/treadWearConfig.ts).
    */
-  treadWear: YoloDetectorManifestEntry | null;
+  treadWear: SsdDetectorManifestEntry | null;
 };
 
 /** Keys whose entries are `YoloDetectorManifestEntry`. */
-export const YOLO_MODELS = ['sidewallTextDetector', 'treadWear'] as const satisfies readonly ModelKey[];
+export const YOLO_MODELS = ['sidewallTextDetector'] as const satisfies readonly ModelKey[];
 
 export function isYoloModel(key: ModelKey): key is (typeof YOLO_MODELS)[number] {
   return (YOLO_MODELS as readonly ModelKey[]).includes(key);
+}
+
+/** Keys whose entries are `SsdDetectorManifestEntry`. */
+export const SSD_MODELS = ['treadWear'] as const satisfies readonly ModelKey[];
+
+export function isSsdModel(key: ModelKey): key is (typeof SSD_MODELS)[number] {
+  return (SSD_MODELS as readonly ModelKey[]).includes(key);
 }
 
 export type ModelKey = keyof ModelManifest;
@@ -164,50 +214,70 @@ export const modelManifest: ModelManifest = {
   tread: null,
   damage: null,
   /**
-   * `tread_wear.tflite`, supplied by the owner 2026-11-06. Values are read
-   * from the file (tensor details and its Ultralytics metadata.json) and match
-   * the owner's export notes. `__tests__/manifest.test.ts` checks them.
-   * - Ultralytics 8.4.203 YOLOv8n, `task: detect`, `end2end: false` (no NMS in
-   *   the graph), 1029 anchors (28² + 14² + 7²). Labels are the metadata `names`.
-   * - normalisation, letterbox with grey 114, normalised boxes (`_NormalizeCoords`
-   *   in the graph): same Ultralytics export as the sidewall text detector.
-   * - confidenceThreshold 0.25 and iouThreshold 0.45: owner values 2026-11-06.
-   *   maxDetections 300: Ultralytics' default. Calibrate on real tread frames.
-   * Licence AGPL-3.0 (from the file's metadata): release blocker, see DECISIONS.md.
+   * `tread_wear.tflite`, replaced by the owner 2026-11-10: torchvision
+   * `ssdlite320_mobilenet_v3_large` (BSD-3-Clause), exported via ONNX and
+   * onnx2tf. Replaces the AGPL-3.0 YOLOv8 model (DECISIONS.md).
+   * - Tensors are read from the file (`__tests__/manifest.test.ts` checks them):
+   *   input `[1, 320, 320, 3]` NHWC float32 (onnx2tf made it NHWC; the export
+   *   notes said NCHW), outputs `raw_boxes` `[1, 3234, 4]` and `raw_scores`
+   *   `[1, 3234, 16]`, float32. The file has no embedded labels or metadata.
+   * - Owner answers 2026-11-10: plain stretch to 320 × 320, RGB / 255 with no
+   *   ImageNet mean/std (the torchvision transform was left out of the export),
+   *   softmax already in the graph, stock torchvision default anchors and box
+   *   coder weights (10, 10, 5, 5), confidence 0.35, IoU 0.45, 300 detections.
+   * - Anchors: torchvision's `DefaultBoxGenerator([[2, 3]] * 6, min_ratio=0.2,
+   *   max_ratio=0.95)` on 20², 10², 5², 3², 2², 1² feature maps, 6 per cell
+   *   = 3234 (torchvision `ssdlite.py` defaults, confirmed by the owner).
+   * - Labels: owner's labels.json 2026-11-10, index 0 = background.
+   * Normalisation and box decoding still need a check on a real tread frame.
    */
   treadWear: {
     file: require('../../assets/models/tread_wear.tflite'),
-    version: 'yolov8n-ultralytics-8.4.203-2026-11-06T15:37:03Z',
-    inputShape: [1, 3, 224, 224],
-    inputLayout: 'NCHW',
+    version: 'ssdlite320-mobilenetv3-large-torchvision-2026-11-10',
+    inputShape: [1, 320, 320, 3],
+    inputLayout: 'NHWC',
     inputType: 'float32',
     colorOrder: 'RGB',
-    resize: 'letterbox',
-    letterboxPadValue: 114,
+    resize: 'stretch',
     normalisation: { mean: [0, 0, 0], std: [255, 255, 255] },
     inputQuantization: null,
     labels: [
-      'Alternate Lug Wear',
-      'Center Wear',
-      'Cupping _Scallop Wear',
-      'Diagonal Wear',
-      'Eccentric and Out-of-Round Wear',
-      'Feather Edge',
-      'Heel and Toe Wear',
-      'Rip Depression and Punch Wear',
-      'River_Channel Erosion Wear',
-      'Shoulder Step Chamfer Wear',
-      'Shoulder Wear Left',
-      'Shoulder Wear Right',
-      'Spotty Wear',
-      'Wavy Wear',
+      'background',
+      'center_wear',
+      'shoulder_wear',
+      'camber_wear',
+      'cupping_wear',
+      'feathering',
+      'flat_spot',
+      'heel_toe_wear',
+      'inner_edge_wear',
+      'outer_edge_wear',
+      'diagonal_wear',
+      'sidewall_bulge',
+      'exposed_cords',
+      'cracking_dry_rot',
+      'puncture_object',
+      'normal_even_wear',
     ],
-    confidenceThreshold: 0.25,
-    outputFormat: 'yolov8_raw',
+    backgroundIndex: 0,
+    confidenceThreshold: 0.35,
+    outputFormat: 'ssd_raw',
     outputType: 'float32',
     outputQuantization: null,
-    outputShape: [1, 18, 1029],
-    boxFormat: 'cxcywh_normalised',
+    outputs: {
+      boxes: { name: 'raw_boxes', shape: [1, 3234, 4] },
+      scores: { name: 'raw_scores', shape: [1, 3234, 16] },
+    },
+    scores: 'probabilities',
+    anchors: {
+      generator: 'torchvision_default_boxes',
+      featureMapSizes: [20, 10, 5, 3, 2, 1],
+      aspectRatios: [[2, 3], [2, 3], [2, 3], [2, 3], [2, 3], [2, 3]],
+      minRatio: 0.2,
+      maxRatio: 0.95,
+      clip: true,
+    },
+    boxCoder: { weights: [10, 10, 5, 5], bboxXformClip: Math.log(1000 / 16) },
     iouThreshold: 0.45,
     maxDetections: 300,
   },

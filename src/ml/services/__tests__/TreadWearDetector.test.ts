@@ -1,28 +1,26 @@
-import { TREAD_WEAR_CLASSES } from '../../config/treadWearConfig';
 import { fakeDecoder } from '../../inference/__fixtures__/models';
+import { anchorIndex, ssdOutputs } from '../../inference/__fixtures__/ssdOutputs';
 import type { InferenceModel, LoadedModel } from '../../inference/types';
-import { modelManifest, type YoloDetectorManifestEntry } from '../../manifest';
+import { modelManifest, type SsdDetectorManifestEntry } from '../../manifest';
 import { setTreadDebug, TREAD_LOG_TAG } from '../treadDebug';
 import { TreadWearDetector, type TreadWearDetectorDeps } from '../TreadWearDetector';
 
 const entry = modelManifest.treadWear!;
-const ROWS = 18;
-const ANCHORS = 1029;
-const SIZE = 224;
+const SIZE = 320;
 
-/** One Center Wear box at the centre of the input, 0.4 × 0.2 of it. */
-function oneBoxOutput(score = 0.8): ArrayBuffer {
-  const t = new Float32Array(ROWS * ANCHORS);
-  [0.5, 0.5, 0.4, 0.2].forEach((v, r) => (t[r * ANCHORS] = v));
-  t[(4 + TREAD_WEAR_CLASSES.indexOf('Center Wear')) * ANCHORS] = score;
-  return t.buffer;
+/** One center_wear box on the level-0 anchor at cell (10, 10): 0.425–0.625 of the input. */
+function oneBoxOutputs(score = 0.8): ArrayBuffer[] {
+  const { boxes, scores } = ssdOutputs(entry, [
+    { anchor: anchorIndex(entry, 0, 10, 10), scores: { [entry.labels.indexOf('center_wear')]: score } },
+  ]);
+  return [boxes.buffer as ArrayBuffer, scores.buffer as ArrayBuffer];
 }
 
 function setup(opts: { model?: Partial<InferenceModel>; loaded?: boolean } = {}) {
-  const run = jest.fn(async (_: ArrayBuffer[]) => [oneBoxOutput()]);
+  const run = jest.fn(async (_: ArrayBuffer[]) => oneBoxOutputs());
   const model: InferenceModel = { inputs: [], outputs: [], run, ...opts.model };
-  const loaded: LoadedModel<YoloDetectorManifestEntry> = { key: 'treadWear', entry, model, delegate: 'android-gpu' };
-  // 8 × 6 frame → letterboxed to 224 × 168 with 28 px of grey above and below.
+  const loaded: LoadedModel<SsdDetectorManifestEntry> = { key: 'treadWear', entry, model, delegate: 'android-gpu' };
+  // 8 × 6 frame → stretched to 320 × 320 (no padding).
   const { decoder, created } = fakeDecoder({ width: 8, height: 6 }, 255);
   const deps: TreadWearDetectorDeps = {
     loadModel: jest.fn(async () => (opts.loaded === false ? null : loaded)),
@@ -34,31 +32,37 @@ function setup(opts: { model?: Partial<InferenceModel>; loaded?: boolean } = {})
 describe('TreadWearDetector', () => {
   afterEach(() => setTreadDebug(false));
 
-  test('feeds a letterboxed, planar NCHW RGB/255 tensor and decodes the output', async () => {
+  test('feeds a stretched, interleaved NHWC RGB/255 tensor and decodes both outputs', async () => {
     const { detector, run, created, decoder } = setup();
     const outcome = await detector.scan(['frames/t1.jpg']);
 
     expect(decoder.loadFromFileAsync).toHaveBeenCalledWith('/app/frames/t1.jpg');
+    const resized = created[0].resizeAsync as jest.Mock;
+    expect(resized).toHaveBeenCalledWith(SIZE, SIZE); // stretch, no letterbox
     const input = new Float32Array(run.mock.calls[0][0][0]);
-    const plane = SIZE * SIZE;
-    expect(input).toHaveLength(3 * plane);
-    for (let c = 0; c < 3; c++) {
-      expect(input[c * plane]).toBeCloseTo(114 / 255); // padding row
-      expect(input[c * plane + 112 * SIZE + 112]).toBe(1); // image row
-    }
+    expect(input).toHaveLength(SIZE * SIZE * 3);
+    expect(input.every(v => v === 1)).toBe(true); // every pixel is image, none is padding
     for (const img of created) expect(img.dispose).toHaveBeenCalled();
 
     expect(outcome.status).toBe('done');
     if (outcome.status !== 'done') return;
     expect(outcome.delegate).toBe('android-gpu');
+    expect(outcome.modelVersion).toBe(entry.version);
     const [d] = outcome.frames[0].detections;
-    expect(d.label).toBe('Center Wear');
+    expect(d.label).toBe('center_wear');
     expect(d.confidence).toBeCloseTo(0.8);
-    expect(d.bbox.map(v => Number(v.toFixed(4)))).toEqual([0.3, 0.4, 0.4, 0.2]);
-    // Back to the 8 × 6 frame: 224 / 8 = 28 input px per frame px, 28 px pad on y.
-    expect(d.frameRect!.x).toBeCloseTo(2.4);
-    expect(d.frameRect!.width).toBeCloseTo(3.2);
-    expect(d.frameRect!.y).toBeCloseTo((0.4 * SIZE - 28) / 28);
+    expect(d.bbox.map(v => Number(v.toFixed(4)))).toEqual([0.425, 0.425, 0.2, 0.2]);
+    // Back to the 8 × 6 frame: x and y scale separately (plain stretch).
+    expect(d.frameRect!.x).toBeCloseTo(0.425 * 8);
+    expect(d.frameRect!.width).toBeCloseTo(0.2 * 8);
+    expect(d.frameRect!.y).toBeCloseTo(0.425 * 6);
+    expect(d.frameRect!.height).toBeCloseTo(0.2 * 6);
+  });
+
+  test('a model run with only one output is a failed frame, not an empty result', async () => {
+    const { detector, run } = setup();
+    run.mockResolvedValue([oneBoxOutputs()[0]]);
+    expect(await detector.scan(['a.jpg'])).toEqual({ status: 'unavailable', reason: 'unreadable' });
   });
 
   test('only demo or no frames: unavailable, model never loaded', async () => {
@@ -94,7 +98,7 @@ describe('TreadWearDetector', () => {
     let cancelled = false;
     run.mockImplementationOnce(async () => {
       cancelled = true;
-      return [oneBoxOutput()];
+      return oneBoxOutputs();
     });
     expect(await detector.scan(['a.jpg', 'b.jpg'], () => cancelled)).toEqual({ status: 'cancelled' });
     expect(run).toHaveBeenCalledTimes(1);

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useInspectionStore, useTyre } from '../features/inspection/store';
 import { buildTreadWearRecord } from '../features/inspection/treadWear';
 import type { TreadWearRecord } from '../features/inspection/types';
-import type { TreadWearClass } from '../ml/config/treadWearConfig';
+import { NO_DEFECT_CLASS, type TreadWearClass } from '../ml/config/treadWearConfig';
 import {
   getTreadWearDetector,
   type TreadWearFrameResult,
@@ -13,7 +13,8 @@ import {
 // One tyre's inspection data for a screen: the saved tyre and its confirmed
 // sidewall details (from the store, untouched), plus the tread wear check.
 // A finished check is saved into the tyre's result (wear pattern and the
-// `treadWear` record only); it never changes the tyre's status.
+// `treadWear` record). It can only raise the tyre's status, for the damage
+// classes in `TREAD_WEAR_STATUS_RULES`; it never lowers it.
 
 export { treadWearSeverity } from '../features/inspection/treadWear';
 export type { TreadWearSeverity } from '../features/inspection/types';
@@ -43,12 +44,16 @@ export type TreadWearState =
   /** Checked earlier: the record saved with the tyre result. */
   | { status: 'saved'; record: TreadWearRecord };
 
-/** Per-frame detections → one finding per wear class, strongest first. */
+/**
+ * Per-frame detections → one finding per wear class, strongest first.
+ * `normal_even_wear` is left out: it means even wear, not a defect.
+ */
 export function summariseTreadWear(frames: TreadWearFrameResult[]): TreadWearFinding[] {
   const byLabel = new Map<TreadWearClass, TreadWearFinding>();
   for (const f of frames) {
     const seen = new Set<TreadWearClass>();
     for (const d of f.detections) {
+      if (d.label === NO_DEFECT_CLASS) continue;
       const cur = byLabel.get(d.label) ?? { label: d.label, maxConfidence: 0, frames: 0 };
       cur.maxConfidence = Math.max(cur.maxConfidence, d.confidence);
       if (!seen.has(d.label)) {
@@ -94,7 +99,7 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
 
   /**
    * Runs the wear model on this tyre's saved tread frames (after capture
-   * only) and saves the check into the tyre's result. Status is never changed.
+   * only) and saves the check into the tyre's result. Status is only raised.
    */
   const scanTreadWear = useCallback(async (): Promise<TreadWearState> => {
     const run = ++runId.current;

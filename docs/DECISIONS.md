@@ -510,7 +510,7 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 ### What the file is (read from the file, 2026-11-06)
 - Ultralytics 8.4.203 YOLOv8n, `task: detect`, `end2end: false`, `imgsz` 224×224, 14 wear classes (`Alternate Lug Wear` … `Wavy Wear`, metadata `names` order).
 - Input float32 `[1, 3, 224, 224]` NCHW; output float32 `[1, 18, 1029]` (4 box + 14 class scores per anchor). Matches the owner's export notes. `_NormalizeCoords` is in the graph, so boxes are 0–1.
-- **Licence AGPL-3.0**: same release blocker as the sidewall text detector. Replace or license before any commercial release.
+- ~~**Licence AGPL-3.0**: same release blocker as the sidewall text detector.~~ **Cleared 2026-11-10 for this model:** replaced by an SSDLite model, see "M7 Phase 3b" below. The sidewall text detector's AGPL blocker is still open.
 
 ### Choices (owner decisions, 2026-11-06)
 - **Registered as `modelManifest.treadWear`** (a `YoloDetectorManifestEntry`), separate from `tread`. It says what kind of wear there is, never Good / Replace soon / Replace now. `tread` and `damage` stay `null`, so analysis is still pending.
@@ -518,7 +518,7 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - **Preprocessing:** letterbox with grey 114, RGB / 255, planar NCHW float32: the existing `imageFileToModelInput`. Not a plain stretch to 224×224, so frames keep the aspect ratio the model was trained on.
 - **Delegates:** Core ML (iOS) / GPU (Android), then CPU, from the shared loader (`ACCELERATION_BY_PLATFORM`). **No NNAPI**, although the original brief asked for it (M0 decision).
 - **`src/ml/config/treadWearConfig.ts`** only gives the manifest values a typed shape (`TREAD_MODEL_CONFIG`, `TREAD_WEAR_CLASSES`, `TreadWearClass`). The class list is checked against the manifest and the file.
-- **Severity:** `critical` when any wear class is at **≥ 0.60** confidence (`TREAD_WEAR_SEVERITY`, owner value, uncalibrated). Below that it is `detected`; with no findings it is `none`. It is an indicator in `useTyreInspection` only and **never changes the tyre status**.
+- **Severity:** `critical` when any wear class is at **≥ 0.60** confidence (`TREAD_WEAR_SEVERITY`, owner value, uncalibrated). Below that it is `detected`; with no findings it is `none`. It is an indicator in `useTyreInspection` only and **never changes the tyre status**. (Superseded 2026-11-10: some damage classes now raise the status, see "M7 Phase 3b".)
 - **State:** `useTyreInspection(tyreId)` keeps wear detections in hook state. They are not persisted, and the store's tyre, result and `sidewallDetails` are not written. `scanTreadWear()` runs only on saved tread frames, after capture; `demo://` frames are reported as `no_frames`, never as a result.
 - **Diagnostics:** `setTreadDebug(true)` (`src/ml/services/treadDebug.ts`), off by default, device log only, tag `[TreadWear]`. Logs frame indexes, not paths.
 - **File location:** `assets/models/tread_wear.tflite`. The native copies (`ios/tread_wear.tflite` with its 4 `project.pbxproj` lines, and `android/app/src/main/assets/tread_wear.tflite`) were **removed on owner request**. They were byte-identical and the loader never used them.
@@ -571,3 +571,46 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - With the flag off (store builds): unchanged, `Analysis pending`. Once the real tread and damage models are in the manifest, the flag is ignored and the real analyzer runs.
 - **Mixed inspections:** the `Demo data` label comes from `inspection.analyzerVersion`, set when the inspection starts. An inspection started without the flag (`tflite-unconfigured`, tyres pending) and resumed with it on would otherwise get demo results with no label. `AnalysingScreen` now switches the inspection to the demo version before saving a demo result into it (`store.setAnalyzerVersion`). An inspection with any demo result is labelled demo as a whole.
 - It never turns on capture simulation (still `__DEV__` only). CLAUDE.md's demo rule now names this exception. The release checklist requires the flag to be off.
+
+## M7 Phase 3b: tread wear model replaced with SSDLite (2026-11-10)
+
+**Status: unit-tested against the real file's tensors and synthetic outputs. Not run on a phone.**
+
+### Why
+- The YOLOv8 `tread_wear.tflite` was Ultralytics AGPL-3.0 (release blocker, Phase 3). The owner replaced it with torchvision `ssdlite320_mobilenet_v3_large` trained on a tyre wear dataset.
+- **Licences (owner, 2026-11-10):** model code torchvision BSD-3-Clause; dataset from Roboflow under CC BY 4.0. **The AGPL blocker is cleared for the tread wear model only.** `tyre_detector.tflite` (sidewall text detector) is still Ultralytics YOLOv8 AGPL-3.0 and still blocks release (Phase 2a).
+- **CC BY 4.0 attribution (owner, 2026-11-10):** dataset title, provider and notice text recorded in `docs/LICENSES.md` and `src/config/licenses.ts` (`LICENSE_NOTICES`). **Still open:** the dataset's creator and URL (Roboflow Universe is the host, not the creator), and a Legal & Licenses screen to show the notices. That screen isn't one of the spec's 21 and has no design or entry point yet, so it isn't built. The `tyre_detector.tflite` replacement is scheduled as its own milestone before App Store submission.
+
+### What the file is (read from the file, 2026-11-10)
+- Converted with onnx2tf. Input `input` `[1, 320, 320, 3]` **NHWC** float32. The export notes said NCHW `[1, 3, 320, 320]`; onnx2tf changed the layout, and the manifest follows the file.
+- Outputs, in order: `raw_boxes` `[1, 3234, 4]` and `raw_scores` `[1, 3234, 16]`, float32, not quantized. No metadata or labels in the file.
+- No ImageNet mean/std constants in the graph. That fits the owner's statement that the input is plain 0–1, but doesn't prove it: a converter can fold the normalisation into the first convolution's weights.
+
+### Values (owner answers, 2026-11-10)
+- Labels: 16, index 0 `background`, then `center_wear` … `normal_even_wear` (owner's labels.json).
+- Preprocessing: plain stretch to 320 × 320 (no letterbox), RGB / 255, no ImageNet mean/std (the torchvision transform was left out of the export).
+- Scores: softmax is in the graph, so the app doesn't apply it again (`scores: 'probabilities'`).
+- Anchors: stock torchvision `DefaultBoxGenerator([[2, 3]] * 6, min_ratio=0.2, max_ratio=0.95)` on 20², 10², 5², 3², 2², 1² maps, 6 per cell = 3234. Box coder weights (10, 10, 5, 5) and dw/dh clamp log(1000/16), as in torchvision `BoxCoder`.
+- Filtering: argmax over classes 1–15 per anchor (background never reported, even when it scores highest), confidence ≥ 0.35, greedy per-class NMS at IoU 0.45, at most 300 boxes.
+
+### Code
+- `manifest.ts`: new `SsdDetectorManifestEntry` (`outputFormat: 'ssd_raw'`, named outputs, anchor and box coder settings). `treadWear` moved from `YOLO_MODELS` to `SSD_MODELS`. The loader validates the entry (label count vs score shape, anchor count vs output shape, box coder) and checks both output tensors by name, type and shape at load. Swapped or missing outputs fail as `manifest_mismatch`.
+- `inference/tensorUtils.ts`: `ssdDefaultAnchors` / `decodeSsdDetections`, shared, with no model values in the code. The sidewall YOLO decoder is unchanged.
+- `TreadWearDetector`: same after-capture flow (never in a frame processor, spec §4.15). Feeds a stretched NHWC tensor and maps boxes back to frame pixels by scaling x and y separately.
+- `tyre_detector.tflite`, the sidewall OCR and ML Kit are untouched.
+
+### Product rules (owner decisions, 2026-11-10)
+- **Titles only for now:** `TREAD_WEAR_PRESENTATION` is empty, so titles are cleaned-up class names (`center_wear` → `Center Wear`), with no cause or advice. At ≥ 0.60 the recommendation is `Get this checked as soon as possible.` Owner wording will follow. The old 2026-11-06 wording was for classes that no longer exist and was removed.
+- **`normal_even_wear` is never a finding.** It's dropped before severity and titles, so a tyre with only that class shows `Normal Wear Distribution`. Other classes found with it still count. (The owner's wording, "if the top detection is `normal_even_wear` … treat the tyre as defect-free", would also hide a weaker defect such as exposed cords found in the same scan. The safer reading was chosen; **confirmed by the owner 2026-11-10.**)
+- **Damage classes raise the tyre status** (`TREAD_WEAR_STATUS_RULES`). This reverses the 2026-11-06 rule that wear never changes the status:
+  - `exposed_cords`, `sidewall_bulge` at ≥ 0.50 → at least **Replace now**.
+  - `cracking_dry_rot`, `puncture_object` → at least **Replace soon**. The owner gave no confidence value for these, so any detection that passes the model's 0.35 threshold counts; **confirmed by the owner 2026-11-10.**
+  - The status is only ever raised, never lowered (`withTreadWear`, `TreadWearRecord.minimumStatus`). A raising finding is shown first, ahead of stronger wear patterns, and makes the severity `critical`. Records saved before this change have no `minimumStatus` and leave the status alone.
+  - Because the status changes, the report headline can now say a tyre needs replacing because of this model. (Before, wear could only add the advisory line.)
+  - **Staging demo builds:** the status being raised is the demo analyzer's made-up status. The result is still labelled `Demo data` everywhere, but a real `Replace now` from this model then sits inside a demo inspection. **Owner confirmed 2026-11-10:** intended, so real defects can be tested on a phone in staging builds.
+
+### Needs a real phone
+- Loading with Core ML (iOS) and the GPU delegate (Android), then CPU fallback. onnx2tf graphs sometimes have ops these delegates don't support.
+- **Normalisation and box decoding on real tread frames:** boxes should land on the worn or damaged areas. If every frame shows nothing, or only `background`/`normal_even_wear`, check the 0–1 input first (ImageNet mean/std may be needed).
+- The 0.35 / 0.45 / 0.50 values on real tyres, and false Replace-now rates for exposed cords and bulges (they now change the status).
+- Time, memory and heat for 10 frames at 320 × 320 on a low-end Android phone.

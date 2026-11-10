@@ -1,5 +1,11 @@
-import { describeTreadWear, TREAD_WEAR_SEVERITY } from '../../ml/config/treadWearConfig';
-import type { TreadWearRecord, TreadWearSeverity, TyreResult } from './types';
+import {
+  describeTreadWear,
+  isTreadWearClass,
+  NO_DEFECT_CLASS,
+  TREAD_WEAR_SEVERITY,
+  TREAD_WEAR_STATUS_RULES,
+} from '../../ml/config/treadWearConfig';
+import type { TreadWearRecord, TreadWearSeverity, TyreResult, TyreStatus } from './types';
 
 // Builds the saved tread wear record, and the wording shown for it on Tyre
 // result, the report screen and the PDF. One place, so they can't disagree.
@@ -15,25 +21,72 @@ export const WEAR_SEVERITY_LABELS: Record<TreadWearSeverity, string> = {
 /** One wear class across all frames read. */
 export type WearFinding = { label: string; maxConfidence: number };
 
+const STATUS_RANK: Record<TyreStatus, number> = { good: 0, replace_soon: 1, replace_now: 2 };
+
+/** The worse of two statuses; null means no change. */
+export function worseStatus(a: TyreStatus, b: TyreStatus | null | undefined): TyreStatus {
+  return b && STATUS_RANK[b] > STATUS_RANK[a] ? b : a;
+}
+
+/** `normal_even_wear` (even wear, owner decision 2026-11-10) is never a defect finding. */
+export function isDefectFinding(f: WearFinding): boolean {
+  return f.label !== NO_DEFECT_CLASS;
+}
+
+/**
+ * The lowest status a finding forces (`TREAD_WEAR_STATUS_RULES`), or null.
+ * Every finding already passed the model's confidence threshold.
+ */
+export function findingMinimumStatus(f: WearFinding): TyreStatus | null {
+  if (!isTreadWearClass(f.label)) return null;
+  const rule = TREAD_WEAR_STATUS_RULES[f.label];
+  if (!rule) return null;
+  return rule.minConfidence === null || f.maxConfidence >= rule.minConfidence ? rule.minStatus : null;
+}
+
+/** The finding that forces the worst status (strongest first on ties), or null. */
+function statusRaisingFinding(findings: WearFinding[]): { finding: WearFinding; status: TyreStatus } | null {
+  let best: { finding: WearFinding; status: TyreStatus } | null = null;
+  for (const finding of findings) {
+    const status = findingMinimumStatus(finding);
+    if (status && (!best || STATUS_RANK[status] > STATUS_RANK[best.status])) best = { finding, status };
+  }
+  return best;
+}
+
 export function treadWearSeverity(
   findings: WearFinding[],
   criticalMinConfidence: number = TREAD_WEAR_SEVERITY.criticalMinConfidence,
 ): TreadWearSeverity {
-  if (findings.length === 0) return 'none';
-  return findings.some(f => f.maxConfidence >= criticalMinConfidence) ? 'critical' : 'detected';
+  const defects = findings.filter(isDefectFinding);
+  if (defects.length === 0) return 'none';
+  if (statusRaisingFinding(defects)) return 'critical';
+  return defects.some(f => f.maxConfidence >= criticalMinConfidence) ? 'critical' : 'detected';
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
-/** Findings (strongest first) → the record saved with the tyre result. */
+/**
+ * Findings (strongest first) → the record saved with the tyre result.
+ * `normal_even_wear` is dropped. A finding that raises the status is shown
+ * first, ahead of stronger wear patterns, so the title explains the status.
+ */
 export function buildTreadWearRecord(
   findings: WearFinding[],
   modelVersion: string,
   now: Date = new Date(),
 ): TreadWearRecord {
-  const severity = treadWearSeverity(findings);
-  const base = { severity, modelVersion, checkedAt: now.toISOString() };
-  const [top, ...rest] = findings;
+  const defects = findings.filter(isDefectFinding);
+  const severity = treadWearSeverity(defects);
+  const raising = statusRaisingFinding(defects);
+  const base = {
+    severity,
+    minimumStatus: raising?.status ?? null,
+    modelVersion,
+    checkedAt: now.toISOString(),
+  };
+  const ordered = raising ? [raising.finding, ...defects.filter(f => f !== raising.finding)] : defects;
+  const [top, ...rest] = ordered;
   if (!top) {
     return { ...base, label: null, title: NORMAL_WEAR_TITLE, cause: null, recommendation: null, confidence: null, alsoSeen: [] };
   }
@@ -56,9 +109,17 @@ export function buildTreadWearRecord(
   };
 }
 
-/** Tyre result with the wear record saved. Only wear fields change; never the status. */
+/**
+ * Tyre result with the wear record saved. The status is only ever raised, to
+ * the record's `minimumStatus` (owner decision 2026-11-10); never lowered.
+ */
 export function withTreadWear(result: TyreResult, record: TreadWearRecord): TyreResult {
-  return { ...result, wearPattern: record.title, treadWear: record };
+  return {
+    ...result,
+    status: worseStatus(result.status, record.minimumStatus),
+    wearPattern: record.title,
+    treadWear: record,
+  };
 }
 
 /**

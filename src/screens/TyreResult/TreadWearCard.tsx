@@ -8,9 +8,10 @@ import type { TreadWearRecord } from '../../features/inspection/types';
 import { colors, radius } from '../../theme';
 
 // "Tread Pattern & Wear" card on Tyre result. Shows what the tread wear model
-// found on this tyre's saved tread frames. It's separate from the tyre status
-// (Good / Replace soon / Replace now) and never changes it, so it uses theme
-// tokens, not the status colours. Every badge has a text label and an icon.
+// found on this tyre's saved tread frames. The tyre status (Good / Replace
+// soon / Replace now) is shown elsewhere on the screen, with the status
+// colours; a damage class can raise it, but this card uses theme tokens only.
+// Every badge has a text label and an icon.
 
 export const TREAD_WEAR_CARD_TITLE = 'Tread Pattern & Wear';
 

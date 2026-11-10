@@ -1,33 +1,35 @@
+import { modelManifest } from '../manifest';
 import {
   describeTreadWear,
   formatWearTitle,
+  NO_DEFECT_CLASS,
+  TREAD_WEAR_BACKGROUND,
   TREAD_WEAR_CLASSES,
   TREAD_WEAR_PRESENTATION,
+  TREAD_WEAR_STATUS_RULES,
 } from '../config/treadWearConfig';
 
-describe('tread wear label map', () => {
-  test.each([
-    ['Center Wear', 'Center Tread Wear', 'Over-inflation', 'Adjust tyre pressure'],
-    ['Shoulder Wear Left', 'Shoulder Wear', 'Under-inflation or alignment issue', 'Inspect camber and pressure'],
-    ['Shoulder Wear Right', 'Shoulder Wear', 'Under-inflation or alignment issue', 'Inspect camber and pressure'],
-    ['Cupping _Scallop Wear', 'Cupping / Scalloped Wear', 'Worn suspension or shock absorbers', 'Inspect dampers and balance'],
-    ['Heel and Toe Wear', 'Heel & Toe Wear', 'Suspension misalignment or rotation overdue', 'Rotate tyres and check toe'],
-    ['Feather Edge', 'Feathered Wear', 'Toe alignment fault', 'Perform wheel alignment'],
-    ['Diagonal Wear', 'Diagonal Wear', 'Wheel imbalance or rear axle misalignment', 'Rebalance wheel assembly'],
-    ['Alternate Lug Wear', 'Lug Tread Wear', 'Aggressive torque or uneven load', 'Inspect axle load and drive components'],
-    ['Spotty Wear', 'Patchy Spot Wear', 'Skid flat-spotting or out-of-round assembly', 'Inspect roundness and tyre balance'],
-    ['Rip Depression and Punch Wear', 'Patchy Spot Wear', 'Skid flat-spotting or out-of-round assembly', 'Inspect roundness and tyre balance'],
-  ])('%s → %s', (raw, title, cause, severityHint) => {
-    expect(describeTreadWear(raw)).toEqual({ title, cause, severityHint });
+describe('tread wear label map (SSDLite, owner labels.json 2026-11-10)', () => {
+  test('background first, then the 15 classes in model index order', () => {
+    expect(modelManifest.treadWear!.labels).toEqual([TREAD_WEAR_BACKGROUND, ...TREAD_WEAR_CLASSES]);
+    expect(TREAD_WEAR_CLASSES).toHaveLength(15);
+    expect(TREAD_WEAR_CLASSES.indexOf('center_wear') + 1).toBe(1);
+    expect(TREAD_WEAR_CLASSES.indexOf('normal_even_wear') + 1).toBe(15);
   });
 
   test.each([
-    ['Eccentric and Out-of-Round Wear', 'Eccentric and Out-of-Round Wear'],
-    ['River_Channel Erosion Wear', 'River Channel Erosion Wear'],
-    ['Shoulder Step Chamfer Wear', 'Shoulder Step Chamfer Wear'],
-    ['Wavy Wear', 'Wavy Wear'],
-  ])('unlisted class %s: clean title, no made-up cause or advice', (raw, title) => {
+    ['center_wear', 'Center Wear'],
+    ['shoulder_wear', 'Shoulder Wear'],
+    ['heel_toe_wear', 'Heel Toe Wear'],
+    ['cracking_dry_rot', 'Cracking Dry Rot'],
+    ['exposed_cords', 'Exposed Cords'],
+    ['puncture_object', 'Puncture Object'],
+  ])('%s → %s, with no made-up cause or advice', (raw, title) => {
     expect(describeTreadWear(raw)).toEqual({ title, cause: null, severityHint: null });
+  });
+
+  test('no owner wording yet: the presentation map is empty', () => {
+    expect(TREAD_WEAR_PRESENTATION).toEqual({});
   });
 
   test('every model class resolves to a non-empty title without underscores', () => {
@@ -38,10 +40,17 @@ describe('tread wear label map', () => {
     }
   });
 
-  test('the map only has real model classes', () => {
-    for (const key of Object.keys(TREAD_WEAR_PRESENTATION)) {
+  test('status rules and the no-defect class only name real model classes', () => {
+    expect(TREAD_WEAR_CLASSES).toContain(NO_DEFECT_CLASS);
+    for (const key of Object.keys(TREAD_WEAR_STATUS_RULES)) {
       expect(TREAD_WEAR_CLASSES as readonly string[]).toContain(key);
     }
+    expect(TREAD_WEAR_STATUS_RULES).toEqual({
+      exposed_cords: { minStatus: 'replace_now', minConfidence: 0.5 },
+      sidewall_bulge: { minStatus: 'replace_now', minConfidence: 0.5 },
+      cracking_dry_rot: { minStatus: 'replace_soon', minConfidence: null },
+      puncture_object: { minStatus: 'replace_soon', minConfidence: null },
+    });
   });
 
   test('labels the model does not have still get a clean title', () => {
@@ -52,12 +61,6 @@ describe('tread wear label map', () => {
     });
     expect(describeTreadWear('of wear').title).toBe('Of Wear');
     expect(describeTreadWear('')).toEqual({ title: '', cause: null, severityHint: null });
-  });
-
-  test('returns a copy, so callers cannot change the shared map', () => {
-    const d = describeTreadWear('Center Wear');
-    d.title = 'changed';
-    expect(describeTreadWear('Center Wear').title).toBe('Center Tread Wear');
   });
 
   test('formatWearTitle keeps title case on hyphenated parts', () => {

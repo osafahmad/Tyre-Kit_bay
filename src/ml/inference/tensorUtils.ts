@@ -2,6 +2,8 @@ import type {
   ClassifierManifestEntry,
   ModelManifest,
   Quantization,
+  SsdAnchorConfig,
+  SsdDetectorManifestEntry,
   TensorDType,
   YoloDetectorManifestEntry,
 } from '../manifest';
@@ -227,11 +229,17 @@ export async function imageFileToModelInput(
   path: string,
   spec: TensorSpec,
   decoder: ImageDecoder,
-): Promise<{ tensor: ArrayBuffer; letterbox: LetterboxInfo | null }> {
+): Promise<{
+  tensor: ArrayBuffer;
+  letterbox: LetterboxInfo | null;
+  /** The saved frame's size before any crop or resize. */
+  source: { width: number; height: number };
+}> {
   const images: DecodableImage[] = [];
   try {
     let image = await decoder.loadFromFileAsync(path);
     images.push(image);
+    const source = { width: image.width, height: image.height };
     if (spec.resize === 'letterbox') {
       const plan = letterboxPlan(image.width, image.height, spec.width, spec.height);
       if (image.width !== plan.resizedWidth || image.height !== plan.resizedHeight) {
@@ -244,6 +252,7 @@ export async function imageFileToModelInput(
       return {
         tensor: pixelsToTensor(padded, spec),
         letterbox: { sourceWidth, sourceHeight, scale, padX, padY },
+        source,
       };
     }
     if (spec.resize === 'center_crop') {
@@ -258,7 +267,7 @@ export async function imageFileToModelInput(
       images.push(image);
     }
     const pixels = await image.toRawPixelDataAsync();
-    return { tensor: pixelsToTensor(pixels, spec), letterbox: null };
+    return { tensor: pixelsToTensor(pixels, spec), letterbox: null, source };
   } finally {
     for (const img of images) {
       try {
@@ -407,6 +416,127 @@ export function decodeYoloDetections(
       x2: cx + w / 2,
       y2: cy + h / 2,
     });
+  }
+  return nonMaxSuppression(candidates, entry.iouThreshold, entry.maxDetections);
+}
+
+// ---------------------------------------------------------------- SSD decoding
+
+/** One anchor as centre x, centre y, width, height, all 0–1 of the model input. */
+export type Anchor = { cx: number; cy: number; w: number; h: number };
+
+/**
+ * torchvision `DefaultBoxGenerator` anchors, in head output order: feature
+ * map by feature map, cells row by row, then the anchors of each cell
+ * (s_k, sqrt(s_k · s_k+1), then w/h and h/w per extra aspect ratio).
+ * Scales are spread evenly from `minRatio` to `maxRatio`, with 1.0 appended.
+ */
+export function ssdDefaultAnchors(config: SsdAnchorConfig): Anchor[] {
+  const { featureMapSizes: sizes, aspectRatios, minRatio, maxRatio, clip } = config;
+  if (aspectRatios.length !== sizes.length) {
+    throw new Error(`${sizes.length} feature maps but ${aspectRatios.length} aspect ratio sets.`);
+  }
+  const n = sizes.length;
+  const scales = [
+    ...sizes.map((_, k) => (n === 1 ? minRatio : minRatio + ((maxRatio - minRatio) * k) / (n - 1))),
+    1,
+  ];
+  const fit = (v: number) => (clip ? Math.min(Math.max(v, 0), 1) : v);
+  const anchors: Anchor[] = [];
+  sizes.forEach((f, k) => {
+    const sk = scales[k];
+    const prime = Math.sqrt(sk * scales[k + 1]);
+    const wh: [number, number][] = [
+      [sk, sk],
+      [prime, prime],
+    ];
+    for (const ar of aspectRatios[k]) {
+      const r = Math.sqrt(ar);
+      wh.push([sk * r, sk / r], [sk / r, sk * r]);
+    }
+    for (let y = 0; y < f; y++) {
+      for (let x = 0; x < f; x++) {
+        for (const [w, h] of wh) anchors.push({ cx: (x + 0.5) / f, cy: (y + 0.5) / f, w: fit(w), h: fit(h) });
+      }
+    }
+  });
+  return anchors;
+}
+
+/** Number of anchors a config makes, without building them. */
+export function ssdAnchorCount(config: SsdAnchorConfig): number {
+  return config.featureMapSizes.reduce(
+    (sum, f, k) => sum + f * f * (2 + 2 * (config.aspectRatios[k]?.length ?? 0)),
+    0,
+  );
+}
+
+const anchorCache = new WeakMap<SsdAnchorConfig, Anchor[]>();
+
+function cachedAnchors(config: SsdAnchorConfig): Anchor[] {
+  let a = anchorCache.get(config);
+  if (!a) {
+    a = ssdDefaultAnchors(config);
+    anchorCache.set(config, a);
+  }
+  return a;
+}
+
+/**
+ * Raw SSD outputs → boxes in model-input pixels.
+ * - Scores: softmaxed per anchor when the manifest says `logits`; never twice.
+ * - Each anchor takes its best non-background label; anchors below
+ *   `confidenceThreshold` are dropped.
+ * - Boxes: torchvision `BoxCoder.decode_single` (offsets divided by the
+ *   weights, dw/dh clamped to `bboxXformClip`), then clamped to the input.
+ * - Greedy NMS per label at `iouThreshold`, at most `maxDetections`.
+ */
+export function decodeSsdDetections(
+  boxesOutput: ArrayBuffer,
+  scoresOutput: ArrayBuffer,
+  entry: SsdDetectorManifestEntry,
+): Detection[] {
+  const anchors = cachedAnchors(entry.anchors);
+  const count = anchors.length;
+  const labels = entry.labels.length;
+  const deltas = readScores(boxesOutput, entry.outputType, entry.outputQuantization);
+  const scores = readScores(scoresOutput, entry.outputType, entry.outputQuantization);
+  if (deltas.length !== count * 4) {
+    throw new Error(`Box output has ${deltas.length} values; expected ${count * 4}.`);
+  }
+  if (scores.length !== count * labels) {
+    throw new Error(`Score output has ${scores.length} values; expected ${count * labels}.`);
+  }
+  const { width: inW, height: inH } = tensorSpecFromManifest(entry);
+  const [wx, wy, ww, wh] = entry.boxCoder.weights;
+  const xformClip = entry.boxCoder.bboxXformClip;
+  const bg = entry.backgroundIndex;
+  const row = new Float32Array(labels);
+  const clampTo = (v: number, max: number) => (v < 0 ? 0 : v > max ? max : v);
+
+  const candidates: Detection[] = [];
+  for (let j = 0; j < count; j++) {
+    for (let c = 0; c < labels; c++) row[c] = scores[j * labels + c];
+    const probs = entry.scores === 'logits' ? softmax(row) : row;
+    let best = -1;
+    for (let c = 0; c < labels; c++) {
+      if (c !== bg && (best < 0 || probs[c] > probs[best])) best = c;
+    }
+    const score = probs[best];
+    if (!(score >= entry.confidenceThreshold)) continue;
+
+    const a = anchors[j];
+    const o = j * 4;
+    const cx = a.cx + (deltas[o] / wx) * a.w;
+    const cy = a.cy + (deltas[o + 1] / wy) * a.h;
+    const w = a.w * Math.exp(Math.min(deltas[o + 2] / ww, xformClip));
+    const h = a.h * Math.exp(Math.min(deltas[o + 3] / wh, xformClip));
+    const x1 = clampTo((cx - w / 2) * inW, inW);
+    const y1 = clampTo((cy - h / 2) * inH, inH);
+    const x2 = clampTo((cx + w / 2) * inW, inW);
+    const y2 = clampTo((cy + h / 2) * inH, inH);
+    if (!(x2 > x1 && y2 > y1)) continue;
+    candidates.push({ label: entry.labels[best], labelIndex: best, score, x1, y1, x2, y2 });
   }
   return nonMaxSuppression(candidates, entry.iouThreshold, entry.maxDetections);
 }

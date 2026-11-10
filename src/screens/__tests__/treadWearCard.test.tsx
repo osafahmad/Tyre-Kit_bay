@@ -46,57 +46,53 @@ describe('treadWearCardContent', () => {
     );
   });
 
-  test('below 0.60: warning badge with title, cause and advice', () => {
-    expect(treadWearCardContent(done([finding('Feather Edge', 0.45)], 'detected'))).toEqual({
+  test('below 0.60: warning badge with the title; no cause or advice until the owner supplies it', () => {
+    expect(treadWearCardContent(done([finding('feathering', 0.45)], 'detected'))).toEqual({
       tone: 'warning',
       badge: 'Wear pattern found',
-      title: 'Feathered Wear',
-      lines: ['Likely cause: Toe alignment fault', 'Advice: Perform wheel alignment'],
+      title: 'Feathering',
+      lines: [],
       alsoSeen: [],
     });
   });
 
   test('0.60 and above: critical badge with urgent maintenance advice', () => {
-    expect(treadWearCardContent(done([finding('Center Wear', 0.6)], 'critical'))).toEqual({
+    expect(treadWearCardContent(done([finding('center_wear', 0.6)], 'critical'))).toEqual({
       tone: 'critical',
       badge: 'Maintenance needed',
-      title: 'Center Tread Wear',
-      lines: ['Likely cause: Over-inflation', 'Get this checked as soon as possible: adjust tyre pressure.'],
+      title: 'Center Wear',
+      lines: ['Get this checked as soon as possible.'],
       alsoSeen: [],
     });
   });
 
-  test('unmapped class: clean title only, no made-up cause or advice', () => {
-    expect(treadWearCardContent(done([finding('River_Channel Erosion Wear', 0.4)], 'detected'))).toEqual(
-      expect.objectContaining({ title: 'River Channel Erosion Wear', lines: [] }),
+  test('class names become clean titles, with no made-up cause or advice', () => {
+    expect(treadWearCardContent(done([finding('cracking_dry_rot', 0.4)], 'critical'))).toEqual(
+      expect.objectContaining({ title: 'Cracking Dry Rot', lines: ['Get this checked as soon as possible.'] }),
     );
-    expect(treadWearCardContent(done([finding('Wavy Wear', 0.7)], 'critical')).lines).toEqual([
-      'Get this checked as soon as possible.',
-    ]);
   });
 
   test('other findings are listed once each, without repeating the main title', () => {
     const c = treadWearCardContent(
       done(
         [
-          finding('Shoulder Wear Left', 0.5),
-          finding('Shoulder Wear Right', 0.4),
-          finding('Spotty Wear', 0.35),
-          finding('Rip Depression and Punch Wear', 0.3),
+          finding('shoulder_wear', 0.5),
+          finding('flat_spot', 0.4),
+          finding('camber_wear', 0.36),
         ],
         'detected',
       ),
     );
     expect(c.title).toBe('Shoulder Wear');
-    expect(c.alsoSeen).toEqual(['Patchy Spot Wear']);
+    expect(c.alsoSeen).toEqual(['Flat Spot', 'Camber Wear']);
   });
 });
 
 test('TreadWearCard announces the finished check', async () => {
   const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
-  await render(<TreadWearCard state={done([finding('Center Wear', 0.8)], 'critical')} />);
+  await render(<TreadWearCard state={done([finding('center_wear', 0.8)], 'critical')} />);
   expect(screen.getByText('Maintenance needed')).toBeTruthy();
-  expect(announce).toHaveBeenCalledWith('Tread wear check: Maintenance needed: Center Tread Wear');
+  expect(announce).toHaveBeenCalledWith('Tread wear check: Maintenance needed: Center Wear');
   announce.mockRestore();
 });
 
@@ -156,7 +152,7 @@ describe('Tyre result screen', () => {
     await act(async () => {
       finish({
         status: 'done',
-        frames: [{ frame: 'frames/t1.jpg', detections: [{ label: 'Center Wear', confidence: 0.72, bbox: [0, 0, 0.5, 0.5], frameRect: null }] }],
+        frames: [{ frame: 'frames/t1.jpg', detections: [{ label: 'center_wear', confidence: 0.72, bbox: [0, 0, 0.5, 0.5], frameRect: null }] }],
         framesFailed: 0,
         delegate: 'cpu',
         modelVersion: 'tread-test-1',
@@ -165,9 +161,9 @@ describe('Tyre result screen', () => {
 
     expect(screen.getByText('Maintenance needed')).toBeTruthy();
     // Card title and the Wear pattern row now say the same thing.
-    expect(screen.getAllByText('Center Tread Wear')).toHaveLength(2);
-    expect(screen.getByLabelText('Wear pattern: Center Tread Wear')).toBeTruthy();
-    expect(screen.getByText('Likely cause: Over-inflation')).toBeTruthy();
+    expect(screen.getAllByText('Center Wear')).toHaveLength(2);
+    expect(screen.getByLabelText('Wear pattern: Center Wear')).toBeTruthy();
+    expect(screen.queryByText(/Likely cause/)).toBeNull();
     // Status and sidewall rows unchanged.
     expect(screen.getByText('Good')).toBeTruthy();
     for (const v of ['215/65 R15', 'Bridgestone', 'Ecopia EP150', '4B7K 2JX 2623']) {
@@ -176,9 +172,25 @@ describe('Tyre result screen', () => {
     const saved = useInspectionStore.getState().inspections[0].tyres[0].result!;
     expect(saved).toEqual({
       ...result,
-      wearPattern: 'Center Tread Wear',
-      treadWear: expect.objectContaining({ severity: 'critical', label: 'Center Wear', confidence: 0.72 }),
+      wearPattern: 'Center Wear',
+      treadWear: expect.objectContaining({ severity: 'critical', label: 'center_wear', confidence: 0.72 }),
     });
+  });
+
+  test('a sidewall bulge at 0.50 or more raises the shown status to Replace now, with its text label', async () => {
+    mockScan.mockResolvedValue({
+      status: 'done',
+      frames: [{ frame: 'frames/t1.jpg', detections: [{ label: 'sidewall_bulge', confidence: 0.6, bbox: [0, 0, 0.5, 0.5], frameRect: null }] }],
+      framesFailed: 0,
+      delegate: 'cpu',
+      modelVersion: 'tread-test-1',
+    });
+    await show(seed());
+    await act(async () => {});
+    expect(screen.queryByText('Good')).toBeNull();
+    expect(screen.getByText('Replace now')).toBeTruthy();
+    expect(screen.getAllByText('Sidewall Bulge').length).toBeGreaterThan(0);
+    expect(useInspectionStore.getState().inspections[0].tyres[0].result!.status).toBe('replace_now');
   });
 
   test('model missing shows "Not checked", not a normal result', async () => {

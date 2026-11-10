@@ -1,14 +1,9 @@
 import { absoluteFramePath } from '../../features/capture/frameFiles';
 import { defaultModelLoaderDeps, loadModel, type ModelLoaderDeps } from '../inference/modelLoader';
 import { localFramePath, type PipelineDeps } from '../inference/pipeline';
-import {
-  detectionToFrameRect,
-  imageFileToModelInput,
-  tensorSpecFromManifest,
-  type ImageDecoder,
-} from '../inference/tensorUtils';
+import { imageFileToModelInput, tensorSpecFromManifest, type ImageDecoder } from '../inference/tensorUtils';
 import type { LoadedModel, ModelDelegate, PixelRect } from '../inference/types';
-import { modelManifest, type ModelManifest, type YoloDetectorManifestEntry } from '../manifest';
+import { modelManifest, type ModelManifest, type SsdDetectorManifestEntry } from '../manifest';
 import { parseTreadWearOutput, type TreadWearDetection } from '../utils/treadWearPostProcess';
 import { treadLog } from './treadDebug';
 
@@ -17,7 +12,7 @@ import { treadLog } from './treadDebug';
 // directly; they go through `useTyreInspection`.
 
 export type TreadWearFrameDetection = TreadWearDetection & {
-  /** The box in the saved frame's pixels (letterbox undone), or null if it was all padding. */
+  /** The box in the saved frame's pixels (the input is a plain stretch of the whole frame). */
   frameRect: PixelRect | null;
 };
 
@@ -45,7 +40,7 @@ export type TreadWearScanOutcome =
 
 export type TreadWearDetectorDeps = {
   /** The model, or null if it isn't in the build or won't open. */
-  loadModel(): Promise<LoadedModel<YoloDetectorManifestEntry> | null>;
+  loadModel(): Promise<LoadedModel<SsdDetectorManifestEntry> | null>;
   pipeline: PipelineDeps;
 };
 
@@ -53,17 +48,24 @@ export interface TreadWearScanner {
   scan(frames: string[], isCancelled?: () => boolean): Promise<TreadWearScanOutcome>;
 }
 
+/** 0–1 box of a stretched input → saved-frame pixels; null if it has no area. */
+function frameRectOf(bbox: TreadWearDetection['bbox'], frameWidth: number, frameHeight: number): PixelRect | null {
+  const [x, y, w, h] = bbox;
+  const rect = { x: x * frameWidth, y: y * frameHeight, width: w * frameWidth, height: h * frameHeight };
+  return rect.width > 0 && rect.height > 0 ? rect : null;
+}
+
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** `demo://` frames come from the development capture simulation: there's no image to read. */
 const isRealFrame = (f: string) => !f.startsWith('demo://');
 
 export class TreadWearDetector implements TreadWearScanner {
-  private model: Promise<LoadedModel<YoloDetectorManifestEntry> | null> | null = null;
+  private model: Promise<LoadedModel<SsdDetectorManifestEntry> | null> | null = null;
 
   constructor(private readonly deps: TreadWearDetectorDeps) {}
 
   /** Loads the model once. A failed load is retried on the next call. */
-  async load(): Promise<LoadedModel<YoloDetectorManifestEntry> | null> {
+  async load(): Promise<LoadedModel<SsdDetectorManifestEntry> | null> {
     this.model ??= this.deps.loadModel().catch(e => {
       treadLog('model load threw', { error: errorText(e) });
       return null;
@@ -76,35 +78,23 @@ export class TreadWearDetector implements TreadWearScanner {
 
   /** One saved frame → wear detections. Throws if the frame can't be read or the model fails. */
   async detectFrame(
-    loaded: LoadedModel<YoloDetectorManifestEntry>,
+    loaded: LoadedModel<SsdDetectorManifestEntry>,
     frame: string,
   ): Promise<TreadWearFrameResult> {
     const spec = tensorSpecFromManifest(loaded.entry);
-    // Resize, letterbox (grey 114), RGB / 255, planar NCHW float32; every image is disposed.
+    // Stretch to 320 × 320, RGB / 255, NHWC float32 (from the manifest); every image is disposed.
     const input = await imageFileToModelInput(
       localFramePath(frame, this.deps.pipeline),
       spec,
       this.deps.pipeline.decoder,
     );
-    const [output] = await loaded.model.run([input.tensor]);
-    if (!output) throw new Error('The tread wear model returned nothing.');
-    const lb = input.letterbox;
-    const detections = parseTreadWearOutput(output, loaded.entry).map(d => ({
+    // Outputs come back in the model's order: raw_boxes, then raw_scores (checked at load).
+    const [boxes, scores] = await loaded.model.run([input.tensor]);
+    if (!boxes || !scores) throw new Error('The tread wear model returned too few outputs.');
+    const { width: fw, height: fh } = input.source;
+    const detections = parseTreadWearOutput(boxes, scores, loaded.entry).map(d => ({
       ...d,
-      frameRect: lb
-        ? detectionToFrameRect(
-            {
-              label: d.label,
-              labelIndex: -1,
-              score: d.confidence,
-              x1: d.bbox[0] * spec.width,
-              y1: d.bbox[1] * spec.height,
-              x2: (d.bbox[0] + d.bbox[2]) * spec.width,
-              y2: (d.bbox[1] + d.bbox[3]) * spec.height,
-            },
-            lb,
-          )
-        : null,
+      frameRect: frameRectOf(d.bbox, fw, fh),
     }));
     return { frame, detections };
   }

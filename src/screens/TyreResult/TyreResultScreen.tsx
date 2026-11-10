@@ -39,7 +39,7 @@ export function TyreResultScreen({ navigation, route }: Props) {
   const currentId = useInspectionStore(s => s.currentId);
   const resetTyre = useInspectionStore(s => s.resetTyre);
   // Tread wear runs on this tyre's saved tread frames when the result opens.
-  // Shown in its own card; it never changes the status or the rows below.
+  // Shown in its own card. A damage class can raise the status (saved to the store, so the header updates).
   const { treadWear } = useTyreInspection(tyreId, { autoScan: true });
   const tyre = inspection?.tyres.find(t => t.id === tyreId);
   const result = tyre?.result;

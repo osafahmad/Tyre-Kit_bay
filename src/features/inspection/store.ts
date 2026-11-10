@@ -92,8 +92,8 @@ type Actions = {
    */
   setAnalyzerVersion(inspectionId: string, analyzerVersion: string): void;
   /**
-   * Saves a tread wear check into the tyre's result (wear fields only, never
-   * the status). Ignored if the tyre has no result, or its tread frames are no
+   * Saves a tread wear check into the tyre's result: the wear fields, and the
+   * status raised to the check's `minimumStatus` if it's worse. Ignored if the tyre has no result, or its tread frames are no
    * longer the ones that were checked (e.g. it was scanned again meanwhile).
    */
   setTreadWear(tyreId: string, record: TreadWearRecord, checkedFrames: string[]): void;

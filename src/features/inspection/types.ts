@@ -21,14 +21,21 @@ export type TyreFlowState =
 /**
  * - `none`: the wear model ran and found no wear pattern.
  * - `detected`: a wear pattern below the critical confidence.
- * - `critical`: a wear pattern at or above the critical confidence.
- * An indicator only, separate from TyreStatus.
+ * - `critical`: a wear pattern at or above the critical confidence, or a
+ *   damage class that raised the status.
+ * Severity itself never changes TyreStatus; `TreadWearRecord.minimumStatus` does.
  */
 export type TreadWearSeverity = 'none' | 'detected' | 'critical';
 
 /** The tread wear check as saved with a tyre result, and as shown in the app and report. */
 export type TreadWearRecord = {
   severity: TreadWearSeverity;
+  /**
+   * Lowest status this check forces (owner decision 2026-11-10): exposed
+   * cords or a bulge → Replace now, cracking or a puncture → Replace soon.
+   * Null when nothing raises it. Absent on records saved before 2026-11-10.
+   */
+  minimumStatus?: TyreStatus | null;
   /** Strongest raw model class, or null when none was found. */
   label: string | null;
   /** User-facing title, e.g. `Center Tread Wear` or `Normal Wear Distribution`. */
@@ -55,7 +62,7 @@ export type TyreResult = {
   /**
    * Not in the spec's model (owner decision 2026-11-06): what the tread wear
    * model found. Absent on results saved before it existed, null until it runs.
-   * Never changes `status`.
+   * Can only raise `status`, through `minimumStatus` (owner decision 2026-11-10).
    */
   treadWear?: TreadWearRecord | null;
   damageFound: boolean | null;

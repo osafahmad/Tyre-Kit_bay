@@ -11,7 +11,7 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] Minimum supported devices decided from real testing.
 - [ ] Final logo, app icon and splash screen provided and in place.
 - [ ] Privacy policy and store data disclosures completed.
-- [ ] All dependency and model licences checked.
+- [ ] All dependency and model licences checked. `tyre_detector.tflite` (sidewall text detector) is AGPL-3.0: replace or license it. Tread wear dataset (CC BY 4.0): attribution shown in the app and/or store listing.
 - [ ] Android release build and iOS archive succeed.
 
 ## Diagnostics

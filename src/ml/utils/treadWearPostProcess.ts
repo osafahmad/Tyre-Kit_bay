@@ -1,14 +1,18 @@
-import { isTreadWearClass, TREAD_WEAR_CLASSES, type TreadWearClass } from '../config/treadWearConfig';
-import { decodeYoloDetections } from '../inference/tensorUtils';
+import {
+  isTreadWearClass,
+  TREAD_WEAR_BACKGROUND,
+  TREAD_WEAR_CLASSES,
+  type TreadWearClass,
+} from '../config/treadWearConfig';
+import { decodeSsdDetections, tensorSpecFromManifest } from '../inference/tensorUtils';
 import type { Detection } from '../inference/types';
-import type { YoloDetectorManifestEntry } from '../manifest';
+import type { SsdDetectorManifestEntry } from '../manifest';
 
-// Tread wear model output → wear detections. Decoding and greedy per-class
-// NMS are the shared YOLOv8 implementation (`decodeYoloDetections`), so the
-// sidewall and tread detectors can't drift apart. This file adds the tread
-// specifics: typed labels and 0–1 boxes clamped to the model input.
+// Tread wear model outputs → wear detections. Anchor decoding and greedy
+// per-class NMS are the shared SSD implementation (`decodeSsdDetections`).
+// This file adds the tread specifics: typed labels and 0–1 boxes.
 
-/** Box as [x, y, width, height], 0–1 of the (letterboxed) model input. */
+/** Box as [x, y, width, height], 0–1 of the model input (= of the frame: the input is a plain stretch). */
 export type NormalisedBox = [x: number, y: number, width: number, height: number];
 
 export type TreadWearDetection = {
@@ -17,13 +21,13 @@ export type TreadWearDetection = {
   confidence: number;
 };
 
-/** The model's `[1, 18, 1029]` output: raw bytes, a flat array, or nested arrays. */
-export type TreadWearOutput = ArrayBuffer | Float32Array | ArrayLike<ArrayLike<ArrayLike<number>>>;
+/** One output tensor (`raw_boxes` `[1, 3234, 4]` or `raw_scores` `[1, 3234, 16]`): raw bytes, a flat array, or nested arrays. */
+export type SsdOutputTensor = ArrayBuffer | Float32Array | ArrayLike<ArrayLike<ArrayLike<number>>>;
 
 export type TreadWearThresholds = { confidenceThreshold?: number; iouThreshold?: number };
 
 /** Output in any accepted form → float32 bytes, checked against the manifest shape. */
-function toBuffer(output: TreadWearOutput, shape: number[]): ArrayBuffer {
+function toBuffer(output: SsdOutputTensor, shape: number[], name: string): ArrayBuffer {
   // Tag checks, not `instanceof`: buffers from native (JSI) or another realm fail `instanceof`.
   const tag = Object.prototype.toString.call(output);
   if (tag === '[object ArrayBuffer]') return output as ArrayBuffer;
@@ -31,20 +35,20 @@ function toBuffer(output: TreadWearOutput, shape: number[]): ArrayBuffer {
     // Copy: the array may be a view into a larger buffer.
     return (output as Float32Array).slice().buffer as ArrayBuffer;
   }
-  output = output as ArrayLike<ArrayLike<ArrayLike<number>>>;
-  const [batch, rows, anchors] = shape;
-  if (output.length !== batch) throw new Error(`Output batch is ${output.length}, expected ${batch}.`);
-  const flat = new Float32Array(batch * rows * anchors);
+  const nested = output as ArrayLike<ArrayLike<ArrayLike<number>>>;
+  const [batch, anchors, values] = shape;
+  if (nested.length !== batch) throw new Error(`${name} batch is ${nested.length}, expected ${batch}.`);
+  const flat = new Float32Array(batch * anchors * values);
   let i = 0;
   for (let n = 0; n < batch; n++) {
-    const sample = output[n];
-    if (sample.length !== rows) throw new Error(`Output has ${sample.length} rows, expected ${rows}.`);
-    for (let r = 0; r < rows; r++) {
-      const row = sample[r];
-      if (row.length !== anchors) {
-        throw new Error(`Output row ${r} has ${row.length} anchors, expected ${anchors}.`);
+    const sample = nested[n];
+    if (sample.length !== anchors) throw new Error(`${name} has ${sample.length} anchors, expected ${anchors}.`);
+    for (let a = 0; a < anchors; a++) {
+      const row = sample[a];
+      if (row.length !== values) {
+        throw new Error(`${name} anchor ${a} has ${row.length} values, expected ${values}.`);
       }
-      for (let a = 0; a < anchors; a++) flat[i++] = row[a];
+      for (let v = 0; v < values; v++) flat[i++] = row[v];
     }
   }
   return flat.buffer;
@@ -65,39 +69,45 @@ export function normaliseBox(d: Detection, inputWidth: number, inputHeight: numb
   return [x1, y1, x2 - x1, y2 - y1];
 }
 
-/** Model input width and height from the manifest entry. */
-export function inputSize(entry: YoloDetectorManifestEntry): { width: number; height: number } {
-  const [, a, b, c] = entry.inputShape;
-  return entry.inputLayout === 'NCHW' ? { width: c, height: b } : { width: b, height: a };
+/** True when the manifest labels are the background followed by the tread wear classes, in order. */
+export function hasTreadWearLabels(entry: SsdDetectorManifestEntry): boolean {
+  const expected = [TREAD_WEAR_BACKGROUND, ...TREAD_WEAR_CLASSES];
+  return (
+    entry.backgroundIndex === 0 &&
+    entry.labels.length === expected.length &&
+    entry.labels.every((l, i) => l === expected[i])
+  );
 }
 
 /**
- * Decodes one tread wear output: for each of the 1029 anchors, the best of the
- * 14 class scores; anchors below the confidence threshold are dropped, then
- * greedy NMS per class at the IoU threshold. Boxes are clamped after NMS, as
- * Ultralytics does. Sorted by confidence, highest first.
+ * Decodes one tread wear run: for each of the 3234 anchors, the best of the
+ * 15 non-background classes (scores are already softmax probabilities);
+ * anchors below the confidence threshold are dropped, boxes are decoded
+ * against the torchvision anchors, then greedy NMS per class at the IoU
+ * threshold. Sorted by confidence, highest first. `normal_even_wear` is
+ * returned like any class; the feature layer decides it isn't a defect.
  *
  * `thresholds` overrides the manifest values (e.g. for calibration).
- * Throws if the output doesn't match the manifest shape, or the manifest
+ * Throws if an output doesn't match the manifest shape, or the manifest
  * labels aren't the tread wear classes.
  */
 export function parseTreadWearOutput(
-  output: TreadWearOutput,
-  entry: YoloDetectorManifestEntry,
+  boxes: SsdOutputTensor,
+  scores: SsdOutputTensor,
+  entry: SsdDetectorManifestEntry,
   thresholds: TreadWearThresholds = {},
 ): TreadWearDetection[] {
-  if (
-    entry.labels.length !== TREAD_WEAR_CLASSES.length ||
-    entry.labels.some((l, i) => l !== TREAD_WEAR_CLASSES[i])
-  ) {
-    throw new Error('Manifest labels are not the tread wear classes.');
-  }
-  const decoded = decodeYoloDetections(toBuffer(output, entry.outputShape), {
-    ...entry,
-    confidenceThreshold: thresholds.confidenceThreshold ?? entry.confidenceThreshold,
-    iouThreshold: thresholds.iouThreshold ?? entry.iouThreshold,
-  });
-  const { width, height } = inputSize(entry);
+  if (!hasTreadWearLabels(entry)) throw new Error('Manifest labels are not the tread wear classes.');
+  const decoded = decodeSsdDetections(
+    toBuffer(boxes, entry.outputs.boxes.shape, entry.outputs.boxes.name),
+    toBuffer(scores, entry.outputs.scores.shape, entry.outputs.scores.name),
+    {
+      ...entry,
+      confidenceThreshold: thresholds.confidenceThreshold ?? entry.confidenceThreshold,
+      iouThreshold: thresholds.iouThreshold ?? entry.iouThreshold,
+    },
+  );
+  const { width, height } = tensorSpecFromManifest(entry);
   const out: TreadWearDetection[] = [];
   for (const d of decoded) {
     const bbox = normaliseBox(d, width, height);

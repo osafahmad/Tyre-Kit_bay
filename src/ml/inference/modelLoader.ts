@@ -8,14 +8,17 @@ import {
 } from '@dr.pogodin/react-native-fs';
 import type { TyreStatus } from '../../features/inspection/types';
 import {
+  isSsdModel,
   isYoloModel,
   type ClassifierManifestEntry,
   type DamageManifestEntry,
   type ModelKey,
   type ModelManifest,
+  type SsdDetectorManifestEntry,
   type TreadManifestEntry,
   type YoloDetectorManifestEntry,
 } from '../manifest';
+import { ssdAnchorCount } from './tensorUtils';
 import type {
   InferenceModel,
   LoadedModel,
@@ -174,6 +177,7 @@ export function validateManifestEntry(
       p.push('maxDetections must be a positive integer');
     }
   }
+  if (isSsdModel(key)) p.push(...validateSsdEntry(entry as SsdDetectorManifestEntry));
   if (key === 'tread') {
     const t = entry as TreadManifestEntry;
     for (const label of t.labels) {
@@ -188,6 +192,72 @@ export function validateManifestEntry(
       if (!d.labels.includes(label)) p.push(`damage label "${label}" is not in labels`);
     }
     if (d.damageLabels?.length === d.labels.length) p.push('at least one label must mean no damage');
+  }
+  return p;
+}
+
+const isShape = (s: unknown): s is number[] =>
+  Array.isArray(s) && s.length === 3 && s.every(n => Number.isInteger(n) && n > 0);
+
+function validateSsdEntry(d: SsdDetectorManifestEntry): string[] {
+  const p: string[] = [];
+  if (d.outputFormat !== 'ssd_raw') p.push(`outputFormat ${String(d.outputFormat)} is not supported`);
+  if (d.outputType !== 'float32') {
+    const q = d.outputQuantization;
+    if (!q || !isNum(q.scale) || q.scale <= 0 || !isNum(q.zeroPoint)) {
+      p.push(`outputQuantization is required for ${d.outputType} output`);
+    }
+  }
+  if (d.scores !== 'probabilities' && d.scores !== 'logits') p.push(`scores ${String(d.scores)} is not supported`);
+  if (!Number.isInteger(d.backgroundIndex) || d.backgroundIndex < 0 || d.backgroundIndex >= d.labels.length) {
+    p.push('backgroundIndex must point at a label');
+  } else if (d.labels.length < 2) {
+    p.push('labels need at least one class besides background');
+  }
+
+  const a = d.anchors;
+  const anchorsValid =
+    a?.generator === 'torchvision_default_boxes' &&
+    Array.isArray(a.featureMapSizes) &&
+    a.featureMapSizes.length > 0 &&
+    a.featureMapSizes.every(f => Number.isInteger(f) && f > 0) &&
+    Array.isArray(a.aspectRatios) &&
+    a.aspectRatios.length === a.featureMapSizes.length &&
+    a.aspectRatios.every(r => Array.isArray(r) && r.every(v => isNum(v) && v > 0)) &&
+    isNum(a.minRatio) &&
+    isNum(a.maxRatio) &&
+    a.minRatio > 0 &&
+    a.maxRatio >= a.minRatio;
+  if (!anchorsValid) p.push('anchors must be a valid torchvision_default_boxes config');
+
+  const w = d.boxCoder?.weights;
+  if (!Array.isArray(w) || w.length !== 4 || !w.every(v => isNum(v) && v > 0)) {
+    p.push('boxCoder.weights needs 4 positive values');
+  }
+  if (!isNum(d.boxCoder?.bboxXformClip) || d.boxCoder.bboxXformClip <= 0) {
+    p.push('boxCoder.bboxXformClip must be positive');
+  }
+
+  const boxes = d.outputs?.boxes;
+  const scores = d.outputs?.scores;
+  if (!boxes?.name || !isShape(boxes.shape)) p.push('outputs.boxes needs a name and 3 positive integers');
+  if (!scores?.name || !isShape(scores.shape)) p.push('outputs.scores needs a name and 3 positive integers');
+  if (boxes && scores && isShape(boxes.shape) && isShape(scores.shape)) {
+    if (boxes.shape[0] !== 1 || scores.shape[0] !== 1) p.push('output batch must be 1');
+    if (boxes.shape[2] !== 4) p.push(`outputs.boxes needs 4 values per anchor, has ${boxes.shape[2]}`);
+    if (scores.shape[2] !== d.labels.length) {
+      p.push(`outputs.scores needs ${d.labels.length} label scores, has ${scores.shape[2]}`);
+    }
+    if (boxes.shape[1] !== scores.shape[1]) p.push('outputs.boxes and outputs.scores differ in anchor count');
+    if (anchorsValid && ssdAnchorCount(a) !== boxes.shape[1]) {
+      p.push(`anchors config makes ${ssdAnchorCount(a)} anchors, outputs have ${boxes.shape[1]}`);
+    }
+  }
+  if (!isNum(d.iouThreshold) || d.iouThreshold <= 0 || d.iouThreshold > 1) {
+    p.push('iouThreshold must be above 0 and at most 1');
+  }
+  if (!Number.isInteger(d.maxDetections) || d.maxDetections <= 0) {
+    p.push('maxDetections must be a positive integer');
   }
   return p;
 }
@@ -221,6 +291,20 @@ export function checkModelMatchesManifest(
     if (out.shape.join(',') !== d.outputShape.join(',')) {
       p.push(`output shape is [${out.shape}], manifest says [${d.outputShape}]`);
     }
+  }
+  if (isSsdModel(key) && model.outputs.length > 0) {
+    const d = entry as SsdDetectorManifestEntry;
+    const expected = [d.outputs.boxes, d.outputs.scores];
+    if (model.outputs.length !== 2) p.push(`expected 2 output tensors, model has ${model.outputs.length}`);
+    model.outputs.slice(0, 2).forEach((out, i) => {
+      const want = expected[i];
+      // Outputs are read by position, so the names guard against swapped boxes and scores.
+      if (out.name && out.name !== want.name) p.push(`output ${i} is ${out.name}, manifest says ${want.name}`);
+      if (out.dataType !== d.outputType) p.push(`output ${i} type is ${out.dataType}, manifest says ${d.outputType}`);
+      if (out.shape.join(',') !== want.shape.join(',')) {
+        p.push(`output ${i} shape is [${out.shape}], manifest says [${want.shape}]`);
+      }
+    });
   }
   if ((key === 'tread' || key === 'damage') && model.outputs.length > 0) {
     const c = entry as ClassifierManifestEntry;
