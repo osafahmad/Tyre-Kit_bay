@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScanLine } from 'lucide-react-native';
@@ -9,7 +9,7 @@ import {
 } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { AppText, Button, InspectionRow, LogoMark } from '../../components';
+import { AppText, Button, InspectionRow, LicensesModal, LICENSES_TITLE, LogoMark } from '../../components';
 import type { RootStackParamList, TabParamList } from '../../app/routes';
 import {
   scannedTyres,
@@ -38,6 +38,7 @@ export function HomeScreen() {
   const startInspection = useInspectionStore(s => s.startInspection);
   const discard = useInspectionStore(s => s.discardInspection);
   const recent = saved.slice(0, 3);
+  const [licensesOpen, setLicensesOpen] = useState(false);
 
   const startNew = () => {
     startInspection(getAnalyzer().version);
@@ -147,6 +148,20 @@ export function HomeScreen() {
           ))
         )}
       </View>
+
+      {/* Not in 06-home.png: licence notices (owner decision 2026-11-10), an overlay, not a route. */}
+      <Pressable
+        onPress={() => setLicensesOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel={LICENSES_TITLE}
+        style={styles.legal}
+        testID="open-licenses"
+      >
+        <AppText variant="caption" color="textSecondary">
+          {LICENSES_TITLE}
+        </AppText>
+      </Pressable>
+      <LicensesModal visible={licensesOpen} onClose={() => setLicensesOpen(false)} />
     </ScrollView>
   );
 }
@@ -179,4 +194,5 @@ const styles = StyleSheet.create({
   },
   viewAll: { minHeight: sizes.touchTarget, justifyContent: 'center' },
   empty: { paddingVertical: 16 },
+  legal: { minHeight: sizes.touchTarget, justifyContent: 'center', alignSelf: 'center', marginTop: 16 },
 });

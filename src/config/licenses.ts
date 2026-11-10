@@ -1,6 +1,6 @@
 // Third-party notices shown in the app (docs/LICENSES.md has the same list).
-// One source of truth for a future Legal & Licenses screen; no screen reads
-// it yet (not one of the spec's 21 screens, owner to approve).
+// Shown by `LicensesModal`, an overlay opened from Home's "Third-Party
+// Licenses" link (not a route: the app keeps the spec's 21 screens).
 
 export type LicenseNotice = {
   id: string;
@@ -18,16 +18,15 @@ export type LicenseNotice = {
 
 export const LICENSE_NOTICES: readonly LicenseNotice[] = [
   {
-    // Owner-supplied wording, 2026-11-10. CC BY 4.0 §3(a) also asks for the
-    // creator's name and a link to the dataset: still needed from the owner.
+    // Owner-supplied creator, URL and notice, 2026-11-10.
     id: 'tread-wear-dataset',
-    title: 'Tire Tread Wear Detection Dataset',
-    creator: null,
-    sourceUrl: null,
+    title: 'Tire Tread Wear Computer Vision Project',
+    creator: 'smart-inspection (Roboflow Community Contributor)',
+    sourceUrl: 'https://universe.roboflow.com/smart-inspection/tire-tread-wear',
     license: 'Creative Commons Attribution 4.0 International (CC BY 4.0)',
     licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
     notice:
-      'Tyre tread wear computer vision models were trained using dataset annotations provided under the Creative Commons Attribution 4.0 International (CC BY 4.0) license via Roboflow Universe.',
+      'Tire Tread Wear Computer Vision Project by smart-inspection, available at https://universe.roboflow.com/smart-inspection/tire-tread-wear, used under CC BY 4.0. Model adaptations and exports were produced for mobile on-device tread wear classification.',
   },
   {
     id: 'torchvision',

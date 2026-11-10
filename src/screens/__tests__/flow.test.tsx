@@ -47,6 +47,19 @@ test('first launch: Welcome, walkthrough Skip saves the flag, then Home', async 
   expect(await screen.findByText('Ready to inspect')).toBeTruthy();
 });
 
+test('Home: Third-Party Licenses opens an overlay with the dataset attribution, no new route', async () => {
+  await render(<App repository={repo} />);
+  await goHomeFromWelcome();
+  const routeBefore = navigationRef.getCurrentRoute()?.name;
+  await press('Third-Party Licenses');
+  expect(await screen.findByText('Tire Tread Wear Computer Vision Project')).toBeTruthy();
+  expect(screen.getByText(/by smart-inspection, available at https:\/\/universe\.roboflow\.com\/smart-inspection\/tire-tread-wear, used under CC BY 4\.0/)).toBeTruthy();
+  expect(screen.getByText('BSD 3-Clause License')).toBeTruthy();
+  expect(navigationRef.getCurrentRoute()?.name).toBe(routeBefore);
+  await fireEvent.press(screen.getAllByRole('button', { name: 'Close Third-Party Licenses' })[0]);
+  expect(screen.queryByText('Tire Tread Wear Computer Vision Project')).toBeNull();
+});
+
 test('skip plate and chassis, then select tyres', async () => {
   await render(<App repository={repo} />);
   await goHomeFromWelcome();

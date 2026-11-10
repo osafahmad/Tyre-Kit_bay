@@ -579,7 +579,7 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 ### Why
 - The YOLOv8 `tread_wear.tflite` was Ultralytics AGPL-3.0 (release blocker, Phase 3). The owner replaced it with torchvision `ssdlite320_mobilenet_v3_large` trained on a tyre wear dataset.
 - **Licences (owner, 2026-11-10):** model code torchvision BSD-3-Clause; dataset from Roboflow under CC BY 4.0. **The AGPL blocker is cleared for the tread wear model only.** `tyre_detector.tflite` (sidewall text detector) is still Ultralytics YOLOv8 AGPL-3.0 and still blocks release (Phase 2a).
-- **CC BY 4.0 attribution (owner, 2026-11-10):** dataset title, provider and notice text recorded in `docs/LICENSES.md` and `src/config/licenses.ts` (`LICENSE_NOTICES`). **Still open:** the dataset's creator and URL (Roboflow Universe is the host, not the creator), and a Legal & Licenses screen to show the notices. That screen isn't one of the spec's 21 and has no design or entry point yet, so it isn't built. The `tyre_detector.tflite` replacement is scheduled as its own milestone before App Store submission.
+- **CC BY 4.0 attribution (owner, 2026-11-10):** dataset title, provider and notice text recorded in `docs/LICENSES.md` and `src/config/licenses.ts` (`LICENSE_NOTICES`). Creator (`smart-inspection`) and URL (`https://universe.roboflow.com/smart-inspection/tire-tread-wear`) supplied by the owner 2026-11-10; the attribution is complete. The `tyre_detector.tflite` replacement is scheduled as its own milestone before App Store submission.
 
 ### What the file is (read from the file, 2026-11-10)
 - Converted with onnx2tf. Input `input` `[1, 320, 320, 3]` **NHWC** float32. The export notes said NCHW `[1, 3, 320, 320]`; onnx2tf changed the layout, and the manifest follows the file.
@@ -614,3 +614,11 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - **Normalisation and box decoding on real tread frames:** boxes should land on the worn or damaged areas. If every frame shows nothing, or only `background`/`normal_even_wear`, check the 0–1 input first (ImageNet mean/std may be needed).
 - The 0.35 / 0.45 / 0.50 values on real tyres, and false Replace-now rates for exposed cords and bulges (they now change the status).
 - Time, memory and heat for 10 frames at 320 × 320 on a low-end Android phone.
+
+## Third-Party Licenses overlay (owner decision 2026-11-10)
+- **No new screen.** The app keeps the spec's 21 screens. There's no Settings or About screen or modal to add to, so the notices open in a bottom-sheet `Modal` (`src/components/LicensesModal.tsx`), an overlay, not a navigation route.
+- **Entry point:** a small `Third-Party Licenses` text link (caption, secondary text, 48 pt touch target) at the bottom of Home, below Recent inspections. **This differs from `06-home.png`**, which has no such link.
+- **Content:** `LICENSE_NOTICES` (`src/config/licenses.ts`): the tread wear dataset (CC BY 4.0, creator, source URL, the owner's notice), torchvision (BSD-3) and Inter (OFL 1.1). Same list as `docs/LICENSES.md`.
+- **No network:** URLs are selectable text, not links. The app opens nothing and fetches nothing.
+- Theme tokens only. The backdrop is the black token at 50% alpha.
+- **Needs a real phone:** sheet height and scrolling with large text, VoiceOver focus staying inside the sheet, and swipe or back-gesture dismissal on Android.

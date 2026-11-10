@@ -1,16 +1,16 @@
 # Third-party licences
 
-The in-app copy is `src/config/licenses.ts` (`LICENSE_NOTICES`). Keep both lists the same.
+The in-app copy is `src/config/licenses.ts` (`LICENSE_NOTICES`), shown in the Third-Party Licenses sheet opened from Home. Keep both lists the same.
 
 ## Models and training data
 
-### Tire Tread Wear Detection Dataset — CC BY 4.0
+### Tire Tread Wear Computer Vision Project — CC BY 4.0
 - **Used for:** training `assets/models/tread_wear.tflite` (SSDLite tread wear detector).
-- **Provider:** Roboflow Universe (Tread & Defect Inspection Dataset).
+- **Creator:** smart-inspection (Roboflow Community Contributor).
+- **Source:** <https://universe.roboflow.com/smart-inspection/tire-tread-wear> (Roboflow Universe).
 - **Licence:** [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/).
 - **Notice shown in the app** (owner wording, 2026-11-10):
-  > Tyre tread wear computer vision models were trained using dataset annotations provided under the Creative Commons Attribution 4.0 International (CC BY 4.0) license via Roboflow Universe.
-- **Still needed (release blocker):** CC BY 4.0 §3(a) asks for the creator's name and, where practical, a link to the dataset. Roboflow Universe is the host, not the creator. Add the dataset author (the Roboflow workspace or project owner) and its Universe URL here and in `licenses.ts`.
+  > Tire Tread Wear Computer Vision Project by smart-inspection, available at https://universe.roboflow.com/smart-inspection/tire-tread-wear, used under CC BY 4.0. Model adaptations and exports were produced for mobile on-device tread wear classification.
 
 ### torchvision — BSD 3-Clause
 - **Used for:** the SSDLite MobileNetV3 architecture and training code behind `tread_wear.tflite`.
