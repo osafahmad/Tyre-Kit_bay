@@ -48,6 +48,20 @@ test('staging release builds get the demo analyzer, whose version marks results 
   await expect(analyzer.load()).resolves.toBeUndefined();
 });
 
+test('release builds never log sidewall OCR text', () => {
+  const release = inRelease(() => {
+    const { diagnosticsConfig } = require('../../../config/diagnostics');
+    const debug = require('../../../ml/ocr/sidewallDebug');
+    debug.setSidewallDebug(diagnosticsConfig.sidewallOcrLogs);
+    return { flag: diagnosticsConfig.sidewallOcrLogs, debug };
+  });
+  expect(release.flag).toBe(false);
+  const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+  release.debug.sidewallLog('ML Kit raw text', { lines: ['195/55 R15'] });
+  expect(log).not.toHaveBeenCalled();
+  log.mockRestore();
+});
+
 test('the staging flag never turns on capture simulation', () => {
   const sim = inRelease(() => require('../simulatedCapture'), true);
   expect(sim.canSimulateCapture).toBe(false);

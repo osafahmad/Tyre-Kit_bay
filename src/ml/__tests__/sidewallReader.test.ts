@@ -1,5 +1,7 @@
 import {
   applySuggestions,
+  bestSizeRead,
+  centreCropRect,
   createSidewallReader,
   type SidewallReadOutcome,
   type SidewallReaderDeps,
@@ -7,8 +9,9 @@ import {
 import { setSidewallDebug, SIDEWALL_LOG_TAG } from '../ocr/sidewallDebug';
 import type { OcrLineLike } from '../ocr/textCandidates';
 
-// The reader passes each whole saved frame to ML Kit and runs the
-// semantic/spatial filter on its lines. No TFLite model is involved.
+// The reader passes the centre of each saved frame (then, if that gave
+// nothing, the whole frame) to ML Kit and runs the semantic/spatial filter on
+// its lines. No TFLite model is involved.
 
 const line = (text: string, y = 0, height = 20, x = 0): OcrLineLike => ({
   text,
@@ -25,27 +28,40 @@ const SIDEWALL: OcrLineLike[] = [
   { text: '2319', frame: { x: 0, y: 210, width: 40, height: 14 } },
 ];
 
+type Part = 'centre' | 'whole';
+
 function setup(
   opts: {
     ocrAvailable?: boolean;
-    /** ML Kit lines for a whole frame, by local path. */
-    ocr?: (path: string) => OcrLineLike[] | Error;
+    /** ML Kit lines for one saved frame (`f1.jpg`…), centre crop or whole frame. */
+    ocr?: (frame: string, part: Part) => OcrLineLike[] | Error;
+    cropFails?: boolean;
     maxOcrRuns?: number;
   } = {},
 ) {
+  const calls: { frame: string; part: Part }[] = [];
   const deps: SidewallReaderDeps = {
     ocrAvailable: () => opts.ocrAvailable ?? true,
     resolveFramePath: p => `/docs/${p}`,
+    cropCentreToTempFile: jest.fn(async (path: string) => {
+      if (opts.cropFails) throw new Error('nitro');
+      return { path: `${path}#centre`, sourceWidth: 640, sourceHeight: 360 };
+    }),
+    deleteFile: jest.fn(async () => {}),
     recognizeLines: jest.fn(async (path: string) => {
-      const r = (opts.ocr ?? (() => SIDEWALL))(path);
+      const part: Part = path.endsWith('#centre') ? 'centre' : 'whole';
+      const frame = path.replace('/docs/', '').replace('#centre', '');
+      calls.push({ frame, part });
+      const r = (opts.ocr ?? ((_f, p) => (p === 'centre' ? SIDEWALL : [])))(frame, part);
       if (r instanceof Error) throw r;
       return r;
     }),
     now: () => new Date(Date.UTC(2026, 10, 6)),
+    centreCropRatio: 0.6,
     minAgreeingReads: 2,
     maxOcrRuns: opts.maxOcrRuns ?? 24,
   };
-  return { reader: createSidewallReader(deps), deps };
+  return { reader: createSidewallReader(deps), deps, calls };
 }
 
 const FRAMES = ['f1.jpg', 'f2.jpg', 'f3.jpg'];
@@ -56,13 +72,13 @@ function suggestionsOf(outcome: SidewallReadOutcome) {
   return outcome.suggestions;
 }
 
-/** A different OCR result per frame, by call order. */
-const perFrame = (...results: (OcrLineLike[] | Error)[]) => {
-  let n = 0;
-  return () => results[n++ % results.length];
-};
+/** Centre-crop OCR per frame, in frame order (`f1.jpg` → first); the whole frame reads nothing. */
+const perFrame =
+  (...results: (OcrLineLike[] | Error)[]) =>
+  (frame: string, part: Part) =>
+    part === 'centre' ? results[(Number(frame.match(/\d+/)![0]) - 1) % results.length] : [];
 
-describe('whole frame → ML Kit → filter → suggestions', () => {
+describe('centre crop → ML Kit → filter → suggestions', () => {
   test('size, DOT and a known brand are suggested; model never is', async () => {
     const { reader, deps } = setup();
     const outcome = await reader.read(FRAMES);
@@ -71,14 +87,25 @@ describe('whole frame → ML Kit → filter → suggestions', () => {
       suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
       ocrRuns: 2, // agreed after two frames
     });
-    // The saved frame itself, at full resolution: no crop and no model input.
-    expect(deps.recognizeLines).toHaveBeenNthCalledWith(1, '/docs/f1.jpg');
+    // The centre of the saved frame, then the crop is deleted; no whole-frame read was needed.
+    expect(deps.cropCentreToTempFile).toHaveBeenCalledWith('/docs/f1.jpg', 0.6);
+    expect(deps.recognizeLines).toHaveBeenNthCalledWith(1, '/docs/f1.jpg#centre');
+    expect(deps.deleteFile).toHaveBeenCalledWith('/docs/f1.jpg#centre');
   });
 
-  test('a value read in only one frame is not suggested', async () => {
+  test('read in only one frame: size and make are suggested (owner 2026-11-10); DOT gives its date code', async () => {
     const { reader } = setup({ ocr: perFrame(SIDEWALL, [], []) });
-    // Only the date code survives, through the single-date-code rule.
-    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({ dotTin: '2319' });
+    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({ size: '205/55 R16', make: 'MICHELIN', dotTin: '2319' });
+  });
+
+  test('frame 2 blurred: the size from frame 1 is kept', async () => {
+    const { reader } = setup({ ocr: perFrame([line('205/55R16 91V')], [line('2O5/5')]) });
+    expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg']))).toEqual({ size: '205/55 R16' });
+  });
+
+  test('divergent single sizes: the read with a load/speed index wins', async () => {
+    const { reader } = setup({ ocr: perFrame([line('205/65 R16')], [line('205/55R16 91V')]) });
+    expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg']))).toEqual({ size: '205/55 R16' });
   });
 
   test('disagreeing reads: the majority wins, never a mix', async () => {
@@ -87,11 +114,43 @@ describe('whole frame → ML Kit → filter → suggestions', () => {
     expect(suggestionsOf(await reader.read(FRAMES))).toMatchObject({ size: '205/55 R16', make: 'MICHELIN' });
   });
 
-  test('the device read: brand fragments and other words never become a make', async () => {
+  test('the device read: short fragments never become a make; the Contact model word does (owner 2026-11-10)', async () => {
     // ML Kit's real output on a Continental ComfortContact CC7 (2026-11-06 device log).
-    const device = ['Comfortcontact', 'iental', 'OUTSIDE', 'RADIAL', 'TUBELESS'].map((t, i) => line(t, i * 40, 30));
-    const { reader } = setup({ ocr: () => device });
-    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({});
+    const device = ['iental', 'OUTSIDE', 'RADIAL', 'TUBELESS'].map((t, i) => line(t, i * 40, 30));
+    expect(suggestionsOf(await setup({ ocr: () => device }).reader.read(FRAMES))).toEqual({});
+    const withModel = [line('Comfortcontact', 200, 30), ...device];
+    expect(suggestionsOf(await setup({ ocr: () => withModel }).reader.read(FRAMES))).toEqual({ make: 'Continental' });
+  });
+
+  test('iPhone 13 round 2: 95/55 + 5B15 in frame 1, I95/35 R15 in frame 2', async () => {
+    const f1 = [line('95/55', 0, 30), line('5B15 85VE C', 34, 30), line('ntinenals', 100, 40)];
+    const f2 = [line('LLSS I95/35 R15', 0, 30), line('orContact', 60, 30)];
+    const { reader } = setup({ ocr: perFrame(f1, f2, []) });
+    // Sizes tie 1–1 with equal scores and length: the earliest frame wins (no aspect-ratio prior).
+    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({ size: '195/55 R15', make: 'Continental' });
+  });
+
+  test('round 8: run 2, width/aspect and rim read in different frames are joined (owner 2026-11-10)', async () => {
+    const f1 = [line('Continental', 0, 40), line('195 55', 60, 30)];
+    const f2 = [line('R15 85Vt', 60, 30)];
+    const { reader } = setup({ ocr: perFrame(f1, f2, []) });
+    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({ size: '195/55 R15', make: 'Continental' });
+  });
+
+  test('round 8: parts are not joined on a tie, with only a stray rim, or when a frame read a whole size', async () => {
+    const tie = setup({ ocr: perFrame([line('195/55')], [line('205/55')], [line('R15 85V')]) });
+    expect(suggestionsOf(await tie.reader.read(FRAMES))).toEqual({});
+    const stray = setup({ ocr: perFrame([line('195/55')], [line('R15')], []) });
+    expect(suggestionsOf(await stray.reader.read(FRAMES))).toEqual({});
+    const whole = setup({ ocr: perFrame([line('205/55R16 91V')], [line('195/55')], [line('R15 85V')]) });
+    expect(suggestionsOf(await whole.reader.read(FRAMES))).toEqual({ size: '205/55 R16' });
+  });
+
+  test('dominantValue: a tie gives nothing', () => {
+    const { dominantValue } = require('../sidewallReader') as typeof import('../sidewallReader');
+    expect(dominantValue(['a', 'b', 'a'])).toBe('a');
+    expect(dominantValue(['a', 'b'])).toBeNull();
+    expect(dominantValue([])).toBeNull();
   });
 
   test('loose text is not taken from a whole frame', async () => {
@@ -108,22 +167,43 @@ describe('whole frame → ML Kit → filter → suggestions', () => {
     expect(suggestionsOf(await reader.read(FRAMES))).toEqual({});
   });
 
-  test('an OCR error skips that frame only', async () => {
+  test('an OCR error skips that read only', async () => {
     const { reader } = setup({ ocr: perFrame(new Error('ML Kit'), SIDEWALL, SIDEWALL) });
     expect(await reader.read(FRAMES)).toMatchObject({
       suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
-      ocrRuns: 3,
+      ocrRuns: 4, // f1 centre (error) + f1 whole frame, f2 and f3 centres
+    });
+  });
+
+  test('the whole frame is read when the centre crop cuts the text off', async () => {
+    const { reader, calls } = setup({ ocr: (_f, part) => (part === 'whole' ? SIDEWALL : [line('ADIAL')]) });
+    expect(await reader.read(FRAMES)).toMatchObject({
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
+      ocrRuns: 4,
+    });
+    expect(calls.slice(0, 2)).toEqual([
+      { frame: 'f1.jpg', part: 'centre' },
+      { frame: 'f1.jpg', part: 'whole' },
+    ]);
+  });
+
+  test('a failed centre crop falls back to the whole frame', async () => {
+    const { reader } = setup({ cropFails: true, ocr: () => SIDEWALL });
+    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({
+      size: '205/55 R16',
+      dotTin: '4B7Y ABC 2319',
+      make: 'MICHELIN',
     });
   });
 
   test('no readable text in any frame → done with no suggestions (nothing made up)', async () => {
     const { reader } = setup({ ocr: () => [] });
-    expect(await reader.read(FRAMES)).toEqual({ status: 'done', suggestions: {}, ocrRuns: 3 });
+    expect(await reader.read(FRAMES)).toEqual({ status: 'done', suggestions: {}, ocrRuns: 6 });
   });
 
   test('stops at the OCR run limit and when cancelled', async () => {
-    const capped = setup({ ocr: () => [], maxOcrRuns: 2 });
-    expect(await capped.reader.read(FRAMES)).toMatchObject({ ocrRuns: 2 });
+    const capped = setup({ ocr: () => [], maxOcrRuns: 3 });
+    expect(await capped.reader.read(FRAMES)).toMatchObject({ ocrRuns: 3 });
     const cancelled = setup();
     expect(await cancelled.reader.read(FRAMES, () => true)).toEqual({ status: 'done', suggestions: {}, ocrRuns: 0 });
     expect(cancelled.deps.recognizeLines).not.toHaveBeenCalled();
@@ -193,15 +273,37 @@ describe('[SidewallOCR] logs', () => {
     expect(log).not.toHaveBeenCalled();
   });
 
-  test('when on: parsed values per frame and a summary, never the raw OCR text', async () => {
+  test('when on: raw ML Kit text, parsed values, rejection reasons and a summary (TEMPORARY)', async () => {
     setSidewallDebug(true);
-    const { reader } = setup({ ocr: () => [line('KX19 ABC'), line('205/55R16 91V', 30)] });
+    const { reader } = setup({ ocr: (_f, part) => (part === 'centre' ? [line('RADIAL'), line('205/55R16 91V', 30)] : []) });
     await reader.read(FRAMES);
     const out = lines();
     expect(out.every(m => m.startsWith(SIDEWALL_LOG_TAG))).toBe(true);
-    expect(out.find(m => m.includes('frame 1/3'))).toContain('"size":"205/55 R16"');
-    expect(out.find(m => m.includes('frame 1/3'))).toContain('"loadSpeed":"91V"');
+    const raw = out.find(m => m.includes('ML Kit raw text (frame 1/3, centre 0.6)'))!;
+    expect(raw).toContain('"text":"RADIAL"');
+    expect(raw).toContain('"frameSize":[640,360]');
+    const parsed = out.find(m => m.includes('frame 1/3: parsed (centre'))!;
+    expect(parsed).toContain('"size":"205/55 R16"');
+    expect(parsed).toContain('"loadSpeed":"91V"');
+    expect(parsed).toContain('"dotTin":"no DOT marker read (DOT, D0T, OOT, DTS)"');
+    expect(out.find(m => m.includes('make: not suggested'))).toContain('no frame gave a valid read');
     expect(out.some(m => m.includes('read done'))).toBe(true);
-    expect(out.some(m => m.includes('KX19'))).toBe(false);
   });
 });
+
+describe('helpers', () => {
+  test('centre crop: the middle 60% in whole pixels', () => {
+    expect(centreCropRect(640, 360, 0.6)).toEqual({ x1: 128, y1: 72, x2: 512, y2: 288 });
+    expect(centreCropRect(1, 1, 0.6)).toEqual({ x1: 0, y1: 0, x2: 1, y2: 1 });
+  });
+
+  test('best single size: most frames, then load/speed, then longer, then earliest', () => {
+    const r = (value: string, score = 0) => ({ value, score });
+    expect(bestSizeRead([])).toBeNull();
+    expect(bestSizeRead([r('205/65 R16'), r('205/55 R16'), r('205/55 R16')])).toBe('205/55 R16');
+    expect(bestSizeRead([r('205/65 R16'), r('205/55 R16', 1)])).toBe('205/55 R16');
+    expect(bestSizeRead([r('265/70 R17'), r('LT265/70 R17')])).toBe('LT265/70 R17');
+    expect(bestSizeRead([r('205/65 R16'), r('205/55 R16')])).toBe('205/65 R16');
+  });
+});
+

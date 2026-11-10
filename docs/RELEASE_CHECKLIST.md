@@ -16,7 +16,7 @@ Everything in spec §11 plus project-specific items found while building. Every 
 
 ## Diagnostics
 - [ ] **`diagnosticsConfig.allowDemoAnalyzerInRelease` is `false`** (`src/config/diagnostics.ts`). On for staging since 2026-11-06 so Release builds use the demo analyzer (labelled `Demo data`) while the tread and damage models are missing. Check a store build shows `Analysis pending`, not `Demo data`.
-- [ ] **`diagnosticsConfig.sidewallOcrLogs` is `false`** (`src/config/diagnostics.ts`). Turned on temporarily on 2026-11-06 so iPhone 13 Release builds log `[SidewallOCR]` lines (enabled in `index.js`).
+- [x] **`diagnosticsConfig.sidewallOcrLogs` is off in release** (`src/config/diagnostics.ts`). It was on in every build from 2026-11-06 for iPhone 13 diagnostics. Since 2026-11-10 it is `__DEV__`, so `[SidewallOCR]` lines (including raw ML Kit text) are logged in development builds only. `releaseGuards.test.ts` checks that a release build logs nothing.
 
 ## Bundle ID
 - [x] **Bundle ID / application ID** set to the final `com.velox.tyre.kit.bay` (iOS `PRODUCT_BUNDLE_IDENTIFIER`, Debug and Release; Android `applicationId`, `namespace` and Kotlin package).
@@ -47,6 +47,10 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] No analytics, crash reporting or network calls added without owner approval.
 - [ ] **ML Kit usage metrics decided (open)** (see DECISIONS.md, M4): accepted and disclosed, or blocked and OCR re-tested. Check with a network monitor that a release build makes no unexpected requests during a full inspection.
 - [ ] **M5 tyre-capture checklist (`docs/DEVICE_TESTING.md`, section M5) passed on iPhone and Android.** M5 is "awaiting real-device testing".
+  - [x] iPhone 13, owner-verified 2026-11-10: SSDLite tread wear model runs on the device, and ML Kit sidewall OCR suggests Make `Continental` and Size `195/55 R15` (size via the cross-frame parts join) on the test tyre (Continental ComfortContact, 195/55 R15 85V). See DECISIONS.md, "iPhone 13 verification".
+  - [ ] Android phone: tread wear and sidewall OCR.
+  - [ ] Sidewall OCR on more tyres (other brands and sizes, worn and dirty sidewalls). Rounds 2–8 of the 2026-11-10 OCR rules were tuned on that single tyre. Check that no tyre gets a wrong size or make suggested.
+  - [ ] DOT/TIN read on a real phone. It wasn't part of the 2026-11-10 verification.
 - [ ] **Calibrate every `estimate` value in `src/config/capture.ts`** (currently `CALIBRATION_STATUS = 'uncalibrated'`) on real phones: tyre quality checks (brightness 55–215, sharpness 120, motion 6, tread novelty 5, thumbnail 16, sampling step 4, analysis region 0.5, guide margin 0.08, accept intervals 150/250 ms, extra candidates 4, settle 1000 ms, analysis 10 fps, free space 60 MB; JPEG quality is a fixed 90 %, not an estimate) in bright sun, workshop light, low light, and on wet and muddy tyres; and OCR selection (read window 5, scan interval 350 ms, guide margin 0.08, chassis text ratio 0.18, plate 2–10 characters, two-line plate join thresholds 0.7/0.5/1.0/0.3, plate guide 260×150, Capture timeout 3 s) on real plates and chassis plates. Then set `CALIBRATION_STATUS` to `'calibrated'`.
 - [ ] **RELEASE BLOCKER: tyre detector integrated (M7) and tested on real phones.** Without it sidewall capture is manual, distance messages are off, and capture can't tell whether a tyre is in frame. Once it's in: sidewall auto-capture, `Move closer` / `Move back` / `Distance OK`, and the `distance` / `not_found` Capture problem reasons.
 - [ ] **M4 real-device checklist (`docs/DEVICE_TESTING.md`) passed on iPhone and Android.** M4 is still "awaiting real-device testing": the owner deferred it to start M5. Required before release.

@@ -87,7 +87,8 @@ describe('full-frame parsers', () => {
     expect(fullFrameSizeCandidate([line('MICHELIN'), line('205/55R16 91V', 30)])).toBe('205/55 R16');
     // Joined with a rim read on the same row or the next line (owner request, round 5).
     expect(fullFrameSizeCandidate([line('205/55'), line('R16', 0, 20, 120)])).toBe('205/55 R16');
-    expect(fullFrameSizeCandidate([line('205/55'), line('MADE IN'), line('R16', 60)])).toBeNull();
+    expect(fullFrameSizeCandidate([line('205/55'), line('MADE IN'), line('R16', 60)])).toBe('205/55 R16'); // two lines away (2026-11-10)
+    expect(fullFrameSizeCandidate([line('205/55'), line('MADE IN', 30), line('USA', 60), line('R16', 90)])).toBeNull();
     expect(fullFrameSizeCandidate([line('900/99R40')])).toBeNull();
     expect(fullFrameSizeCandidate([line('100/90R17')])).toBe('100/90 R17'); // motorcycle
     expect(fullFrameSizeCandidate([line('095/90R17')])).toBeNull(); // width below 100
@@ -130,8 +131,17 @@ describe('OCR misreads around DOT', () => {
     expect(dotCandidate([line('DOT 1Y6 O32MKT 0124')], NOW)).toBe('1Y6 O32MKT 0124'); // TIN body kept as read
   });
 
-  test('misread, glued DOT markers are not the DOT word, so nothing is read', () => {
-    expect(fullFrameDotCandidate([line('D0TYG09RURT O124')], NOW)).toBeNull();
+  test('misread DOT markers from the iPhone 13 logs locate the TIN (owner decision 2026-11-10)', () => {
+    expect(fullFrameDotCandidate([line('D0TYG09RURT O124')], NOW)).toBe('YG09RURT 0124');
+    expect(fullFrameDotCandidate([line('oot 1Y6 032MKT 0124')], NOW)).toBe('1Y6 032MKT 0124');
+    expect(fullFrameDotCandidate([line('ODTS 1Y6 032MKT 0124')], NOW)).toBe('1Y6 032MKT 0124');
+    expect(fullFrameDotCandidate([line('DTS1Y6 032MKT'), line('0124', 30)], NOW)).toBe('1Y6 032MKT 0124');
+  });
+
+  test('a misread marker still needs a full TIN with a valid date', () => {
+    expect(fullFrameDotCandidate([line('oottDE')], NOW)).toBeNull();
+    expect(fullFrameDotCandidate([line('ootDTO 1Y6')], NOW)).toBeNull();
+    expect(fullFrameDotCandidate([line('DTS1D 032MKT 5724')], NOW)).toBeNull(); // week 57
   });
 });
 
@@ -176,7 +186,141 @@ describe('size recovery (round 5)', () => {
     expect(recoverSize(rows('195/55', 'R 15 85V'))).toBe('195/55 R15');
     expect(recoverSize(rows('R15 85V', '195/55'))).toBe('195/55 R15');
     expect(recoverSize(rows('195/55 xx R15'))).toBe('195/55 R15');
-    expect(recoverSize(rows('195/55', 'OUTSIDE', 'R15'))).toBeNull(); // not adjacent
+    expect(recoverSize(rows('195/55', 'OUTSIDE', 'R15'))).toBe('195/55 R15'); // two lines away
+    expect(recoverSize(rows('R15', 'OUTSIDE', '195/55'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', 'OUTSIDE', 'TUBELESS', 'R15'))).toBeNull(); // three lines away
+  });
+
+  test('iPhone 13 reads: load/speed glued to the rim (owner decision 2026-11-10)', () => {
+    expect(recoverSize(rows('195/55', 'R1585V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '3R1525V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', 'R15 85V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('95/55', 'R1585V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/56', 'R1585V'))).toBe('195/56 R15'); // aspect kept as read
+  });
+
+  test('iPhone 13 reads with no R are never given a rim', () => {
+    expect(recoverSize(rows('195/55', 'S5815 85v'))).toBeNull();
+    expect(recoverSize(rows('195/55', 'R58SV'))).toBeNull(); // R58 is outside the rim limits
+    expect(recoverSize(rows('195/55', 'STR15'))).toBeNull(); // letter glued before R
+  });
+
+  test('round 3: slash-less sizes (owner decision 2026-11-10)', () => {
+    expect(recoverSize(rows('19555 R15'))).toBe('195/55 R15');
+    expect(recoverSize(rows('LLSS 19555R15a'))).toBe('195/55 R15');
+    expect(recoverSize(rows('20555 B16'))).toBe('205/55 R16');
+    expect(recoverSize(rows('19555 815'))).toBe('195/55 R15');
+    expect(recoverSize(rows('9555 R15'))).toBe('195/55 R15'); // width digit via the rim-gated rule
+  });
+
+  test('round 3: slash-less reads that stay empty', () => {
+    expect(recoverSize(rows('9335 R15'))).toBeNull(); // 93 is not the end of a 175–225 width
+    expect(recoverSize(rows('19533 R15'))).toBeNull(); // aspect 33 is not a real aspect
+    expect(recoverSize(rows('19555815'))).toBeNull(); // 8 glued to the digits is not split
+    expect(recoverSize(rows('9555 R18'))).toBeNull(); // rim outside R13–R17 for inference
+    expect(recoverSize(rows('MAX 61555 R15'))).toBeNull(); // 615 is not a 160–295 width
+  });
+
+  test('round 3: 8 read for R next to a width/aspect (owner decision 2026-11-10)', () => {
+    expect(recoverSize(rows('195/55', '815W5V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '815 85V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('A95/55', '81545Vt'))).toBe('195/55 R15'); // 2026-11-06 device line
+    expect(recoverSize(rows('195/55', '815 KG'))).toBeNull();
+    expect(recoverSize(rows('195/55', '5815 85V'))).toBeNull(); // digit glued before the 8
+    expect(recoverSize(rows('195/ER', '815W5V'))).toBeNull(); // aspect never read: not invented
+  });
+
+  test('round 4: device reads already handled (trailing letter, glued load/speed)', () => {
+    expect(recoverSize(rows('195/55 p', '55 R15'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55p', 'R15'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '85 R1585VC'))).toBe('195/55 R15');
+  });
+
+  test('round 4: l or I read for the 1 of a rim, only before a load/speed (owner decision 2026-11-10)', () => {
+    expect(recoverSize(rows('195/55', 'Rl565V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', 'RI585V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55 p', 'Rl5 85V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', 'Rl5'))).toBe('195/55 R15'); // end of token (round 8)
+    expect(recoverSize(rows('195/55', 'Rl5X'))).toBeNull(); // X is not a speed symbol
+    expect(recoverSize(rows('95/56 Ri', 'S85VE'))).toBeNull(); // no rim digit read
+  });
+
+  test('round 4: 55 R15 joined only with a width actually read next to it', () => {
+    expect(recoverSize(rows('195', '55 R15'))).toBe('195/55 R15');
+    expect(recoverSize(rows('55 R15', '195/'))).toBe('195/55 R15');
+    expect(recoverSize(rows('95/', '55 Rl565V'))).toBe('195/55 R15'); // rim-gated width digit
+    expect(recoverSize(rows('55 R15'))).toBeNull(); // no width read: never added
+    expect(recoverSize(rows('Continental', '55 R15'))).toBeNull(); // a brand doesn't give a width
+    expect(recoverSize(rows('ComfortContact', '55 R15'))).toBeNull();
+    expect(recoverSize(rows('95', '55 R15'))).toBeNull(); // bare 95 could be a load index
+    expect(recoverSize(rows('MAX LOAD 195', '55 R15'))).toBeNull(); // width must be alone on its line
+  });
+
+  test('round 4: bare numbers are never a rim', () => {
+    expect(recoverSize(rows('195/55 p', '15'))).toBeNull();
+    expect(recoverSize(rows('195/55 p', '815'))).toBeNull();
+  });
+
+  test('round 5: rim marker ends a line, rim digits start the next (owner decision 2026-11-10)', () => {
+    for (const next of ['158s', '15', '15 85', '15 85V', '1585V']) {
+      expect(recoverSize(rows('195/55 R', next))).toBe('195/55 R15');
+    }
+    expect(recoverSize(rows('195/55 B', '15'))).toBe('195/55 R15');
+    expect(recoverSize(rows('225/45 ZR', '17 94W'))).toBe('225/45 ZR17');
+  });
+
+  test('round 5: what stays empty', () => {
+    expect(recoverSize(rows('195/55 R', '1555'))).toBeNull(); // 4 digits: could be a date code
+    expect(recoverSize(rows('195/55 R', '58'))).toBeNull(); // not a rim 13–22
+    expect(recoverSize(rows('195/55 R', 'OUTSIDE', '15'))).toBeNull(); // digits must be on the next line
+    expect(recoverSize(rows('15', '195/55 R'))).toBeNull(); // digits before the marker
+    expect(recoverSize(rows('o3/55 R15'))).toBeNull(); // no width digits read: width is never made up
+    expect(recoverSize(rows('a0/55 R15'))).toBeNull();
+  });
+
+  test('round 7: frame 6/8, 19555 then 1585V6: (owner decision 2026-11-10)', () => {
+    expect(recoverSize(rows('19555', '1585V6:'))).toBe('195/55 R15');
+    expect(recoverSize(rows('19555', '15 85V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('19555', 'OUTSIDE', 'R15'))).toBe('195/55 R15'); // marked rim within two lines
+    expect(recoverSize(rows('19555', '15'))).toBeNull(); // bare rim digits
+    expect(recoverSize(rows('19555', 'OUTSIDE', '1585V'))).toBeNull(); // unmarked rim must be on the next line
+    expect(recoverSize(rows('DOT 19555', '1585V'))).toBeNull(); // 19555 must be alone on its line
+  });
+
+  test('round 7: space, dot, dash or ) instead of the slash', () => {
+    expect(recoverSize(rows('195 55', 'R15'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195.55 R15'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195-55', 'Rl565V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195) 55', '1585V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('A95 55', 'R15'))).toBe('195/55 R15'); // rim-gated width digit
+  });
+
+  test('round 7: frame 3/8 and 4/8 stay empty: no slash and no rim marker together', () => {
+    expect(recoverSize(rows('A95 55', '15'))).toBeNull();
+    expect(recoverSize(rows('A95) 55 F', '158'))).toBeNull();
+    expect(recoverSize(rows('A95 55', '1585V'))).toBeNull(); // width digit is inferred only with a marked rim
+    expect(recoverSize(rows('MAX PRESS 350 KPA (51 PSI)', 'R15'))).toBeNull();
+  });
+
+  test('round 8: run 1 frame 8/8, 195/55 then Rl5 V two lines down (owner decision 2026-11-10)', () => {
+    expect(recoverSize(rows('Continental', '195/55', 'OUTSIDE', 'Rl5 V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', 'RI5 H'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', 'Rl5 T'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', 'Rl5VAN'))).toBeNull(); // letters glued on: a word, not a speed symbol
+    expect(recoverSize(rows('195/55', 'RIS'))).toBeNull(); // no rim digit
+  });
+
+  test('round 8: size parts for joining across frames', () => {
+    const { sizeParts } = require('../sidewallFields') as typeof import('../sidewallFields');
+    expect(sizeParts(rows('195 55'))).toEqual({ widthAspect: '195/55', rim: null });
+    expect(sizeParts(rows('19555'))).toEqual({ widthAspect: '195/55', rim: null });
+    expect(sizeParts(rows('R15 85Vt'))).toEqual({ widthAspect: null, rim: 15 });
+    expect(sizeParts(rows('Rl565V'))).toEqual({ widthAspect: null, rim: 15 });
+    expect(sizeParts(rows('R15', '95/55', '15'))).toEqual({ widthAspect: null, rim: null }); // stray R15, short width, bare 15
+  });
+
+  test('width inference still needs the rim on the same or adjacent line', () => {
+    expect(recoverSize(rows('95/55', 'OUTSIDE', 'R15'))).toBeNull();
   });
 
   test('device reads: missing hundreds digit inferred only with a rim R13–R17 nearby', () => {
@@ -189,7 +333,7 @@ describe('size recovery (round 5)', () => {
 
   test('never inferred: no rim, big rims, or widths outside 175–225', () => {
     expect(recoverSize(rows('A95/55'))).toBeNull(); // no rim
-    expect(recoverSize(rows('A95/55', '81545Vt'))).toBeNull(); // device line without a readable rim
+    expect(recoverSize(rows('A95/55', '815'))).toBeNull(); // bare 8+rim: nothing follows, so not a rim
     expect(recoverSize(rows('85/45', 'R20'))).toBeNull(); // likely 285: rim gate
     expect(recoverSize(rows('95/55', 'R18'))).toBeNull();
     expect(recoverSize(rows('65/65', 'R15'))).toBeNull(); // 165 not allowed

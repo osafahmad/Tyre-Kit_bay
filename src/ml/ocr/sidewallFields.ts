@@ -1,6 +1,13 @@
 import type { SidewallDetails } from '../../features/inspection/types';
 import { KNOWN_TYRE_BRANDS } from '../../config/tyreBrands';
-import { parseDotAge, parseTyreSize } from './parsers';
+import {
+  COMPACT_SHORT_SIZE_PATTERN,
+  COMPACT_SIZE_PATTERN,
+  DOT_MARKER,
+  parseDotAge,
+  parseTyreSize,
+  textAfterDotMarker,
+} from './parsers';
 import { sidewallLog } from './sidewallDebug';
 import type { OcrLineLike } from './textCandidates';
 
@@ -22,13 +29,6 @@ export function readingOrder(lines: OcrLineLike[]): OcrLineLike[] {
 }
 
 /**
- * The word `DOT` and anything OCR put before it (stray marks or fragments),
- * as long as no letter touches `DOT` on either side. Text after it is kept
- * exactly as read.
- */
-const DOT_PREFIX = /^(?:.*?[^A-Z])?DOT(?![A-Z])\s*/;
-
-/**
  * CLAUDE.md exception (owner decision 2026-11-06): a letter `O` as the FIRST
  * character of the 4-character date code (the last 4 letters/digits) is read
  * as `0`. Weeks start with 0–5, and of those only 0 looks like O. Nothing else
@@ -48,7 +48,7 @@ export const DOT_MAX_CHARS = 13;
 
 /**
  * DOT/TIN: uppercase, letters, digits and single spaces, without the leading
- * `DOT`. Valid only when it ends in a real week/year date code (week 1–53,
+ * DOT marker (`DOT_MARKER` in parsers.ts) and anything before it. Valid only when it ends in a real week/year date code (week 1–53,
  * not in the future) and has 4 to 13 letters and digits.
  */
 export function dotCandidate(lines: OcrLineLike[], now: Date = new Date()): string | null {
@@ -59,7 +59,7 @@ export function dotCandidate(lines: OcrLineLike[], now: Date = new Date()): stri
     .replace(/[^A-Z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  const text = fixDateCodeLeadingO(cleaned.replace(DOT_PREFIX, ''));
+  const text = fixDateCodeLeadingO(textAfterDotMarker(cleaned) ?? cleaned);
   const chars = text.replace(/ /g, '');
   if (chars.length < DOT_MIN_CHARS || chars.length > DOT_MAX_CHARS) {
     return null;
@@ -170,8 +170,133 @@ export const SIZE_WIDTH_INFERENCE = {
   rims: [13, 17],
 } as const;
 
-/** `R15`, `R 15`, `ZR15`; also `R154`, where a stray digit follows the rim. */
-const RIM_TOKEN = /(?:^|[^A-Z0-9])Z?R\s?(\d{2})(?:\d)?(?!\d)/;
+/**
+ * `R15`, `R 15`, `ZR15`; `R154` (a stray digit after the rim); and, from the
+ * iPhone 13 logs (owner decision 2026-11-10), a rim with the load/speed index
+ * glued on (`R1585V`, `3R1525V`) or a digit glued before it. A letter directly
+ * before the `R` still rules it out (`STR15` is not a rim).
+ * `B` is taken as the rim marker too (owner decision 2026-11-10, iPhone 13
+ * read `5B15 85VE C`), and the joined size is always written with `R`.
+ */
+const RIM_TOKEN = /(?:^|[^A-Z])Z?[RB]\s?(\d{2})(?:\d{2,3}(?:\/\d{2,3})?\s?[A-Z]|\d)?(?!\d)/;
+/**
+ * `8` read for `R` (owner decision 2026-11-10, iPhone 13: `815W5V`,
+ * `815 85V`). Only rims 13–22, nothing glued before the `8`, and only when a
+ * letter or a load/speed index follows directly (so `815 KG` or a bare `815`
+ * is not a rim). Used only next to a width/aspect.
+ */
+const RIM_TOKEN_8 = /(?:^|[^A-Z0-9])8(1[3-9]|2[0-2])(?=[A-Z]|\s?\d{2,3}[A-Z])/;
+/**
+ * `l` or `I` read for the `1` of a rim (owner decision 2026-11-10, iPhone 13:
+ * `Rl565V`), on uppercased text: `RL5`/`RI5` → R15. Only rims 13–19, followed
+ * by a load/speed index (`65V`), a lone speed symbol (`Rl5 V`, round 8), or
+ * the end of the token (`Rl5`, round 8). Never with more letters glued on.
+ */
+const RIM_TOKEN_L1 = /(?:^|[^A-Z])Z?R\s?[LI]([3-9])(?=\s?\d{2,3}(?:\/\d{2,3})?\s?[A-Z]|\s?[A-HJ-NP-WYZ](?![A-Z])|(?![A-Z0-9]))/;
+const rimIn = (text: string): number | null => {
+  const m = RIM_TOKEN.exec(text) ?? RIM_TOKEN_8.exec(text);
+  if (m) return Number(m[1]);
+  const l1 = RIM_TOKEN_L1.exec(text);
+  return l1 ? 10 + Number(l1[1]) : null;
+};
+
+/** Aspect then a rim at the start of a line, no width (`55 R15`, `55 Rl565V`). Group: aspect; the rest goes to `rimIn`. */
+const ASPECT_THEN_RIM = /^\W*([3-7][05])\s?(?=Z?[RB])/;
+/** A line that is only a 3-digit width, optionally with a slash (`195`, `195/`). */
+const WIDTH_ALONE = /^\W*(\d{3})\s*\/?\W*$/;
+/** A line that is only a 2-digit width and a slash, with at most one letter before (`95/`, `A95/`). */
+const SHORT_WIDTH_ALONE = /^\W*[A-Z]?(\d{2})\s*\/\W*$/;
+
+/**
+ * Owner decision 2026-11-10 (iPhone 13, round 7): width/aspect read without a
+ * slash. Only a width 160–295 ending in 0/5 and an aspect 30–75 ending in 0/5.
+ * - `COMPACT_ALONE`: a line that is only the 5 digits (`19555`).
+ * - `SPACED_WIDTH_ASPECT`: a space, dot, dash or `)` instead of the slash (`195 55`).
+ * - `SPACED_SHORT_WIDTH_ASPECT`: the same with only two width digits
+ *   (`A95 55`), completed only by the rim-gated `SIZE_WIDTH_INFERENCE`.
+ */
+const COMPACT_ALONE = /^\W*(1[6-9][05]|2\d[05])([3-7][05])\W*$/;
+const SPACED_WIDTH_ASPECT = /(?:^|[^0-9])(1[6-9][05]|2\d[05])\s*[\s.\-)]\s*([3-7][05])(?![0-9])/;
+const SPACED_SHORT_WIDTH_ASPECT = /(?:^|[^0-9])(\d{2})\s*[\s.\-)]\s*([3-7][05])(?![0-9])/;
+/**
+ * Rim with no marker, only at the start of the line right after a slash-less
+ * width/aspect, and only with a load/speed index glued on or after a space
+ * (`1585V6:`, `15 85V`). A bare `15` or `158` is not a rim.
+ */
+const RIM_LOAD_UNMARKED_AT_START = /^\W*(1[3-9]|2[0-2])\s?\d{2,3}(?:\/\d{2,3})?\s?[A-HJ-NP-WYZ]/;
+
+/** Width/aspect then a rim marker ending the line, digits on the next line (`195/55 R`, `225/45 ZR`). */
+const WIDTH_ASPECT_MARKER_AT_END = /(?:^|[^0-9])(\d{3})\s*\/\s*(\d{2})\s?(ZR|R|B)\W*$/;
+/**
+ * Rim digits starting a line (`15`, `15 85V`, `1585V`, `158s`): 13–22, then
+ * the end, a non-digit, a load/speed index, or one stray digit and a letter.
+ * `1555` (could be a date code) doesn't count.
+ */
+const RIM_DIGITS_AT_START = /^\W*(1[3-9]|2[0-2])(?=$|[^0-9]|\d{2,3}[A-Z]|\d[A-Z])/;
+
+/**
+ * Owner decision 2026-11-10 (iPhone 13: `195/55 R` then `158s`): the rim
+ * marker ends one line and its digits start the next. Both pieces were read,
+ * so they are joined; `B` is written as `R`, `ZR` is kept.
+ */
+function joinMarkerWithRimDigits(ordered: string[]): string | null {
+  for (let i = 0; i + 1 < ordered.length; i++) {
+    const head = WIDTH_ASPECT_MARKER_AT_END.exec(ordered[i]);
+    if (!head) continue;
+    const rim = RIM_DIGITS_AT_START.exec(ordered[i + 1]);
+    if (!rim) continue;
+    const p = parseTyreSize(`${head[1]}/${head[2]} ${head[3] === 'ZR' ? 'ZR' : 'R'}${rim[1]}`);
+    if (p && sizeWithinLimits(p)) {
+      sidewallLog('size recovered: rim marker at line end joined with rim digits on the next line', {
+        lines: [ordered[i], ordered[i + 1]],
+        size: p.value,
+      });
+      return p.value;
+    }
+  }
+  return null;
+}
+
+/**
+ * Owner decision 2026-11-10 (iPhone 13: `55 R15`): an aspect+rim line joined
+ * with a width read on its own on the previous or next line. A 3-digit width
+ * is joined as read; a 2-digit width (`95/`) only through the rim-gated
+ * `SIZE_WIDTH_INFERENCE`. A width is never added when none was read.
+ */
+function joinAspectRimWithWidth(ordered: string[]): string | null {
+  for (let i = 0; i < ordered.length; i++) {
+    const a = ASPECT_THEN_RIM.exec(ordered[i]);
+    if (!a) continue;
+    const rim = rimIn(ordered[i].slice(a[0].length));
+    if (rim === null) continue;
+    for (const j of [i - 1, i + 1]) {
+      const text = ordered[j];
+      if (text === undefined) continue;
+      const full = WIDTH_ALONE.exec(text);
+      let width: number | undefined = full ? Number(full[1]) : undefined;
+      if (width === undefined) {
+        const short = SHORT_WIDTH_ALONE.exec(text);
+        const [minRim, maxRim] = SIZE_WIDTH_INFERENCE.rims;
+        if (!short || rim < minRim || rim > maxRim) continue;
+        width = (SIZE_WIDTH_INFERENCE.widths as readonly number[]).find(w => w % 100 === Number(short[1]));
+      }
+      if (width === undefined) continue;
+      const p = parseTyreSize(`${width}/${a[1]} R${rim}`);
+      if (p && sizeWithinLimits(p)) {
+        sidewallLog('size recovered: aspect+rim joined with a width read on its own line', {
+          lines: [ordered[i], text],
+          size: p.value,
+        });
+        return p.value;
+      }
+    }
+  }
+  return null;
+}
+/** Lines searched for a rim, nearest first: same, next, previous, then two away (owner decision 2026-11-10). */
+const RIM_SEARCH_JOIN = [0, 1, -1, 2, -2] as const;
+/** The width inference exception only looks at the same or adjacent line (CLAUDE.md). */
+const RIM_SEARCH_INFER = [0, 1, -1] as const;
 /** Full width/aspect read: `195/55`, `195 / 55`. */
 const FULL_WIDTH_ASPECT = /(?:^|[^0-9])(\d{3})\s*\/\s*(\d{2})(?!\d)/;
 /** Two-digit width read, optionally after one non-digit misread (`A95/55`, `95/55`). */
@@ -179,28 +304,40 @@ const SHORT_WIDTH_ASPECT = /(?:^|[^0-9])(\d{2})\s*\/\s*(\d{2})(?!\d)/;
 
 /**
  * Size from separate pieces, all read by OCR:
- * 1. a full width/aspect (`195/55`) plus a rim token (`R15`) on the same or the
- *    next/previous line, joined;
- * 2. else, `SIZE_WIDTH_INFERENCE`: a two-digit width (`95/55`) with a rim in
- *    13–17 nearby, completed only to a width in 175–225.
+ * 1. a full width/aspect (`195/55`) plus a rim token (`R15`, `R1585V`) on the
+ *    same line or up to two lines before/after it, nearest first, joined;
+ * 2. else, a slash-less size with its rim on the same line (`19555 R15`,
+ *    `COMPACT_SIZE_PATTERN`);
+ * 3. else, `SIZE_WIDTH_INFERENCE` on a slash-less short read (`9555 R15`), then
+ *    on a two-digit width (`95/55`) with a rim in 13–17 on the same or adjacent
+ *    line, completed only to a width in 175–225.
+ * Also a slash-less width/aspect (`19555` alone, `195 55`) joined with a
+ * marked rim within two lines or a rim+load (`1585V`) starting the next line;
+ * `195/55 R` joined with rim digits starting the next line
+ * (`joinMarkerWithRimDigits`), and `55 R15` joined with a width read alone on the next/previous line
+ * (`joinAspectRimWithWidth`).
+ * Rim markers: `R`, `B`, or `8` (`RIM_TOKEN_8`), and `RL5`/`RI5` for R15
+ * (`RIM_TOKEN_L1`); the result is written with `R`.
  * Every result must parse and be within `FULL_FRAME_SIZE_LIMITS`.
  */
 export function recoverSize(lines: OcrLineLike[]): string | null {
   const ordered = readingOrder(lines).map(l => l.text.toUpperCase());
-  const rimNear = (i: number): number | null => {
-    for (const j of [i, i + 1, i - 1]) {
+  const rimNear = (i: number, offsets: readonly number[]): number | null => {
+    for (const j of offsets.map(d => i + d)) {
       const text = ordered[j];
       if (text === undefined) continue;
       // On the width's own line, look only after the aspect ratio.
-      const m = RIM_TOKEN.exec(j === i ? text.replace(/^.*?\/\s*\d{2}/, ' ') : text);
-      if (m) return Number(m[1]);
+      const rim = rimIn(j === i ? text.replace(/^.*?\/\s*\d{2}/, ' ') : text);
+      if (rim !== null) return rim;
     }
     return null;
   };
+  const split = joinMarkerWithRimDigits(ordered);
+  if (split) return split;
   for (let i = 0; i < ordered.length; i++) {
     const full = FULL_WIDTH_ASPECT.exec(ordered[i]);
     if (!full) continue;
-    const rim = rimNear(i);
+    const rim = rimNear(i, RIM_SEARCH_JOIN);
     if (rim === null) continue;
     const p = parseTyreSize(`${full[1]}/${full[2]} R${rim}`);
     if (p && sizeWithinLimits(p)) {
@@ -208,11 +345,56 @@ export function recoverSize(lines: OcrLineLike[]): string | null {
       return p.value;
     }
   }
+  for (const text of ordered) {
+    const compact = COMPACT_SIZE_PATTERN.exec(text);
+    if (!compact) continue;
+    const p = parseTyreSize(`${compact[1]}/${compact[2]} R${compact[3]}`);
+    if (p && sizeWithinLimits(p)) {
+      sidewallLog('size recovered: slash-less width/aspect read before a rim', { read: text, size: p.value });
+      return p.value;
+    }
+  }
   for (let i = 0; i < ordered.length; i++) {
     if (FULL_WIDTH_ASPECT.test(ordered[i])) continue;
-    const short = SHORT_WIDTH_ASPECT.exec(ordered[i]);
+    const loose = COMPACT_ALONE.exec(ordered[i]) ?? SPACED_WIDTH_ASPECT.exec(ordered[i]);
+    if (!loose) continue;
+    const next = ordered[i + 1];
+    const unmarked = next === undefined ? null : RIM_LOAD_UNMARKED_AT_START.exec(next);
+    const rim = rimNear(i, RIM_SEARCH_JOIN) ?? (unmarked ? Number(unmarked[1]) : null);
+    if (rim === null) continue;
+    const p = parseTyreSize(`${loose[1]}/${loose[2]} R${rim}`);
+    if (p && sizeWithinLimits(p)) {
+      sidewallLog('size recovered: slash-less width/aspect joined with a nearby rim', {
+        lines: [ordered[i], ...(next === undefined ? [] : [next])],
+        size: p.value,
+      });
+      return p.value;
+    }
+  }
+  const joined = joinAspectRimWithWidth(ordered);
+  if (joined) return joined;
+  for (const text of ordered) {
+    if (COMPACT_SIZE_PATTERN.test(text)) continue;
+    const short = COMPACT_SHORT_SIZE_PATTERN.exec(text);
     if (!short) continue;
-    const rim = rimNear(i);
+    const rim = Number(short[3]);
+    const [minRim, maxRim] = SIZE_WIDTH_INFERENCE.rims;
+    const width = (SIZE_WIDTH_INFERENCE.widths as readonly number[]).find(w => w % 100 === Number(short[1]));
+    if (rim < minRim || rim > maxRim || width === undefined) continue;
+    const p = parseTyreSize(`${width}/${short[2]} R${rim}`);
+    if (p && sizeWithinLimits(p)) {
+      sidewallLog('size recovered: slash-less, width hundreds digit inferred (rim-gated, CLAUDE.md exception)', {
+        read: text,
+        size: p.value,
+      });
+      return p.value;
+    }
+  }
+  for (let i = 0; i < ordered.length; i++) {
+    if (FULL_WIDTH_ASPECT.test(ordered[i]) || SPACED_WIDTH_ASPECT.test(ordered[i])) continue;
+    const short = SHORT_WIDTH_ASPECT.exec(ordered[i]) ?? SPACED_SHORT_WIDTH_ASPECT.exec(ordered[i]);
+    if (!short) continue;
+    const rim = rimNear(i, RIM_SEARCH_INFER);
     const [minRim, maxRim] = SIZE_WIDTH_INFERENCE.rims;
     if (rim === null || rim < minRim || rim > maxRim) {
       continue;
@@ -234,22 +416,51 @@ export function recoverSize(lines: OcrLineLike[]): string | null {
   return null;
 }
 
+/**
+ * A rim marker, rim 13–22, then a load/speed index (`R15 85Vt`, `B1585V`,
+ * `Rl565V`). The shape of the size's own rim, not a stray `R15`.
+ */
+const RIM_WITH_LOAD = /(?:^|[^A-Z])Z?(?:[RB]\s?(1[3-9]|2[0-2])|R\s?[LI]([3-9]))\s?\d{2,3}(?:\/\d{2,3})?\s?[A-HJ-NP-WYZ]/;
+
+/**
+ * Size pieces from one frame that gave no whole size, for joining across the
+ * frames of one scan (owner decision 2026-11-10, round 8; see
+ * `sidewallReader.ts`). Width/aspect: a full 3-digit width, read with a slash
+ * (`195/55`), a separator (`195 55`) or as 5 digits alone on a line (`19555`).
+ * Rim: only `RIM_WITH_LOAD`. Two-digit widths are never used here.
+ */
+export function sizeParts(lines: OcrLineLike[]): { widthAspect: string | null; rim: number | null } {
+  let widthAspect: string | null = null;
+  let rim: number | null = null;
+  for (const text of readingOrder(lines).map(l => l.text.toUpperCase())) {
+    if (widthAspect === null) {
+      const m = FULL_WIDTH_ASPECT.exec(text) ?? COMPACT_ALONE.exec(text) ?? SPACED_WIDTH_ASPECT.exec(text);
+      if (m && within(Number(m[1]), FULL_FRAME_SIZE_LIMITS.width) && within(Number(m[2]), FULL_FRAME_SIZE_LIMITS.aspect)) {
+        widthAspect = `${m[1]}/${m[2]}`;
+      }
+    }
+    if (rim === null) {
+      const r = RIM_WITH_LOAD.exec(text);
+      if (r) rim = r[1] ? Number(r[1]) : 10 + Number(r[2]);
+    }
+  }
+  return { widthAspect, rim };
+}
+
 /** Fewest letters and digits after `DOT` in a full-frame read: a whole TIN, not a lone number. */
 export const FULL_FRAME_DOT_MIN_CHARS = 8;
 
-/** `DOT` as a word anywhere in a line: no letter directly before or after it. */
-const DOT_WORD = /(?:^|[^A-Z])DOT(?![A-Z])/;
-
 /**
- * DOT/TIN from a whole frame: a line must contain the word `DOT` (anything
- * before it is dropped). That line
+ * DOT/TIN from a whole frame: a line must contain a DOT marker (`DOT_MARKER`:
+ * the word `DOT`, or the misreads `D0T`, `OOT`, `DTS`; anything before it is
+ * dropped). That line
  * alone, or joined with the next line in reading order (TINs often wrap), must
  * give 8–13 letters and digits after `DOT`, ending in a valid date code.
  */
 export function fullFrameDotCandidate(lines: OcrLineLike[], now: Date = new Date()): string | null {
   const ordered = readingOrder(lines);
   for (let i = 0; i < ordered.length; i++) {
-    if (!DOT_WORD.test(ordered[i].text.toUpperCase())) continue;
+    if (!DOT_MARKER.test(ordered[i].text.toUpperCase())) continue;
     const tries = [[ordered[i]], ...(ordered[i + 1] ? [[ordered[i], ordered[i + 1]]] : [])];
     for (const group of tries) {
       const value = dotCandidate(group, now);

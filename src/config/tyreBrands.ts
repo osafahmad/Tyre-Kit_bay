@@ -5,11 +5,12 @@
  * An OCR line becomes a Make suggestion only when it contains one of these
  * names exactly, as a whole word. Case doesn't matter, and the spacing between
  * the words of a multi-word name doesn't either (`GENERAL  TIRE`). The value is
- * kept as read. Fragments (e.g. `iental`), look-alikes (`Contnental`) and
- * spelling variants (`Good Year`) never match; nothing is completed or
- * corrected (CLAUDE.md allows fuzzy matching only inside a detector Brand
- * crop, and there is no detector). Not exhaustive: an unlisted brand just
- * stays `Not read`, and the user types it. Edit freely.
+ * kept as read. Look-alikes (`Contnental`) and spelling variants (`Good Year`)
+ * never match. The only fragment rule is `BRAND_ROOTS` in
+ * `src/ml/sidewallTextFilter.ts` (owner decision 2026-11-10: e.g. `tinentals`
+ * → Continental), and its roots change only with owner approval. Not
+ * exhaustive: an unlisted brand just stays `Not read`, and the user types it.
+ * Edit the list freely.
  *
  * Left out on purpose: brand names that are everyday words likely to appear
  * elsewhere on a sidewall (e.g. Federal, Atlas, Torque, General on its own).

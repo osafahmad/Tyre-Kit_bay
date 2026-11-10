@@ -658,3 +658,82 @@ Saved sidewall frame (full resolution, cropped to the guide) → `recognizeLines
 - Whole-frame ML Kit accuracy on moulded black-on-black sidewall text, across several tyres and brands, on iOS and Android. Expect fewer suggestions than the detector pipeline gave on 2026-11-06.
 - Whether the 2-frame agreement and 24-run cap still fit (one OCR run per frame now, so at most one run per saved frame).
 
+
+### iPhone 13: every sidewall field `Not read` (2026-11-10, round 1 fixes)
+**Status: unit-tested. Not yet re-run on the iPhone 13. The cause isn't known yet: the new logs are there to find it.**
+- **Raw text logging (TEMPORARY, owner request):** each ML Kit read logs its raw lines (text and height), the saved frame's pixel size, the parsed values, and a reason for each empty field (`explainRejections`: regex mismatch, outside the size limits, width/aspect without a rim, DOT line too short or bad date, no listed brand). At the end, each field that wasn't suggested logs whether no frame read it or the reads disagreed. These logs go through `sidewallLog`, which `diagnosticsConfig.sidewallOcrLogs` keeps on in every build, so they reach the Xcode console. This reverses the earlier rule that whole-frame text is never logged, so the flag must be off for store builds (already on the release checklist). **Update 2026-11-10:** the flag is now `__DEV__`, so these logs are development-only (see "iPhone 13 verification" below).
+- **Centre crop before ML Kit (owner value 0.6, UNCALIBRATED):** saved frames are already cropped to the guide, so this takes the central 60% of the guide crop (`ocrConfig.sidewallCentreCropRatio`), written to a temporary JPEG with Nitro Image and deleted after OCR. The idea is that ML Kit scales small images up, as with the old detector crops. That's **unverified on iOS**. If the crop gives nothing still needed, or fails, the whole frame is read too (up to 2 OCR runs per frame, still capped at 24).
+- **Size without 2-frame agreement (owner decision 2026-11-10):** this reverses the 2026-11-06 removal of the 1-frame relaxation, **for size only**. With no 2-frame agreement, the size read in the most frames wins; ties go to a read with a load/speed index, then the longer value, then the earliest frame (`bestSizeRead`). It's always one real read. With divergent single reads (`205/65 R16` vs `205/55 R16`, no load/speed on either) the earliest wins, which may be the wrong one. The user confirms. DOT keeps its date-code-only rule, and make still needs 2 frames.
+- **Deferred (owner decision 2026-11-10):** fuzzy or substring brand matching on whole frames, O/D→0 in DOT/TIN, and l/I→1 in sizes all conflict with CLAUDE.md. The owner chose to decide after seeing the iPhone 13 raw-text logs. Brand matching was already case-insensitive.
+
+#### iPhone 13 logs: round 2 rules (owner decision 2026-11-10)
+
+The `[SidewallOCR]` logs showed that ML Kit reads text on the test tyre (Continental 195/55 R15 85V), but the filter rejected it. The owner approved three rule changes, which are also added to the CLAUDE.md exceptions:
+
+- **Make, brand roots** (`BRAND_ROOTS` in `src/ml/sidewallTextFilter.ts`). When no listed brand is read whole, a token containing `TINENTAL`, `ICHELIN`, `BRIDGEST` or `GOODYEAR` (any case) gives Continental, Michelin, Bridgestone or Goodyear. There's no edit distance, and adding roots needs owner approval. Of the logged fragments, only `tinentals` matches; `inental`, `nentalY`, `ienla` and `Lental` still give nothing. An exact whole-word read is still preferred and kept as read.
+- **Size, rim token and window** (`recoverSize` in `src/ml/ocr/sidewallFields.ts`):
+  - A rim may have the load/speed index glued on (`R1585V`) or a digit before it (`3R1525V`).
+  - A full width/aspect is joined with a rim up to two lines away, nearest first.
+  - The width hundreds-digit inference still needs the rim on the same or an adjacent line, as CLAUDE.md says.
+  - `S5815 85v` and `R58SV` contain no usable `R` rim, so they still give nothing; the rim isn't guessed from `5815`.
+  - The aspect is kept as read: `195/56` stays `195/56`, and the user corrects it.
+- **DOT marker** (`DOT_MARKER` in `src/ml/ocr/parsers.ts`):
+  - `D0T`, `OOT` and `DTS` (which also covers `0DTS` and `ODTS`), glued or not, are now accepted as the DOT marker along with the word `DOT`.
+  - This only finds where the TIN starts. The TIN is kept as read and still needs 8–13 letters/digits ending in a valid week/year, plus agreement across two frames.
+  - Risk: if `DTS` was really `DOT` followed by a TIN starting with `S`, that `S` is dropped. The user confirms the value.
+- Still off: O/D→0 anywhere else in DOT/TIN, and l/I→1 in sizes.
+
+#### iPhone 13 logs: round 3 rules (owner decision 2026-11-10)
+
+The first size was suggested (`195/35 R15`, misread from `LLSS I95/35 R15`), but the true size and the make were still missed. The owner approved these changes, also added to CLAUDE.md:
+
+- **More Continental roots:** `NENTAL` and `TINEN` (5 letters, below round 2's minimum of 6). This covers `ntinenals`, `tinenlal`, and now also `inental` and `nentalY`.
+- **Model-family word** (`MODEL_FAMILY_BRANDS`): a token containing `CONTACT` gives Continental. It's tried last, after brand names and roots. Risk: any other brand's model with "Contact" in its name would be labelled Continental. The user confirms the value. `Comfortc` and `coniactc` don't contain `CONTACT`, so they still give nothing; matching those would need fuzzy matching, which wasn't approved.
+- **`B` as the rim marker** in split sizes (`5B15 85VE C`). The joined size is always written with `R`. `95/55` + `5B15` gives `195/55 R15` through the existing rim-gated width rule.
+- **Make from a single frame:** the same rule as size (`bestSizeRead`: most frames, then the longer value, then the earliest frame). DOT/TIN still needs 2 frames, except for the date-code rule.
+- **Not done: preferring aspect 55 over 35.** That would need a table of how common each size is, and CLAUDE.md doesn't allow inventing those values. On these logs `195/55` (frame 3) and `195/35` (frame 4) are each read once with equal scores, so the earlier frame wins and `195/55 R15` is suggested. If the frames came in the other order, `195/35` would win. A frequency-based prior needs a size list from the owner.
+
+#### iPhone 13 logs: round 4 size rules (owner decision 2026-11-10)
+
+Make now works on the device. These rules cover the size reads that were still missed:
+
+- **Slash-less sizes** (`COMPACT_SIZE_PATTERN` in `src/ml/ocr/parsers.ts`): 5 digits then a rim marker and a rim from 13 to 22 on the same line, such as `19555 R15` → `195/55 R15`. The width must be 160–295 and end in 0 or 5. The aspect must be 30–75 and end in 0 or 5, which is stricter than the owner's regex: that allowed aspects like 33, and real aspects are multiples of 5.
+- **Slash-less short width** (`COMPACT_SHORT_SIZE_PATTERN`): `9555 R15` → `195/55 R15`, only through the existing rim-gated width rule (R13–R17, widths 175–225). `9335 R15` stays empty: no allowed width ends in 93, and making it `195/55` would mean changing two characters.
+- **`8` read as `R`** (`RIM_TOKEN_8` in `sidewallFields.ts`): only for rims 13–22, only when nothing is glued before the `8`, and only when a letter or a load/speed index follows directly. So `815W5V`, `815 85V` and the 2026-11-06 device line `81545Vt` count, but a bare `815`, `815 KG` and `5815 85V` don't. In slash-less sizes the `8` needs a space before it (`19555 815`): `19555815` is not split.
+- `195/ER` + `815W5V` stays empty, because the aspect was never read and is not invented.
+- The load/speed index is still used only for ranking and is never rebuilt (`W5V` doesn't become `85V`).
+
+#### iPhone 13 logs: round 5 size rules (owner decision 2026-11-10)
+
+- **Already handled, no change:** a trailing letter (`195/55 p`) never blocked the width/aspect. That frame failed only because no rim was read nearby. `195/55 p` + `55 R15` and `195/55` + `85 R1585VC` already gave `195/55 R15`.
+- **`l`/`I` for the `1` of a rim** (`RIM_TOKEN_L1`): `Rl565V` and `RI585V` → R15. Only rims 13–19, and only when a load/speed index follows directly. A lone `Rl5` doesn't count, and `95/56 Ri` + `S85VE` stays empty because no rim digit was read. This is the only l/I→1 rule; it doesn't apply anywhere else in a size.
+- **`55 R15` + a width on its own line** (`joinAspectRimWithWidth`): a line holding only `195` or `195/`, directly before or after, is joined as read. `95/` is completed only by the rim-gated width rule. A bare `95` isn't used, because it could be a load index.
+- **Not done:**
+  - Taking the width from a nearby brand or model (`Continental` + `55 R15` → `195`). Continental makes several widths in 55 R15, so that would be a guess.
+  - A bare `15` or `815` as a rim, because any number could match.
+
+#### iPhone 13 logs: round 6 size rules (owner decision 2026-11-10)
+
+- **Rim marker split across lines** (`joinMarkerWithRimDigits`): a line ending in width/aspect plus `R`, `B` or `ZR` (`195/55 R`) is joined with rim digits 13–22 at the start of the very next line (`158s`, `15`, `15 85`, `1585V`). `B` is written as `R` and `ZR` is kept. Four plain digits (`1555`, which could be a date code), digits two lines away, and digits before the marker don't count.
+- **Not done: `o3/55 R15` → `195/55 R15`.** No width digits were read, so `195` would be made up; Continental also sells 175, 185 and 205 in 55 R15. The existing rim-gated rule fills in only the hundreds digit, and only when the last two width digits were read (`95/55`).
+
+#### iPhone 13 logs: round 7 size rules (owner decision 2026-11-10)
+
+- **`19555` on its own line** (`COMPACT_ALONE`): joined with a marked rim (R, B or 8 as before, or Rl/RI) within two lines, or with an unmarked rim plus load/speed index at the start of the very next line (`1585V6:`, `15 85V`; `RIM_LOAD_UNMARKED_AT_START`). A bare `15` doesn't count.
+- **Space, dot, dash or `)` instead of the slash** (`SPACED_WIDTH_ASPECT`): only for a width 160–295 and an aspect 30–75, each ending in 0 or 5. `195 55` + `R15` → `195/55 R15`. `A95 55` + `R15` → `195/55 R15` only through the rim-gated width rule, which needs a marked rim.
+- **Not done: `A95 55` + `15` and `A95) 55 F` + `158`.** Each is missing the slash, the rim marker and a width digit at once. A size would be built from three loose numbers, and sidewalls carry many other numbers (load index, pressure, ply counts). The rim-gated width rule in CLAUDE.md needs "a rim R13–R17 read"; a bare `15` isn't one. Changing that would need the owner to amend the CLAUDE.md rule itself.
+
+#### iPhone 13 logs: round 8 size rules (owner decision 2026-11-10)
+
+- **`Rl5`/`RI5` loosened** (`RIM_TOKEN_L1`): the rim may now be followed by a lone speed symbol (`Rl5 V`, `RI5 H`), whitespace, or the end of the token, as well as by a load/speed index. Letters glued on (`Rl5VAN`) still don't count. Run 1 frame 8/8 (`195/55`, then `Rl5 V` two lines down) gives `195/55 R15`.
+- **Size pieces joined across frames** (`sizeParts` in `sidewallFields.ts`, `dominantValue` in `sidewallReader.ts`): only when no frame in the scan read a whole size.
+  - Each frame without a size gives its full 3-digit width/aspect (`195/55`, `195 55`, or `19555` alone on its line) and its rim, but only a rim with a load/speed index (`R15 85Vt`, `Rl565V`).
+  - The width/aspect read in the most frames is joined with the rim read in the most frames. If either is tied, nothing is joined.
+  - Not used: a stray `R15`, a bare `15`, or a two-digit width (`95/55`).
+  - Risk: a width/aspect from one frame and a rim from another are taken to come from the same size marking. That's true when the whole scan is one tyre's sidewall. The user confirms the value.
+
+#### iPhone 13 verification and release logging (owner, 2026-11-10)
+
+- **Device result (owner-verified, iPhone 13):** the SSDLite tread wear model runs on the device, and ML Kit sidewall OCR suggests Make `Continental` and Size `195/55 R15` on the test tyre (Continental ComfortContact, 195/55 R15 85V). The size came from the cross-frame parts join (round 8). Not covered: DOT/TIN, Android, and other tyres. These are still open on the release checklist.
+- **Logging:** `diagnosticsConfig.sidewallOcrLogs` changed from `true` to `__DEV__`. Release builds no longer log any `[SidewallOCR]` line, including raw ML Kit text, parsed values and rejection reasons. Development builds keep them all for calibrating on new tyres. No separate timing or count metrics were kept for release: the per-read summary (`read done`, OCR run count) is a `sidewallLog` line too, so it's dev-only as well. `releaseGuards.test.ts` checks that a release build logs nothing.
+- **Caution:** rounds 2–8 were tuned on one tyre. Before a store release, test sidewall OCR on other brands and sizes to check that the looser rules don't suggest wrong values.

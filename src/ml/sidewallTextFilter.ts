@@ -1,4 +1,4 @@
-import { TYRE_SIZE_PATTERN, parseTyreSize } from './ocr/parsers';
+import { DOT_MARKER, TYRE_SIZE_PATTERN, parseTyreSize } from './ocr/parsers';
 import {
   fullFrameDotCandidate,
   fullFrameMakeCandidate,
@@ -16,12 +16,14 @@ import type { OcrLineLike } from './ocr/textCandidates';
  *
  * - Size: `parseTyreSize` per line, within `FULL_FRAME_SIZE_LIMITS`. Several
  *   matches are ranked (`rankedSizeCandidate`). With no single-line match,
- *   width/aspect and rim read on adjacent lines are joined (`recoverSize`).
- * - DOT/TIN: a line with the word `DOT`, alone or joined with the next line,
- *   8–13 letters and digits ending in a valid week/year (`fullFrameDotCandidate`).
+ *   width/aspect and a rim read up to two lines away are joined (`recoverSize`).
+ * - DOT/TIN: a line with a DOT marker (`DOT`, or the misreads `D0T`/`OOT`/`DTS`),
+ *   alone or joined with the next line, 8–13 letters and digits ending in a
+ *   valid week/year (`fullFrameDotCandidate`).
  * - Make: a `tyreBrands.ts` name read exactly, as a whole word
- *   (`fullFrameMakeCandidate`). Fuzzy and logo-fragment matching are allowed
- *   only inside a detector Brand crop (CLAUDE.md), so they don't run here.
+ *   (`fullFrameMakeCandidate`); else a token containing one of the
+ *   `BRAND_ROOTS`, then a `MODEL_FAMILY_BRANDS` word such as `Contact`
+ *   (owner decisions 2026-11-10). No other fuzzy matching.
  * - Load index / speed symbol (`91V`): read right after the size. Used to rank
  *   size reads; it isn't a sidewall field (spec §5), so it's never saved.
  *
@@ -46,7 +48,7 @@ const SPEED = '[A-HJ-NP-WYZ]';
 const LOAD_SPEED = `(\\d{2,3}(?:\\/\\d{2,3})?)\\s?\\(?(${SPEED})\\)?(?![A-Z0-9])`;
 const LOAD_SPEED_AT_START = new RegExp(`^\\s*${LOAD_SPEED}`);
 /** A rim token followed by a load/speed index, on a line of its own (`R16 91V`). */
-const RIM_THEN_LOAD_SPEED = new RegExp(`(?:^|[^A-Z0-9])Z?R\\s?(\\d{2})\\s*${LOAD_SPEED}`);
+const RIM_THEN_LOAD_SPEED = new RegExp(`(?:^|[^A-Z])Z?[RB]\\s?(\\d{2})\\s*${LOAD_SPEED}`);
 
 /** ISO load index table: 0–279. */
 const LOAD_INDEX_MAX = 279;
@@ -99,13 +101,90 @@ export function rankedSizeCandidate(lines: OcrLineLike[]): { value: string; load
   return { value: recovered, loadSpeed: null };
 }
 
+/**
+ * Owner decision 2026-11-10 (iPhone 13 logs: curved embossing split
+ * `Continental` into `tinentals`, `inental`, `Lental`, …). When no listed
+ * brand is read whole, a token that contains one of these roots (any case,
+ * 6+ letters, each unique to one brand) gives that brand's listed name. No
+ * edit distance and no shorter fragments: `inental` or `ienla` still give
+ * nothing. Add roots here only with the owner's approval (CLAUDE.md).
+ */
+export const BRAND_ROOTS: readonly { root: string; brand: string }[] = [
+  { root: 'TINENTAL', brand: 'Continental' },
+  // Round 2 (iPhone 13: `ntinenals`, `tinenlal`). `TINEN` is 5 letters, below the 6 above.
+  { root: 'NENTAL', brand: 'Continental' },
+  { root: 'TINEN', brand: 'Continental' },
+  { root: 'ICHELIN', brand: 'Michelin' },
+  { root: 'BRIDGEST', brand: 'Bridgestone' },
+  { root: 'GOODYEAR', brand: 'Goodyear' },
+];
+
+/**
+ * Owner decision 2026-11-10 (iPhone 13 logs: `Contact`, `orContact`,
+ * `ComfortContact` in every frame). Model-family words that only one listed
+ * brand uses. Tried last, only when no brand name or brand root was read.
+ * The value is the brand, never the model. Add words only with the owner's
+ * approval (CLAUDE.md).
+ */
+export const MODEL_FAMILY_BRANDS: readonly { root: string; brand: string }[] = [
+  { root: 'CONTACT', brand: 'Continental' },
+];
+
+function rootCandidate(lines: OcrLineLike[], roots: readonly { root: string; brand: string }[]): string | null {
+  for (const line of [...lines].sort((a, b) => b.frame.height - a.frame.height)) {
+    const upper = line.text.toUpperCase();
+    const hit = roots.find(r => upper.includes(r.root));
+    if (hit) return hit.brand;
+  }
+  return null;
+}
+
+/** Make from a `BRAND_ROOTS` root inside any token; the most prominent (tallest) line first. */
+export const brandRootCandidate = (lines: OcrLineLike[]) => rootCandidate(lines, BRAND_ROOTS);
+
+/** Make from a `MODEL_FAMILY_BRANDS` word inside any token; the most prominent (tallest) line first. */
+export const modelFamilyBrandCandidate = (lines: OcrLineLike[]) => rootCandidate(lines, MODEL_FAMILY_BRANDS);
+
 /** Size, DOT/TIN, make and load/speed from one whole sidewall frame's ML Kit lines. */
 export function filterSidewallText(lines: OcrLineLike[], now: Date = new Date()): SidewallTextReading {
   const size = rankedSizeCandidate(lines);
   return {
     size: size?.value ?? null,
     dotTin: fullFrameDotCandidate(lines, now),
-    make: fullFrameMakeCandidate(lines),
+    make: fullFrameMakeCandidate(lines) ?? brandRootCandidate(lines) ?? modelFamilyBrandCandidate(lines),
     loadSpeed: size?.loadSpeed ?? null,
   };
+}
+
+/** Width/aspect-shaped text (`205/55`, `95/55`), to say why no size was taken. */
+const WIDTH_ASPECT_SHAPE = /\d{2,3}\s*\/\s*\d{2}/;
+
+/**
+ * Diagnostics only: why each field in `reading` is empty, as short reasons for
+ * the `[SidewallOCR]` log. Fields that were read are left out.
+ */
+export function explainRejections(
+  lines: OcrLineLike[],
+  reading: SidewallTextReading,
+): Partial<Record<'size' | 'dotTin' | 'make', string>> {
+  const texts = lines.map(l => l.text.toUpperCase());
+  const why: Partial<Record<'size' | 'dotTin' | 'make', string>> = {};
+  if (lines.length === 0) return { size: 'no text', dotTin: 'no text', make: 'no text' };
+  if (!reading.size) {
+    const parsed = texts.map(t => parseTyreSize(t)).find(p => p !== null);
+    const shaped = texts.find(t => WIDTH_ASPECT_SHAPE.test(t));
+    why.size = parsed
+      ? `regex matched "${parsed.value}" but it is outside the size limits`
+      : shaped
+        ? `width/aspect-shaped text "${shaped}" but no full size on its line and no usable rim within two lines`
+        : 'no size-shaped text (regex mismatch)';
+  }
+  if (!reading.dotTin) {
+    const dot = texts.find(t => DOT_MARKER.test(t));
+    why.dotTin = dot
+      ? `DOT line "${dot}" (+ next line) is not 8–13 letters/digits ending in a valid week/year`
+      : 'no DOT marker read (DOT, D0T, OOT, DTS)';
+  }
+  if (!reading.make) why.make = 'no listed brand read as a whole word, no brand root, no model-family word';
+  return why;
 }

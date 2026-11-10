@@ -1,16 +1,15 @@
 /**
- * Diagnostic logs that are switched on in EVERY build, including release.
+ * Diagnostic switches.
  *
- * TEMPORARY (owner request 2026-11-06): sidewall OCR logs are on so a Release
- * build run from Xcode on an iPhone 13 shows the `[SidewallOCR]` lines (Core ML
- * delegate, text region boxes, OCR text of each region). Logs go to the device
- * log only; nothing is sent anywhere. Plates and chassis numbers are never
- * logged, and full-frame OCR text isn't either (only its parsed values).
- *
- * Turn this off before any store release (docs/RELEASE_CHECKLIST.md).
+ * Sidewall OCR logs (`[SidewallOCR]`: raw ML Kit text of each sidewall frame,
+ * parsed values, rejection reasons, recovery decisions) are on in development
+ * builds only (`__DEV__`). They were on in every build from 2026-11-06 to
+ * 2026-11-10 for iPhone 13 Release diagnostics; turned off for release on
+ * 2026-11-10 (owner request) so raw OCR text never reaches a production
+ * device log. Logs go to the device console only; nothing is sent anywhere.
  */
 export const diagnosticsConfig = {
-  sidewallOcrLogs: true,
+  sidewallOcrLogs: __DEV__,
   /**
    * STAGING ONLY (owner decision 2026-11-06). While the tread status and damage
    * models are missing, Release builds use the demo analyzer instead of

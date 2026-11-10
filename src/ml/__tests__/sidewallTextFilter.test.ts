@@ -1,6 +1,12 @@
 import type { OcrResult } from 'rn-mlkit-ocr';
 import { ocrResultLines } from '../ocr/ocr';
-import { filterSidewallText, loadSpeedAfterSize, rankedSizeCandidate } from '../sidewallTextFilter';
+import {
+  brandRootCandidate,
+  explainRejections,
+  filterSidewallText,
+  loadSpeedAfterSize,
+  rankedSizeCandidate,
+} from '../sidewallTextFilter';
 
 // Fixtures are in rn-mlkit-ocr's `recognizeText` result shape (blocks → lines
 // → elements, frames in image pixels), flattened by `ocrResultLines` exactly
@@ -91,8 +97,13 @@ describe('split size tokens across lines', () => {
     expect(read(result)).toMatchObject({ size: '205/55 R16', loadSpeed: null });
   });
 
-  test('pieces that are not adjacent are never joined', () => {
-    const result = mlKitResult([{ text: '205/55', y: 100 }, { text: 'OUTSIDE', y: 124 }, { text: 'R16', y: 148 }]);
+  test('pieces more than two lines apart are never joined', () => {
+    const result = mlKitResult([
+      { text: '205/55', y: 100 },
+      { text: 'OUTSIDE', y: 124 },
+      { text: 'TUBELESS', y: 148 },
+      { text: 'R16', y: 172 },
+    ]);
     expect(read(result).size).toBeNull();
   });
 
@@ -162,6 +173,59 @@ describe('load / speed index', () => {
     expect(loadSpeedAfterSize('205/55R16 91X')).toBeNull();
     expect(loadSpeedAfterSize('205/55R16 91O')).toBeNull();
     expect(loadSpeedAfterSize('205/55R16 300V')).toBeNull();
+  });
+});
+
+describe('iPhone 13 Continental 195/55 R15 85V (owner decision 2026-11-10)', () => {
+  // Reads taken from the [SidewallOCR] device logs; layout is synthetic.
+  test('split size with the load/speed glued to the rim', () => {
+    const result = mlKitResult([{ text: '195/55', y: 100, h: 30 }], [{ text: 'tinentals', y: 20 }], [{ text: 'R1585V', y: 134, h: 30 }]);
+    expect(read(result)).toMatchObject({ size: '195/55 R15', loadSpeed: '85V', make: 'Continental' });
+  });
+
+  test('brand roots: Continental, Michelin, Bridgestone, Goodyear', () => {
+    const make = (text: string) => brandRootCandidate(ocrResultLines(mlKitResult([{ text, y: 0 }])));
+    expect(make('tinentals')).toBe('Continental');
+    expect(make('xICHELINy')).toBe('Michelin');
+    expect(make('BRIDGESTONF')).toBe('Bridgestone');
+    expect(make('goodyearr')).toBe('Goodyear');
+  });
+
+  test('shorter fragments and model tokens give no make', () => {
+    for (const text of ['ienla', 'Lental', 'Comfortco', 'Comfortc', 'coniactc']) {
+      expect(read(mlKitResult([{ text, y: 0 }])).make).toBeNull();
+    }
+  });
+
+  test('round 2 roots and the Contact model word (owner decision 2026-11-10)', () => {
+    for (const text of ['inental', 'ntinenals', 'tinenlal', 'nentalY', 'Contact', 'COntact', 'orContact', 'IContact', 'ComfortContact', 'oricontact']) {
+      expect(read(mlKitResult([{ text, y: 0 }])).make).toBe('Continental');
+    }
+  });
+
+  test('a brand name or root beats a model-family word', () => {
+    expect(read(mlKitResult([{ text: 'ComfortContact', y: 0, h: 60 }, { text: 'MICHELIN', y: 80 }])).make).toBe('MICHELIN');
+  });
+
+  test('B read for R in a split rim (owner decision 2026-11-10)', () => {
+    expect(read(mlKitResult([{ text: '95/55', y: 0 }, { text: '5B15 85VE C', y: 24 }])).size).toBe('195/55 R15');
+    expect(read(mlKitResult([{ text: '195/55', y: 0 }, { text: 'B16', y: 24 }])).size).toBe('195/55 R16');
+  });
+
+  test('a brand read whole is kept as read, before any root', () => {
+    expect(read(mlKitResult([{ text: 'CONTINENTAL', y: 0 }])).make).toBe('CONTINENTAL');
+  });
+
+  test('misread DOT prefix', () => {
+    expect(read(mlKitResult([{ text: 'ODTS 1Y6 032MKT 0124', y: 0 }])).dotTin).toBe('1Y6 032MKT 0124');
+  });
+
+  test('rejection reasons name the new rules', () => {
+    const lines = ocrResultLines(mlKitResult([{ text: 'oottDE', y: 0 }, { text: 'ienla', y: 30 }]));
+    expect(explainRejections(lines, filterSidewallText(lines, NOW))).toMatchObject({
+      dotTin: expect.stringContaining('OOTTDE'),
+      make: expect.stringContaining('brand root'),
+    });
   });
 });
 

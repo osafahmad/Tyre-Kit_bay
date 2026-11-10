@@ -25,6 +25,41 @@ export function parseTyreSize(text: string): ParsedTyreSize | null {
   };
 }
 
+/**
+ * Slash-less sizes (owner decision 2026-11-10, iPhone 13: `19555 R15`), on
+ * uppercased text. A 5-digit width+aspect then a rim marker and rim 13–22:
+ * width 160–295 ending in 0 or 5, aspect 30–75 ending in 0 or 5. The rim
+ * marker may be `R`, `B`, or `8` after a space (`19555 815`): a bare `8` glued
+ * to the digits (`19555815`) is not split. Groups: width, aspect, rim.
+ */
+export const COMPACT_SIZE_PATTERN =
+  /(?:^|[^0-9A-Z])(1[6-9][05]|2\d[05])([3-7][05])(?:\s?[RB]|\s8)\s?(1[3-9]|2[0-2])(?![0-9])/;
+
+/**
+ * The same with only the last two width digits (`9555 R15`). Groups: the two
+ * width digits, aspect, rim. Only completed through `SIZE_WIDTH_INFERENCE`.
+ */
+export const COMPACT_SHORT_SIZE_PATTERN =
+  /(?:^|[^0-9])(\d{2})([3-7][05])(?:\s?[RB]|\s8)\s?(1[3-9]|2[0-2])(?![0-9])/;
+
+/**
+ * DOT marker as ML Kit reads it on worn / glary sidewalls (owner decision
+ * 2026-11-10, iPhone 13 logs: `oottDE`, `ootDTO`, `ODTSID`, `DTS1D`).
+ * - `DOT` as a word: no letter directly before or after it.
+ * - Misread markers `D0T`, `OOT`, `DTS` (also inside `0DTS` / `ODTS`):
+ *   anywhere, glued to other text.
+ * Only locates where the TIN starts. The TIN after it is kept as read, and is
+ * accepted only if it has 8–13 letters/digits ending in a valid week/year
+ * (`fullFrameDotCandidate`).
+ */
+export const DOT_MARKER = /(?:^|[^A-Z])DOT(?![A-Z])|D0T|OOT|DTS/;
+
+/** Text after the first DOT marker (anything before it dropped), or null when there is none. Uppercase input. */
+export function textAfterDotMarker(upper: string): string | null {
+  const m = DOT_MARKER.exec(upper);
+  return m ? upper.slice(m.index + m[0].length).trimStart() : null;
+}
+
 export type ParsedDotAge = { week: number; year: number; ageYears: number; ageMonths: number };
 
 export function parseDotAge(tin: string, now = new Date()): ParsedDotAge | null {

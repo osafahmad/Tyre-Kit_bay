@@ -100,7 +100,16 @@ export const ocrConfig = {
    */
   chassisMaxChars: 17,
   /**
-   * UNCALIBRATED. A sidewall value is only suggested when this many frames read
+   * UNCALIBRATED (owner value 2026-11-10). Sidewall OCR first reads the central
+   * part of each saved frame (already cropped to the guide): this fraction of
+   * its width and height, centred, as a stand-in for the old detector crop's
+   * zoom. The whole frame is read too when the crop gives nothing.
+   */
+  sidewallCentreCropRatio: 0.6,
+  /**
+   * UNCALIBRATED. Size and make: a single valid read is suggested even without
+   * a second agreeing frame (owner decisions 2026-11-10, see sidewallReader.ts).
+   * DOT/TIN: a value is only suggested when this many frames read
    * the same text for it (ignoring case and spaces). One stray read isn't enough.
    */
   sidewallMinAgreeingReads: 2,
