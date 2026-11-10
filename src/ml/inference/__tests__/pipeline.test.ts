@@ -137,69 +137,9 @@ test('the input tensor sent to the model matches the manifest', async () => {
   expect(values.every(v => v === 1)).toBe(true);
 });
 
-describe('sidewall text detector in the pipeline', () => {
-  const { modelManifest } = require('../../manifest') as typeof import('../../manifest');
-  const textEntry = modelManifest.sidewallTextDetector!;
-  const n = textEntry.outputShape[2];
-
-  /** Text detector whose every run returns one Size box and one DOT box (normalised cx, cy, w, h). */
-  function textModel(fail = false) {
-    const out = new Float32Array(8 * n);
-    const put = (j: number, box: number[], label: number, score: number) => {
-      box.forEach((v, r) => (out[r * n + j] = v));
-      out[(4 + label) * n + j] = score;
-    };
-    put(0, [0.5, 0.5, 0.25, 0.125], 3, 0.8); // Size
-    put(1, [0.25, 0.5, 0.125, 0.125], 1, 0.6); // Dot-Code
-    return {
-      inputs: [{ name: 'in', dataType: 'float32', shape: textEntry.inputShape }],
-      outputs: [{ name: 'out', dataType: 'float32', shape: textEntry.outputShape }],
-      run: jest.fn(async () => {
-        if (fail) throw new Error('delegate crashed');
-        return [out.slice().buffer];
-      }),
-    };
-  }
-
-  test('regions go to the OCR hook in frame pixels; values still come only from the user', async () => {
-    const { deps, models } = setup([[0.9, 0.1, 0]], [[0.95, 0.05]]);
-    const model = textModel();
-    models.sidewallText = { key: 'sidewallTextDetector', entry: textEntry, delegate: 'cpu', model };
-    const onSidewallTextRegions = jest.fn();
-    const result = await runTyrePipeline(models, input, () => {}, { ...deps, onSidewallTextRegions });
-
-    expect(model.run).toHaveBeenCalledTimes(input.sidewallFrames.length);
-    // The fake frames are 4x4: scale 224/4 = 56, no padding.
-    const regions = onSidewallTextRegions.mock.calls[0][0];
-    expect(regions).toHaveLength(4);
-    expect(regions[0]).toMatchObject({
-      frame: 's1.jpg',
-      label: 'Size',
-      box: { x: 1.5, y: 1.75, width: 1, height: 0.5 },
-      // Grown to the 36 px minimum, clamped to the 4x4 test frame.
-      cropRect: { x: 0, y: 0, width: 4, height: 4 },
-    });
-    expect(regions[0].score).toBeCloseTo(0.8);
-    expect(regions[1]).toMatchObject({ frame: 's1.jpg', label: 'Dot-Code' });
-    expect(regions[2].frame).toBe('s2.jpg');
-
-    expect(result).not.toHaveProperty('textRegions');
-    expect(result).toMatchObject({ size: '215/65 R15', make: 'Brand', model: null, dotTin: null });
-  });
-
-  test('a detector failure leaves no regions but does not fail the analysis', async () => {
-    const { deps, models } = setup([[0.9, 0.1, 0]], [[0.95, 0.05]]);
-    models.sidewallText = { key: 'sidewallTextDetector', entry: textEntry, delegate: 'cpu', model: textModel(true) };
-    const onSidewallTextRegions = jest.fn();
-    const result = await runTyrePipeline(models, input, () => {}, { ...deps, onSidewallTextRegions });
-    expect(onSidewallTextRegions).toHaveBeenCalledWith([]);
-    expect(result.status).toBe('good');
-  });
-
-  test('without the detector, the sidewall has no regions', async () => {
-    const { deps, models } = setup([[0.9, 0.1, 0]], [[0.95, 0.05]]);
-    const onSidewallTextRegions = jest.fn();
-    await runTyrePipeline(models, input, () => {}, { ...deps, onSidewallTextRegions });
-    expect(onSidewallTextRegions).toHaveBeenCalledWith([]);
-  });
+test('the sidewall step runs no model: values come only from what the user confirmed', async () => {
+  const { deps, models, treadModel } = setup([[0.9, 0.1, 0]], [[0.95, 0.05]]);
+  const result = await runTyrePipeline(models, input, () => {}, deps);
+  expect(treadModel.run).toHaveBeenCalledTimes(input.treadFrames.length);
+  expect(result).toMatchObject({ size: '215/65 R15', make: 'Brand', model: null, dotTin: null });
 });

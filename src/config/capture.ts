@@ -100,30 +100,10 @@ export const ocrConfig = {
    */
   chassisMaxChars: 17,
   /**
-   * UNCALIBRATED. Extra space around a detected sidewall text region before the
-   * OCR crop, as a fraction of the box's width and height on each side, so
-   * letters cut by a tight box aren't lost. Raised from 0.1 after device tests
-   * (2026-11-06): tight boxes cut letter edges on curved embossed text.
-   */
-  sidewallRegionMarginRatio: 0.2,
-  /**
-   * Smallest OCR crop side in pixels. ML Kit rejects images under 32 px
-   * (`InputImage width and height should be at least 32`); smaller crops are
-   * grown around their centre, within the frame.
-   */
-  sidewallMinCropPx: 36,
-  /**
-   * UNCALIBRATED. Size regions only: the crop is lengthened by this fraction of
-   * its length along the box's longer side (the direction the text runs), half
-   * on each side. Device tests (2026-11-06): the Size box caught the end of the
-   * model name (`rlConta`) and cut off the numbers next to it.
-   */
-  sidewallSizeExtraLengthRatio: 0.3,
-  /**
    * UNCALIBRATED. A sidewall value is only suggested when this many frames read
    * the same text for it (ignoring case and spaces). One stray read isn't enough.
    */
   sidewallMinAgreeingReads: 2,
-  /** UNCALIBRATED. Most OCR runs for one sidewall, to bound the wait on slow phones. */
+  /** UNCALIBRATED. Most OCR runs (one per saved frame) for one sidewall, to bound the wait on slow phones. */
   sidewallMaxOcrRuns: 24,
 };

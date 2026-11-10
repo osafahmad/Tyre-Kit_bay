@@ -9,14 +9,12 @@ import {
 import type { TyreStatus } from '../../features/inspection/types';
 import {
   isSsdModel,
-  isYoloModel,
   type ClassifierManifestEntry,
   type DamageManifestEntry,
   type ModelKey,
   type ModelManifest,
   type SsdDetectorManifestEntry,
   type TreadManifestEntry,
-  type YoloDetectorManifestEntry,
 } from '../manifest';
 import { ssdAnchorCount } from './tensorUtils';
 import type {
@@ -149,34 +147,6 @@ export function validateManifestEntry(
       }
     }
   }
-  if (isYoloModel(key)) {
-    const d = entry as YoloDetectorManifestEntry;
-    if (d.outputFormat !== 'yolov8_raw') p.push(`outputFormat ${String(d.outputFormat)} is not supported`);
-    if (d.outputType !== 'float32') {
-      const q = d.outputQuantization;
-      if (!q || !isNum(q.scale) || q.scale <= 0 || !isNum(q.zeroPoint)) {
-        p.push(`outputQuantization is required for ${d.outputType} output`);
-      }
-    }
-    const out = d.outputShape;
-    if (!Array.isArray(out) || out.length !== 3 || out.some(n => !Number.isInteger(n) || n <= 0)) {
-      p.push('outputShape must be 3 positive integers');
-    } else {
-      if (out[0] !== 1) p.push('outputShape batch must be 1');
-      if (out[1] !== 4 + d.labels.length) {
-        p.push(`outputShape needs 4 box values + ${d.labels.length} label scores, has ${out[1]}`);
-      }
-    }
-    if (d.boxFormat !== 'cxcywh_normalised' && d.boxFormat !== 'cxcywh_pixels') {
-      p.push(`boxFormat ${String(d.boxFormat)} is not supported`);
-    }
-    if (!isNum(d.iouThreshold) || d.iouThreshold <= 0 || d.iouThreshold > 1) {
-      p.push('iouThreshold must be above 0 and at most 1');
-    }
-    if (!Number.isInteger(d.maxDetections) || d.maxDetections <= 0) {
-      p.push('maxDetections must be a positive integer');
-    }
-  }
   if (isSsdModel(key)) p.push(...validateSsdEntry(entry as SsdDetectorManifestEntry));
   if (key === 'tread') {
     const t = entry as TreadManifestEntry;
@@ -281,17 +251,6 @@ export function checkModelMatchesManifest(
     }
   }
   if (model.outputs.length === 0) p.push('model has no outputs');
-  if (isYoloModel(key) && model.outputs.length > 0) {
-    const d = entry as YoloDetectorManifestEntry;
-    if (model.outputs.length !== 1) p.push(`expected 1 output tensor, model has ${model.outputs.length}`);
-    const out = model.outputs[0];
-    if (out.dataType !== d.outputType) {
-      p.push(`output type is ${out.dataType}, manifest says ${d.outputType}`);
-    }
-    if (out.shape.join(',') !== d.outputShape.join(',')) {
-      p.push(`output shape is [${out.shape}], manifest says [${d.outputShape}]`);
-    }
-  }
   if (isSsdModel(key) && model.outputs.length > 0) {
     const d = entry as SsdDetectorManifestEntry;
     const expected = [d.outputs.boxes, d.outputs.scores];

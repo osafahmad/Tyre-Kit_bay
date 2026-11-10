@@ -9,10 +9,11 @@ export type ParsedTyreSize = {
   rimInches: number;
 };
 
+/** Spec §5 tyre size, on uppercased text: `205/55R16`, `195/65 R15`, `225/45ZR17`, `LT265/70 R17`. */
+export const TYRE_SIZE_PATTERN = /\b(P|LT|ST|T)?\s*(\d{3})\s*\/\s*(\d{2})\s*(ZR|R|D|B)?\s*(\d{2}(?:\.\d)?)\b/;
+
 export function parseTyreSize(text: string): ParsedTyreSize | null {
-  const match = text
-    .toUpperCase()
-    .match(/\b(P|LT|ST|T)?\s*(\d{3})\s*\/\s*(\d{2})\s*(ZR|R|D|B)?\s*(\d{2}(?:\.\d)?)\b/);
+  const match = text.toUpperCase().match(TYRE_SIZE_PATTERN);
   if (!match) return null;
   const [, prefix = '', width, aspectRatio, construction = 'R', rim] = match;
   return {

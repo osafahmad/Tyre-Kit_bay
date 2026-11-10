@@ -5,9 +5,8 @@ import type {
   SsdAnchorConfig,
   SsdDetectorManifestEntry,
   TensorDType,
-  YoloDetectorManifestEntry,
 } from '../manifest';
-import type { Detection, LetterboxInfo, PixelRect, RawPixels, TensorSpec } from './types';
+import type { Detection, LetterboxInfo, RawPixels, TensorSpec } from './types';
 
 // Converts saved frames to model input tensors and model outputs to scores.
 // Everything here follows the manifest; no model values live in this file.
@@ -342,7 +341,7 @@ export function classifierProbabilities(
   return entry.scores === 'logits' ? softmax(scores) : scores;
 }
 
-// ---------------------------------------------------------------- YOLO decoding
+// ---------------------------------------------------------------- NMS
 
 /** Intersection over union of two corner boxes. */
 export function iou(a: Detection, b: Detection): number {
@@ -355,7 +354,7 @@ export function iou(a: Detection, b: Detection): number {
 }
 
 /**
- * Greedy NMS per label (Ultralytics' default, not class-agnostic): highest
+ * Greedy NMS per label (not class-agnostic): highest
  * score first; a box is dropped if it overlaps a kept box of the same label
  * by more than `iouThreshold`.
  */
@@ -371,53 +370,6 @@ export function nonMaxSuppression(
     if (kept.every(k => k.labelIndex !== d.labelIndex || iou(k, d) <= iouThreshold)) kept.push(d);
   }
   return kept;
-}
-
-/**
- * Raw YOLOv8 head `[1, 4 + labels, anchors]` → boxes in model-input pixels.
- * Each anchor takes its best label; anchors below `confidenceThreshold` are
- * dropped, then NMS runs.
- */
-export function decodeYoloDetections(
-  output: ArrayBuffer,
-  entry: YoloDetectorManifestEntry,
-): Detection[] {
-  const values = readScores(output, entry.outputType, entry.outputQuantization);
-  const [, rows, anchors] = entry.outputShape;
-  const labels = entry.labels.length;
-  if (rows !== 4 + labels || values.length !== rows * anchors) {
-    throw new Error(`Detector returned ${values.length} values; expected ${(4 + labels) * anchors}.`);
-  }
-  const [, , inH, inW] =
-    entry.inputLayout === 'NCHW'
-      ? entry.inputShape
-      : [0, 0, entry.inputShape[1], entry.inputShape[2]];
-  const sx = entry.boxFormat === 'cxcywh_normalised' ? inW : 1;
-  const sy = entry.boxFormat === 'cxcywh_normalised' ? inH : 1;
-  const at = (row: number, anchor: number) => values[row * anchors + anchor];
-
-  const candidates: Detection[] = [];
-  for (let j = 0; j < anchors; j++) {
-    let best = 0;
-    for (let c = 1; c < labels; c++) if (at(4 + c, j) > at(4 + best, j)) best = c;
-    const score = at(4 + best, j);
-    if (!(score >= entry.confidenceThreshold)) continue;
-    const cx = at(0, j) * sx;
-    const cy = at(1, j) * sy;
-    const w = at(2, j) * sx;
-    const h = at(3, j) * sy;
-    if (!(w > 0 && h > 0)) continue;
-    candidates.push({
-      label: entry.labels[best],
-      labelIndex: best,
-      score,
-      x1: cx - w / 2,
-      y1: cy - h / 2,
-      x2: cx + w / 2,
-      y2: cy + h / 2,
-    });
-  }
-  return nonMaxSuppression(candidates, entry.iouThreshold, entry.maxDetections);
 }
 
 // ---------------------------------------------------------------- SSD decoding
@@ -539,70 +491,4 @@ export function decodeSsdDetections(
     candidates.push({ label: entry.labels[best], labelIndex: best, score, x1, y1, x2, y2 });
   }
   return nonMaxSuppression(candidates, entry.iouThreshold, entry.maxDetections);
-}
-
-/** Model-input box → source-frame pixels (undo letterbox), clipped to the frame. */
-export function detectionToFrameRect(d: Detection, lb: LetterboxInfo): PixelRect | null {
-  const clip = (v: number, max: number) => Math.min(Math.max(v, 0), max);
-  const x1 = clip((d.x1 - lb.padX) / lb.scale, lb.sourceWidth);
-  const y1 = clip((d.y1 - lb.padY) / lb.scale, lb.sourceHeight);
-  const x2 = clip((d.x2 - lb.padX) / lb.scale, lb.sourceWidth);
-  const y2 = clip((d.y2 - lb.padY) / lb.scale, lb.sourceHeight);
-  if (x2 - x1 <= 0 || y2 - y1 <= 0) return null;
-  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
-}
-
-/** Grows [start, end) around its centre to at least `min`, kept inside [0, limit]. */
-function growSpan(start: number, end: number, min: number, limit: number): [number, number] {
-  if (end - start >= min || limit <= 0) return [start, end];
-  const size = Math.min(min, limit);
-  let s = Math.round((start + end) / 2 - size / 2);
-  s = Math.max(0, Math.min(s, limit - size));
-  return [s, s + size];
-}
-
-/**
- * Lengthens a crop along its longer side (the direction the text runs) by
- * `ratio` of that length, half on each side, kept inside the frame.
- */
-export function extendAlongText(
-  rect: PixelRect,
-  frameWidth: number,
-  frameHeight: number,
-  ratio: number,
-): PixelRect {
-  if (ratio <= 0) return rect;
-  if (rect.width >= rect.height) {
-    const extra = Math.round((rect.width * ratio) / 2);
-    const x1 = Math.max(0, rect.x - extra);
-    const x2 = Math.min(frameWidth, rect.x + rect.width + extra);
-    return { ...rect, x: x1, width: x2 - x1 };
-  }
-  const extra = Math.round((rect.height * ratio) / 2);
-  const y1 = Math.max(0, rect.y - extra);
-  const y2 = Math.min(frameHeight, rect.y + rect.height + extra);
-  return { ...rect, y: y1, height: y2 - y1 };
-}
-
-/**
- * Box grown by `marginRatio` on each side → whole-pixel crop inside the frame,
- * at least `minSize` pixels on each side (grown around its centre) when the
- * frame is big enough.
- */
-export function ocrCropRect(
-  box: PixelRect,
-  frameWidth: number,
-  frameHeight: number,
-  marginRatio: number,
-  minSize = 0,
-): PixelRect {
-  const mx = box.width * marginRatio;
-  const my = box.height * marginRatio;
-  let x1 = Math.max(0, Math.floor(box.x - mx));
-  let y1 = Math.max(0, Math.floor(box.y - my));
-  let x2 = Math.min(frameWidth, Math.ceil(box.x + box.width + mx));
-  let y2 = Math.min(frameHeight, Math.ceil(box.y + box.height + my));
-  [x1, x2] = growSpan(x1, x2, minSize, frameWidth);
-  [y1, y2] = growSpan(y1, y2, minSize, frameHeight);
-  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }

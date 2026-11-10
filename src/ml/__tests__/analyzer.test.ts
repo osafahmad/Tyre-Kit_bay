@@ -128,45 +128,12 @@ describe('TfliteTyreAnalyzer with the inference layer', () => {
   });
 });
 
-describe('TfliteTyreAnalyzer and the optional sidewall text detector', () => {
+describe('TfliteTyreAnalyzer loads no sidewall model', () => {
   const { fullManifest, fakeLoaderDeps, fakeDecoder } =
     require('../inference/__fixtures__/models') as typeof import('../inference/__fixtures__/models');
-  const textEntry = modelManifest.sidewallTextDetector!;
-  const textModel = {
-    inputs: [{ name: 'in', dataType: 'float32', shape: textEntry.inputShape }],
-    outputs: [{ name: 'out', dataType: 'float32', shape: textEntry.outputShape }],
-    run: jest.fn(async () => [new Float32Array(8 * textEntry.outputShape[2]).buffer]),
-  };
   const input = { sidewallFrames: ['s1.jpg'], treadFrames: ['t1.jpg'], userDetails: {} };
 
-  function depsWithText() {
-    const base = fakeLoaderDeps();
-    const resolve = base.resolveAssetUri;
-    const create = base.createModel.getMockImplementation()!;
-    return fakeLoaderDeps({
-      resolveAssetUri: f => (f === textEntry.file ? 'file:///bundle/text.tflite' : resolve(f)),
-      createModel: jest.fn(async (url: string, d: never[]) =>
-        url === 'file:///bundle/text.tflite' ? textModel : create(url, d),
-      ),
-    });
-  }
-
-  test('is loaded and run on sidewall frames when it is in the manifest', async () => {
-    const deps = depsWithText();
-    const onSidewallTextRegions = jest.fn();
-    const a = new TfliteTyreAnalyzer({ ...fullManifest, sidewallTextDetector: textEntry }, () => deps, () => ({
-      resolveFramePath: (p: string) => `/docs/${p}`,
-      decoder: fakeDecoder({ width: 4, height: 4 }).decoder,
-      onSidewallTextRegions,
-    }));
-    const result = await a.analyse(input, () => {});
-    expect(deps.createModel).toHaveBeenCalledTimes(3);
-    expect(textModel.run).toHaveBeenCalledTimes(1);
-    expect(onSidewallTextRegions).toHaveBeenCalledWith([]); // all-zero output: nothing above threshold
-    expect(result.status).toBe('good');
-  });
-
-  test('analysis still runs when it is missing from the manifest', async () => {
+  test('only tread and damage are opened; sidewall text is read by ML Kit on Sidewall captured', async () => {
     const deps = fakeLoaderDeps();
     const a = new TfliteTyreAnalyzer(fullManifest, () => deps, () => ({
       resolveFramePath: (p: string) => `/docs/${p}`,

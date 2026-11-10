@@ -4,7 +4,6 @@ import { ModelUnavailableError, type AnalysisStep, type TyreAnalyzer } from './a
 import { ANALYSIS_MODELS, hasAnalysisModels, modelManifest, type ModelManifest } from './manifest';
 import {
   defaultModelLoaderDeps,
-  loadModel,
   loadModels,
   type ModelLoaderDeps,
 } from './inference/modelLoader';
@@ -67,14 +66,7 @@ export class TfliteTyreAnalyzer implements TyreAnalyzer {
       );
       throw new ModelUnavailableError(missing ? 'missing' : 'load_failed', failures);
     }
-    // Optional: if the text detector is missing or won't open, analysis
-    // still runs; the sidewall just has no text regions.
-    const text = await loadModel('sidewallTextDetector', this.manifest, this.loaderDeps());
-    return {
-      tread: models.tread,
-      damage: models.damage,
-      ...(text.ok ? { sidewallText: text.model } : {}),
-    };
+    return { tread: models.tread, damage: models.damage };
   }
 
   async analyse(

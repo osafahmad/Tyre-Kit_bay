@@ -24,8 +24,8 @@ type ModelEntryBase = {
   inputType: TensorDType;
   colorOrder: 'RGB' | 'BGR';
   /**
-   * How a frame is fitted to the input size. `letterbox` (Ultralytics):
-   * scale to fit keeping aspect ratio, pad the rest.
+   * How a frame is fitted to the input size. `letterbox`: scale to fit
+   * keeping aspect ratio, pad the rest (no bundled model uses it today).
    */
   resize: 'stretch' | 'center_crop' | 'letterbox';
   /** Required for `letterbox`: the 0–255 grey the padding is filled with (before normalisation). */
@@ -72,30 +72,6 @@ export type DetectorManifestEntry = ModelEntryBase & {
   outputFormat: string;
 };
 
-/**
- * Ultralytics YOLOv8 detection head exported without NMS: one output tensor
- * `[1, 4 + labels.length, anchors]`, per anchor 4 box values then one score
- * per label in `labels` order (already sigmoid scores). NMS is done by the app
- * (`decodeYoloDetections` in inference/tensorUtils.ts).
- */
-export type YoloDetectorManifestEntry = ModelEntryBase & {
-  outputFormat: 'yolov8_raw';
-  outputType: TensorDType;
-  /** Required when `outputType` is uint8 or int8. */
-  outputQuantization: Quantization | null;
-  /** Full output tensor shape, e.g. [1, 8, 1029]. */
-  outputShape: number[];
-  /**
-   * The 4 box values per anchor: centre x, centre y, width, height, either
-   * as 0–1 of the input size (`cxcywh_normalised`) or in input pixels.
-   */
-  boxFormat: 'cxcywh_normalised' | 'cxcywh_pixels';
-  /** Overlapping boxes of the same label above this IoU are merged by NMS. */
-  iouThreshold: number;
-  /** Most boxes kept per frame after NMS. */
-  maxDetections: number;
-};
-
 /** torchvision `DefaultBoxGenerator` settings: one anchor set per feature map. */
 export type SsdAnchorConfig = {
   generator: 'torchvision_default_boxes';
@@ -140,8 +116,6 @@ export type SsdDetectorManifestEntry = ModelEntryBase & {
 
 export type ModelManifest = {
   tyreDetector: DetectorManifestEntry | null;
-  /** Finds the Brand, DOT code, Model and Size text regions on a sidewall frame. */
-  sidewallTextDetector: YoloDetectorManifestEntry | null;
   tread: TreadManifestEntry | null;
   damage: DamageManifestEntry | null;
   /**
@@ -152,13 +126,6 @@ export type ModelManifest = {
    */
   treadWear: SsdDetectorManifestEntry | null;
 };
-
-/** Keys whose entries are `YoloDetectorManifestEntry`. */
-export const YOLO_MODELS = ['sidewallTextDetector'] as const satisfies readonly ModelKey[];
-
-export function isYoloModel(key: ModelKey): key is (typeof YOLO_MODELS)[number] {
-  return (YOLO_MODELS as readonly ModelKey[]).includes(key);
-}
 
 /** Keys whose entries are `SsdDetectorManifestEntry`. */
 export const SSD_MODELS = ['treadWear'] as const satisfies readonly ModelKey[];
@@ -173,44 +140,10 @@ export type ModelKey = keyof ModelManifest;
 export const ANALYSIS_MODELS = ['tread', 'damage'] as const satisfies readonly ModelKey[];
 
 export const modelManifest: ModelManifest = {
-  // The spec's tyre detector (tyre position and distance in preview). Not supplied yet.
+  // The spec's tyre detector (tyre position and distance in preview, spec §7
+  // YOLOX-Nano). Not supplied yet. Sidewall text is read by ML Kit on the
+  // whole saved frame (sidewallReader.ts); no TFLite model runs for it.
   tyreDetector: null,
-  /**
-   * `tyre_detector.tflite`, supplied by the owner 2026-11-06. Values are read
-   * from the file itself (tensor details and the Ultralytics metadata.json
-   * inside it), not from the export notes, which said NHWC/int8: the weights
-   * are int8 but the input and output tensors are float32, and the input is
-   * NCHW. `__tests__/manifest.test.ts` checks this entry against the file.
-   * - normalisation: Ultralytics feeds RGB scaled to 0–1 (pixel / 255).
-   * - letterbox: Ultralytics' padded resize; padding is grey 114, as in training.
-   * - boxFormat: normalised, because the export wraps the model in Ultralytics'
-   *   `_NormalizeCoords` (visible in the graph's tensor names). Confirm on a phone.
-   * - iouThreshold 0.45: owner decision 2026-11-06. maxDetections 300: Ultralytics' default.
-   * - confidenceThreshold: Ultralytics' default (0.25), owner-approved as a
-   *   starting value. Calibrate it on real sidewalls.
-   * Kept out of `tyreDetector` because it finds text regions, not the tyre.
-   */
-  sidewallTextDetector: {
-    file: require('../../assets/models/tyre_detector.tflite'),
-    version: 'yolov8n-ultralytics-8.4.203-2026-11-06T10:47:46Z',
-    inputShape: [1, 3, 224, 224],
-    inputLayout: 'NCHW',
-    inputType: 'float32',
-    colorOrder: 'RGB',
-    resize: 'letterbox',
-    letterboxPadValue: 114,
-    normalisation: { mean: [0, 0, 0], std: [255, 255, 255] },
-    inputQuantization: null,
-    labels: ['Brand', 'Dot-Code', 'Model', 'Size'],
-    confidenceThreshold: 0.25,
-    outputFormat: 'yolov8_raw',
-    outputType: 'float32',
-    outputQuantization: null,
-    outputShape: [1, 8, 1029],
-    boxFormat: 'cxcywh_normalised',
-    iouThreshold: 0.45,
-    maxDetections: 300,
-  },
   tread: null,
   damage: null,
   /**

@@ -1,0 +1,170 @@
+import type { OcrResult } from 'rn-mlkit-ocr';
+import { ocrResultLines } from '../ocr/ocr';
+import { filterSidewallText, loadSpeedAfterSize, rankedSizeCandidate } from '../sidewallTextFilter';
+
+// Fixtures are in rn-mlkit-ocr's `recognizeText` result shape (blocks → lines
+// → elements, frames in image pixels), flattened by `ocrResultLines` exactly
+// as `recognizeLines` does on the phone. Text is synthetic, modelled on the
+// device reads in DECISIONS.md; it is not a recorded phone output.
+
+const NOW = new Date(Date.UTC(2026, 10, 10));
+
+type LineSpec = { text: string; x?: number; y: number; h?: number; w?: number };
+
+/** One ML Kit block per group of lines; elements split on spaces. */
+function mlKitResult(...blocks: LineSpec[][]): OcrResult {
+  return {
+    text: blocks.map(b => b.map(l => l.text).join('\n')).join('\n'),
+    blocks: blocks.map(lines => {
+      const ml = lines.map(({ text, x = 0, y, h = 20, w = text.length * 12 }) => ({
+        text,
+        frame: { x, y, width: w, height: h },
+        elements: text.split(' ').map((t, i) => ({ text: t, frame: { x: x + i * 40, y, width: t.length * 12, height: h } })),
+      }));
+      const top = Math.min(...ml.map(l => l.frame.y));
+      const bottom = Math.max(...ml.map(l => l.frame.y + l.frame.height));
+      return {
+        text: lines.map(l => l.text).join('\n'),
+        frame: { x: 0, y: top, width: Math.max(...ml.map(l => l.frame.width)), height: bottom - top },
+        lines: ml,
+      };
+    }),
+  };
+}
+
+const read = (result: OcrResult) => filterSidewallText(ocrResultLines(result), NOW);
+
+describe('standard clean sidewall', () => {
+  test('size, load/speed, DOT and brand from separate blocks', () => {
+    const result = mlKitResult(
+      [{ text: 'Continental', y: 0, h: 60 }, { text: 'ComfortContact CC7', y: 70, h: 30 }],
+      [{ text: '195/55R15 85V', y: 120, h: 28 }],
+      [{ text: 'DOT 1Y6 032MKT', y: 200, h: 14 }, { text: '0124', y: 218, h: 14 }],
+    );
+    expect(read(result)).toEqual({
+      size: '195/55 R15',
+      dotTin: '1Y6 032MKT 0124',
+      make: 'Continental',
+      loadSpeed: '85V',
+    });
+  });
+
+  test.each([
+    ['205/55R16 91V', '205/55 R16', '91V'],
+    ['195/65 R15 91H', '195/65 R15', '91H'],
+    ['225/45ZR17 94W', '225/45 ZR17', '94W'],
+    ['LT265/70R17 121/118S', 'LT265/70 R17', '121/118S'],
+    ['245/40R18 97(Y)', '245/40 R18', '97Y'],
+  ])('%s → %s, %s', (text, size, loadSpeed) => {
+    expect(read(mlKitResult([{ text, y: 0 }]))).toMatchObject({ size, loadSpeed });
+  });
+
+  test('every brand the owner listed is matched exactly as read, case kept', () => {
+    for (const brand of ['MICHELIN', 'Bridgestone', 'GOODYEAR', 'Pirelli', 'DUNLOP', 'Hankook', 'YOKOHAMA', 'Falken', 'TOYO', 'General Tire']) {
+      expect(read(mlKitResult([{ text: brand, y: 0 }])).make).toBe(brand);
+    }
+  });
+
+  test('model is never part of the reading', () => {
+    expect(read(mlKitResult([{ text: 'Primacy 4', y: 0, h: 80 }]))).toEqual({
+      size: null,
+      dotTin: null,
+      make: null,
+      loadSpeed: null,
+    });
+  });
+});
+
+describe('split size tokens across lines', () => {
+  test('width/aspect on one line, rim and load/speed on the next', () => {
+    const result = mlKitResult([{ text: '205/55', y: 100 }, { text: 'R16 91V', y: 124 }]);
+    expect(read(result)).toMatchObject({ size: '205/55 R16', loadSpeed: '91V' });
+  });
+
+  test('rim to the right on the same row, in its own block', () => {
+    const result = mlKitResult([{ text: '195/65', x: 0, y: 100 }], [{ text: 'R15', x: 120, y: 102 }]);
+    expect(read(result)).toMatchObject({ size: '195/65 R15', loadSpeed: null });
+  });
+
+  test('a load/speed index after another rim is not attributed to the size', () => {
+    const result = mlKitResult([{ text: '205/55', y: 100 }, { text: 'R16', y: 124 }], [{ text: 'R15 88T', y: 400 }]);
+    expect(read(result)).toMatchObject({ size: '205/55 R16', loadSpeed: null });
+  });
+
+  test('pieces that are not adjacent are never joined', () => {
+    const result = mlKitResult([{ text: '205/55', y: 100 }, { text: 'OUTSIDE', y: 124 }, { text: 'R16', y: 148 }]);
+    expect(read(result).size).toBeNull();
+  });
+
+  test('missing width hundreds digit: completed only with a rim R13–R17 (CLAUDE.md exception)', () => {
+    expect(read(mlKitResult([{ text: 'A95/55', y: 0 }, { text: 'R15', y: 24 }])).size).toBe('195/55 R15');
+    expect(read(mlKitResult([{ text: '85/45', y: 0 }, { text: 'R20', y: 24 }])).size).toBeNull();
+  });
+});
+
+describe('dusty / noisy frames with rim and other text', () => {
+  /** Wheel stamp, pressure and load text around a dusty sidewall read. */
+  const noisy = mlKitResult(
+    [{ text: 'ET45 15x6J 100/45 R15', y: 10, h: 10 }], // rim stamp that happens to parse as a size
+    [{ text: 'MAX LOAD 615 KG (1356 LBS)', y: 40, h: 12 }, { text: 'MAX PRESS 350 kPa (51 PSI)', y: 56, h: 12 }],
+    [{ text: '.: TWI', y: 90, h: 10 }],
+    [{ text: '195/65R15 91H', y: 120, h: 30 }],
+    [{ text: 'TUBELESS RADIAL', y: 170, h: 14 }],
+    [{ text: "DOT EX 2H 4KR '3721", y: 200, h: 16 }],
+    [{ text: 'bridgestone', y: 240, h: 26 }],
+  );
+
+  test('the size with a load/speed index beats rim text, whatever the reading order', () => {
+    expect(read(noisy)).toEqual({
+      size: '195/65 R15',
+      dotTin: 'EX 2H 4KR 3721',
+      make: 'bridgestone',
+      loadSpeed: '91H',
+    });
+  });
+
+  test('without load/speed on either, the taller (more prominent) text wins', () => {
+    const lines = ocrResultLines(
+      mlKitResult([{ text: '100/45 R15', y: 0, h: 10 }], [{ text: '195/65 R15', y: 50, h: 30 }]),
+    );
+    expect(rankedSizeCandidate(lines)).toEqual({ value: '195/65 R15', loadSpeed: null });
+  });
+
+  test('load and pressure numbers never become a size, load index or DOT', () => {
+    const result = mlKitResult(
+      [{ text: 'MAX LOAD 615 KG (1356 LBS)', y: 0 }],
+      [{ text: 'MAX PRESS 350 kPa (51 PSI)', y: 30 }],
+      [{ text: 'TREADWEAR 400 TRACTION A TEMPERATURE A', y: 60 }],
+    );
+    expect(read(result)).toEqual({ size: null, dotTin: null, make: null, loadSpeed: null });
+  });
+
+  test('misread characters are never swapped into a size or brand', () => {
+    const result = mlKitResult([{ text: '2O5/55R16 91V', y: 0 }], [{ text: 'Bridgcstone', y: 40 }]);
+    expect(read(result)).toMatchObject({ size: null, make: null });
+  });
+
+  test('a DOT/TIN date code in the future or with a bad week is rejected', () => {
+    expect(read(mlKitResult([{ text: 'DOT EX2H 4KR 5719', y: 0 }])).dotTin).toBeNull();
+    expect(read(mlKitResult([{ text: 'DOT EX2H 4KR 0127', y: 0 }])).dotTin).toBeNull();
+  });
+});
+
+describe('load / speed index', () => {
+  test('read only right after a size, as a whole token', () => {
+    expect(loadSpeedAfterSize('205/55R16 91V XL')).toBe('91V');
+    expect(loadSpeedAfterSize('205/55R16 91VX')).toBeNull();
+    expect(loadSpeedAfterSize('205/55R16 XL 91V')).toBeNull();
+    expect(loadSpeedAfterSize('91V')).toBeNull(); // no size on the line
+  });
+
+  test('I, O and X are not speed symbols; load indexes above 279 are not real', () => {
+    expect(loadSpeedAfterSize('205/55R16 91X')).toBeNull();
+    expect(loadSpeedAfterSize('205/55R16 91O')).toBeNull();
+    expect(loadSpeedAfterSize('205/55R16 300V')).toBeNull();
+  });
+});
+
+test('no text → nothing', () => {
+  expect(read({ text: '', blocks: [] })).toEqual({ size: null, dotTin: null, make: null, loadSpeed: null });
+});

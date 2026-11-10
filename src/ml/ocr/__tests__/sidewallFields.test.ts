@@ -1,13 +1,9 @@
 import {
-  FIELD_BY_LABEL,
   agreedValue,
   dotCandidate,
-  fieldCandidate,
   fullFrameDotCandidate,
   fullFrameMakeCandidate,
   fullFrameSizeCandidate,
-  nameCandidate,
-  sizeCandidate,
 } from '../sidewallFields';
 import type { OcrLineLike } from '../textCandidates';
 
@@ -17,22 +13,18 @@ const line = (text: string, y = 0, height = 20, x = 0): OcrLineLike => ({
   frame: { x, y, width: 100, height },
 });
 
-test('detector labels map to fields', () => {
-  expect(FIELD_BY_LABEL).toEqual({ Brand: 'make', 'Dot-Code': 'dotTin', Model: 'model', Size: 'size' });
-});
-
 describe('size', () => {
   test('uses the tyre size parser', () => {
-    expect(sizeCandidate([line('205/55R16 91V')])).toBe('205/55 R16');
-    expect(sizeCandidate([line('MADE IN'), line('lt265/70 r17', 30)])).toBe('LT265/70 R17');
+    expect(fullFrameSizeCandidate([line('205/55R16 91V')])).toBe('205/55 R16');
+    expect(fullFrameSizeCandidate([line('MADE IN'), line('lt265/70 r17', 30)])).toBe('LT265/70 R17');
   });
 
   test('joins lines when OCR splits the size', () => {
-    expect(sizeCandidate([line('R16', 0, 20, 120), line('205/55', 0, 20, 0)])).toBe('205/55 R16');
+    expect(fullFrameSizeCandidate([line('R16', 0, 20, 120), line('205/55', 0, 20, 0)])).toBe('205/55 R16');
   });
 
   test('no size-shaped text → no suggestion', () => {
-    expect(sizeCandidate([line('TUBELESS'), line('2O5/55R16')])).toBeNull();
+    expect(fullFrameSizeCandidate([line('TUBELESS'), line('2O5/55R16')])).toBeNull();
   });
 });
 
@@ -54,21 +46,10 @@ describe('DOT/TIN', () => {
   });
 });
 
-describe('make / model', () => {
-  test('the tallest line with letters, as read', () => {
-    expect(nameCandidate([line('RADIAL', 0, 12), line('Michelin', 20, 40), line('ok', 70, 8)])).toBe('Michelin');
-  });
-
-  test('ignores lines without at least two letters, or too long', () => {
-    expect(nameCandidate([line('91V', 0, 60), line('Primacy  4', 70, 30)])).toBe('Primacy 4');
-    expect(nameCandidate([line('1'), line('X'.repeat(31))])).toBeNull();
-  });
-});
-
 test('no OCR lines → no candidate for any field', () => {
-  for (const f of ['size', 'dotTin', 'make', 'model'] as const) {
-    expect(fieldCandidate(f, [], NOW)).toBeNull();
-  }
+  expect(fullFrameSizeCandidate([])).toBeNull();
+  expect(fullFrameDotCandidate([], NOW)).toBeNull();
+  expect(fullFrameMakeCandidate([])).toBeNull();
 });
 
 describe('agreement across frames', () => {
@@ -149,14 +130,7 @@ describe('OCR misreads around DOT', () => {
     expect(dotCandidate([line('DOT 1Y6 O32MKT 0124')], NOW)).toBe('1Y6 O32MKT 0124'); // TIN body kept as read
   });
 
-  test('device DOT crop: misread marker glued to the TIN, date code on its own line', () => {
-    expect(dotCandidate([line('D0TYG09RURT'), line('O124', 30)], NOW, 'crop')).toBe('YG09RURT 0124');
-    expect(dotCandidate([line('1D0T 1Y6 032MKT 0124')], NOW, 'crop')).toBe('1Y6 032MKT 0124');
-    expect(dotCandidate([line('D07 1Y6 032MKT 0124')], NOW, 'crop')).toBe('1Y6 032MKT 0124');
-    expect(dotCandidate([line('DQT1Y6032MKT0124')], NOW, 'crop')).toBe('1Y6032MKT0124');
-  });
-
-  test('glued marker variants are only dropped in crops, not whole frames', () => {
+  test('misread, glued DOT markers are not the DOT word, so nothing is read', () => {
     expect(fullFrameDotCandidate([line('D0TYG09RURT O124')], NOW)).toBeNull();
   });
 });
@@ -177,108 +151,20 @@ describe('make from a whole frame: known brand names only', () => {
   test('the most prominent brand line wins', () => {
     expect(fullFrameMakeCandidate([line('Made for Pirelli', 0, 10), line('Bridgestone', 30, 50)])).toBe('Bridgestone');
   });
-});
 
-describe('OCR noise normalisation', () => {
-  const { cleanOcrText, readKey } = require('../sidewallFields') as typeof import('../sidewallFields');
-
-  test('trims punctuation at the ends and collapses spaces; letters and digits unchanged', () => {
-    expect(cleanOcrText(' -Primacy   4. ')).toBe('Primacy 4');
-    expect(cleanOcrText('“ComfortContact”')).toBe('ComfortContact');
-    expect(cleanOcrText('X-ICE')).toBe('X-ICE');
-    expect(cleanOcrText('O124')).toBe('O124'); // never swapped
-    expect(cleanOcrText('...')).toBe('');
-  });
-
-  test('agreement keys ignore case, spaces and punctuation', () => {
-    expect(readKey('Primacy 4.')).toBe(readKey('PRIMACY4'));
-    expect(nameCandidate([line('ComfortContact CC7 .')])).toBe('ComfortContact CC7');
-  });
-});
-
-describe('brand in a Brand crop (CLAUDE.md exception)', () => {
-  const { brandCandidate } = require('../sidewallFields') as typeof import('../sidewallFields');
-
-  test('contained brand → canonical name', () => {
-    expect(brandCandidate([line('CONTINENTAL')])).toBe('Continental');
-    expect(brandCandidate([line('-Michelin.')])).toBe('Michelin');
-    expect(brandCandidate([line('CONTI NENTAL')])).toBe('Continental'); // spacing ignored
-  });
-
-  test('one OCR error in a 6+ letter brand → canonical name', () => {
-    expect(brandCandidate([line('Contnental')])).toBe('Continental');
-    expect(brandCandidate([line('Bridgcstone')])).toBe('Bridgestone');
-    expect(brandCandidate([line('Hankok')])).toBe('Hankook');
-  });
-
-  test('logo fragments clearly from one brand → canonical name (device reads)', () => {
-    for (const read of ['Ontnem', 'OntneNaj', 'TLenta', 'iental', 'Cntnental']) {
-      expect(brandCandidate([line(read)])).toBe('Continental');
-    }
-  });
-
-  test('corrupt or short fragments that match no brand clearly are left empty', () => {
-    expect(brandCandidate([line('OnteM')])).toBeNull(); // covers too little of Continental
-    expect(brandCandidate([line('val')])).toBeNull(); // too short
-    expect(brandCandidate([line('Toyu')])).toBeNull(); // 4 letters: no fuzzy, too short for fragments
-    expect(brandCandidate([line('RADIAL'), line('OUTSIDE')])).toBeNull();
-  });
-
-  test('ambiguous matches are left empty', () => {
-    expect(brandCandidate([line('Abcdex')], ['Abcdef', 'Abcdeg'])).toBeNull();
-    // "RIDGSTONE"-like fragment passes for both Bridgestone and Firestone-like names.
-    expect(brandCandidate([line('Restone')], ['Firestone', 'Freestone'])).toBeNull();
-  });
-
-  test('unlisted brands are not suggested (the user types them)', () => {
-    expect(brandCandidate([line('Ovation'), line('RADIAL', 0, 8)])).toBeNull();
-  });
-
-  test('common sidewall words never become a brand', () => {
-    for (const word of ['RADIAL', 'TUBELESS', 'OUTSIDE', 'INSIDE', 'REINFORCED', 'MAX LOAD', 'STEEL BELTED', 'MADE IN GERMANY']) {
-      expect(brandCandidate([line(word)])).toBeNull();
-    }
-  });
-
-  test('the list has the expected brands, including Continental', () => {
+  test('the list has the expected brands', () => {
     const { KNOWN_TYRE_BRANDS } = require('../../../config/tyreBrands') as typeof import('../../../config/tyreBrands');
     expect(KNOWN_TYRE_BRANDS).toEqual(expect.arrayContaining(['Continental', 'Michelin', 'Bridgestone', 'Roadstone']));
     expect(KNOWN_TYRE_BRANDS).not.toContain('GT Radial');
-    expect(brandCandidate([line('ROADSTONE')])).toBe('Roadstone');
+    expect(fullFrameMakeCandidate([line('ROADSTONE')])).toBe('ROADSTONE');
   });
 });
 
-describe('model agreement: near-identical reads group, digits must match', () => {
-  const { nearSameModel } = require('../sidewallFields') as typeof import('../sidewallFields');
-  const reads = (...values: string[]) => values.map((value, i) => ({ value, score: 0.9 - i * 0.01 }));
+describe('agreement keys', () => {
+  const { readKey } = require('../sidewallFields') as typeof import('../sidewallFields');
 
-  test('similar spellings count together; the most frequent real read is chosen', () => {
-    expect(agreedValue(reads('ComfortContact', 'Comfortcontact'), 2, undefined, nearSameModel)).toBe(
-      'ComfortContact',
-    );
-    expect(agreedValue(reads('ComfortContac', 'ComfortContact', 'ComfortContact'), 2, undefined, nearSameModel)).toBe(
-      'ComfortContact',
-    );
-    expect(agreedValue(reads('Primacy 4', 'Primacy4.'.replace('.', '')), 2, undefined, nearSameModel)).toBe('Primacy 4');
-  });
-
-  test('different digits never merge, even at distance 1', () => {
-    expect(nearSameModel('Primacy 3', 'Primacy 4')).toBe(false);
-    expect(agreedValue(reads('Primacy 3', 'Primacy 4'), 2, undefined, nearSameModel)).toBeNull();
-    expect(nearSameModel('CC7', 'CC5')).toBe(false);
-  });
-
-  test('distance limits: 2 for 6+ characters, 1 for shorter', () => {
-    expect(nearSameModel('Ecopia', 'Ecpa')).toBe(false); // distance 2, short key
-    expect(nearSameModel('Turanza', 'Turnza')).toBe(true);
-    expect(nearSameModel('Turanza', 'Truanza')).toBe(true); // distance 2, both 7 letters
-    expect(nearSameModel('Turanza', 'Trnza')).toBe(false); // shorter key is 5 letters → limit 1
-    expect(nearSameModel('Sport', 'Spor')).toBe(true);
-    expect(nearSameModel('Sport', 'Spr')).toBe(false);
-  });
-
-  test('without grouping, near-identical reads do not agree', () => {
-    expect(agreedValue(reads('ComfortContac', 'ComfortContact'), 2)).toBeNull();
+  test('ignore case, spaces and punctuation', () => {
+    expect(readKey('Primacy 4.')).toBe(readKey('PRIMACY4'));
   });
 });
 
@@ -315,8 +201,4 @@ describe('size recovery (round 5)', () => {
     expect(recoverSize(rows('A95/6S R15'))).toBeNull(); // aspect misread: no healing of S→5
   });
 
-  test('Size crop with the model text plus a wider read of the numbers', () => {
-    expect(sizeCandidate([line('rlConta'), line('A95/55', 30), line('R15', 60)])).toBe('195/55 R15');
-    expect(sizeCandidate([line('Conta')])).toBeNull();
-  });
 });

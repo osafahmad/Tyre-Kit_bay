@@ -1,17 +1,18 @@
 /**
- * Tyre brand names for the full-frame sidewall fallback (no detector crop).
+ * Tyre brand names for reading Make from a whole sidewall frame
+ * (`fullFrameMakeCandidate`, used by `sidewallTextFilter.ts`).
  *
- * A full-frame OCR line becomes a Make suggestion only when it contains one of
- * these names exactly, as a whole word (ignoring case and spacing). Fragments
- * (e.g. `iental`) and similar words never match; nothing is completed or
- * corrected. Not exhaustive: an unlisted brand just stays `Not read`, and the
- * user types it. Edit freely.
+ * An OCR line becomes a Make suggestion only when it contains one of these
+ * names exactly, as a whole word. Case doesn't matter, and the spacing between
+ * the words of a multi-word name doesn't either (`GENERAL  TIRE`). The value is
+ * kept as read. Fragments (e.g. `iental`), look-alikes (`Contnental`) and
+ * spelling variants (`Good Year`) never match; nothing is completed or
+ * corrected (CLAUDE.md allows fuzzy matching only inside a detector Brand
+ * crop, and there is no detector). Not exhaustive: an unlisted brand just
+ * stays `Not read`, and the user types it. Edit freely.
  *
- * Case, spaces and punctuation don't matter (`CONTINENTAL`, `Good Year`,
- * `B.F. Goodrich` all match), so spelling variants don't need their own entry.
  * Left out on purpose: brand names that are everyday words likely to appear
  * elsewhere on a sidewall (e.g. Federal, Atlas, Torque, General on its own).
- * More brands also make fragment matching stricter (a clear winner is needed).
  */
 export const KNOWN_TYRE_BRANDS: readonly string[] = [
   'Achilles',

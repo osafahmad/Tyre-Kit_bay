@@ -17,8 +17,8 @@ The in-app copy is `src/config/licenses.ts` (`LICENSE_NOTICES`), shown in the Th
 - Copyright (c) Soumith Chintala 2016. All rights reserved. [Licence](https://github.com/pytorch/vision/blob/main/LICENSE).
 - BSD-3 asks binary redistributions to reproduce the notice in their documentation. Listing it here and in the app covers that.
 
-### `tyre_detector.tflite` — AGPL-3.0 (release blocker)
-- Ultralytics YOLOv8 sidewall text detector. Not to be shipped in a store build. Replacement scheduled as its own milestone (owner, 2026-11-10). See DECISIONS.md, M7 Phase 2a.
+### Removed: `tyre_detector.tflite` (was AGPL-3.0)
+- The Ultralytics YOLOv8 sidewall text detector was deleted on 2026-11-10 and is no longer bundled. Sidewall text is read by Google ML Kit Text Recognition alone (via `rn-mlkit-ocr`). No AGPL-licensed model remains. See DECISIONS.md, "Sidewall text without a detector".
 
 ## Fonts
 

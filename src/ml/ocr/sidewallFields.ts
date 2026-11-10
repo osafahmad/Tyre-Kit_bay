@@ -4,40 +4,21 @@ import { parseDotAge, parseTyreSize } from './parsers';
 import { sidewallLog } from './sidewallDebug';
 import type { OcrLineLike } from './textCandidates';
 
-// Turns OCR lines read from one detected sidewall region into a candidate for
-// one field. Only text that was actually read is returned: characters are
-// never swapped (O/0, I/1, S/5…), completed or matched to a brand list.
-// Candidates are suggestions; the user confirms or corrects them.
+// Turns ML Kit lines read from a whole saved sidewall frame into candidates
+// for size, DOT/TIN and make (sidewallTextFilter.ts combines them). Only text
+// that was actually read is returned. Characters are never swapped, completed
+// or matched to a look-alike, except the narrow CLAUDE.md exceptions marked
+// below. Model is never read. Candidates are suggestions: the user confirms
+// or corrects them.
 
 export type SidewallField = keyof SidewallDetails;
 
-/** Detector label → the field its text belongs to. Unknown labels are ignored. */
-export const FIELD_BY_LABEL: Readonly<Record<string, SidewallField>> = {
-  Brand: 'make',
-  'Dot-Code': 'dotTin',
-  Model: 'model',
-  Size: 'size',
-};
-
 /** Lines in reading order: top to bottom, then left to right. */
-function readingOrder(lines: OcrLineLike[]): OcrLineLike[] {
+export function readingOrder(lines: OcrLineLike[]): OcrLineLike[] {
   return [...lines].sort((a, b) => {
     const sameRow = Math.abs(a.frame.y - b.frame.y) < Math.min(a.frame.height, b.frame.height) / 2;
     return sameRow ? a.frame.x - b.frame.x : a.frame.y - b.frame.y;
   });
-}
-
-/** Size: the existing tyre size parser, on each line and then on all lines joined. */
-export function sizeCandidate(lines: OcrLineLike[]): string | null {
-  const ordered = readingOrder(lines);
-  for (const line of ordered) {
-    const parsed = parseTyreSize(line.text);
-    if (parsed) return parsed.value;
-  }
-  const joined = ordered.map(l => l.text).join(' ');
-  const parsed = parseTyreSize(joined);
-  if (parsed) return parsed.value;
-  return recoverSize(lines);
 }
 
 /**
@@ -46,13 +27,6 @@ export function sizeCandidate(lines: OcrLineLike[]): string | null {
  * exactly as read.
  */
 const DOT_PREFIX = /^(?:.*?[^A-Z])?DOT(?![A-Z])\s*/;
-
-/**
- * Crop only: the DOT marker at the very start of a `Dot-Code` crop, as OCR
- * often misreads it (`D0T`, `DQT`, `D07`, `1D0T`), even when glued to the
- * TIN. The marker is dropped; it is never part of the value.
- */
-const CROP_DOT_MARKER = /^[^A-Z0-9]*1?D[O0Q][T7]\s*/;
 
 /**
  * CLAUDE.md exception (owner decision 2026-11-06): a letter `O` as the FIRST
@@ -77,12 +51,7 @@ export const DOT_MAX_CHARS = 13;
  * `DOT`. Valid only when it ends in a real week/year date code (week 1–53,
  * not in the future) and has 4 to 13 letters and digits.
  */
-export function dotCandidate(
-  lines: OcrLineLike[],
-  now: Date = new Date(),
-  /** `crop`: a detector Dot-Code crop, where misread DOT markers are dropped too. */
-  mode: 'crop' | 'fullFrame' = 'fullFrame',
-): string | null {
+export function dotCandidate(lines: OcrLineLike[], now: Date = new Date()): string | null {
   const cleaned = readingOrder(lines)
     .map(l => l.text)
     .join(' ')
@@ -90,11 +59,7 @@ export function dotCandidate(
     .replace(/[^A-Z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  const unmarked =
-    mode === 'crop' && CROP_DOT_MARKER.test(cleaned)
-      ? cleaned.replace(CROP_DOT_MARKER, '')
-      : cleaned.replace(DOT_PREFIX, '');
-  const text = fixDateCodeLeadingO(unmarked);
+  const text = fixDateCodeLeadingO(cleaned.replace(DOT_PREFIX, ''));
   const chars = text.replace(/ /g, '');
   if (chars.length < DOT_MIN_CHARS || chars.length > DOT_MAX_CHARS) {
     return null;
@@ -109,155 +74,6 @@ export function dotCandidate(
 }
 
 /**
- * OCR noise clean-up for names: trims punctuation and symbols at the ends
- * (`Primacy 4.` → `Primacy 4`, `-MICHELIN-` → `MICHELIN`) and collapses spaces.
- * Letters and digits are never changed.
- */
-export function cleanOcrText(text: string): string {
-  return text
-    .replace(/\s+/g, ' ')
-    .replace(/^[^A-Za-z0-9\u00C0-\u024F]+|[^A-Za-z0-9\u00C0-\u024F]+$/g, '')
-    .trim();
-}
-
-/**
- * Make / Model: the most prominent line (tallest text) with at least two
- * letters, as read after `cleanOcrText`. 2 to 30 characters.
- */
-export function nameCandidate(lines: OcrLineLike[]): string | null {
-  const usable = lines
-    .map(l => ({ line: l, text: cleanOcrText(l.text) }))
-    .filter(({ text }) => (text.match(/[A-Za-z]/g)?.length ?? 0) >= 2 && text.length <= 30);
-  if (usable.length === 0) {
-    return null;
-  }
-  usable.sort((a, b) => b.line.frame.height - a.line.frame.height);
-  return usable[0].text;
-}
-
-/** Brands this long or longer may match with one OCR error (Levenshtein 1). */
-export const BRAND_FUZZY_MIN_LENGTH = 6;
-
-/**
- * Make inside a detector `Brand` crop (CLAUDE.md exception, owner decision
- * 2026-11-06). Returns the canonical name from `tyreBrands.ts` when:
- * 1. a cleaned line contains a brand name (letters/digits only, any case), or
- * 2. a word, or two adjacent words, is within Levenshtein 1 of exactly one
- *    brand of 6+ letters (and no other brand is as close).
- * 3. logo fragments clearly from one brand (`brandFromFragments`).
- * Otherwise nothing: a read that isn't a recognised brand is never suggested
- * (owner decision 2026-11-06), so an unlisted brand is typed by the user.
- */
-export function brandCandidate(
-  lines: OcrLineLike[],
-  brands: readonly string[] = KNOWN_TYRE_BRANDS,
-): string | null {
-  const keys = brands.map(b => ({ brand: b, key: readKey(b) }));
-  const ordered = [...lines].sort((a, b) => b.frame.height - a.frame.height);
-  for (const line of ordered) {
-    const lineKey = readKey(line.text);
-    const hit = keys
-      .filter(k => k.key.length >= 3 && lineKey.includes(k.key))
-      .sort((a, b) => b.key.length - a.key.length)[0];
-    if (hit) {
-      sidewallLog('brand matched (contains)', { read: line.text, brand: hit.brand });
-      return hit.brand;
-    }
-  }
-  for (const line of ordered) {
-    const words = cleanOcrText(line.text).split(' ').filter(Boolean);
-    const tries = [...words, ...words.slice(1).map((w, i) => `${words[i]}${w}`)];
-    for (const word of tries) {
-      const wk = readKey(word);
-      const scored = keys
-        .filter(k => k.key.length >= BRAND_FUZZY_MIN_LENGTH)
-        .map(k => ({ ...k, d: levenshtein(wk, k.key) }))
-        .filter(k => k.d <= 1)
-        .sort((a, b) => a.d - b.d);
-      if (scored.length === 1 || (scored.length > 1 && scored[0].d < scored[1].d)) {
-        sidewallLog('brand matched (1 OCR error)', { read: word, brand: scored[0].brand });
-        return scored[0].brand;
-      }
-    }
-  }
-  const fragment = brandFromFragments(ordered, keys);
-  if (fragment) return fragment;
-  return null;
-}
-
-/** Longest common subsequence length (letters in order, gaps allowed). */
-export function lcsLength(a: string, b: string): number {
-  let prev = new Array<number>(b.length + 1).fill(0);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [0];
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
-    }
-    prev = cur;
-  }
-  return prev[b.length];
-}
-
-/** Fragment matching thresholds (Brand crop only). */
-export const BRAND_FRAGMENT = {
-  /** Shortest read considered, letters and digits. */
-  minReadLength: 5,
-  /** Share of the read's letters that must appear, in order, in the brand. */
-  minReadCoverage: 0.8,
-  /** Share of the brand's letters the read must cover. */
-  minBrandCoverage: 0.4,
-} as const;
-
-/**
- * Logo fragments (owner decision 2026-11-06): a stylised brand logo often
- * reads as pieces like `Ontnem` or `TLenta` for Continental. A line matches a
- * brand when most of its letters (≥ 80%) appear in order in that brand, cover
- * enough of it (≥ 40%), and it is the ONLY brand that passes both, with more
- * matched letters than any other brand. Short or ambiguous reads match nothing.
- */
-function brandFromFragments(
-  lines: OcrLineLike[],
-  keys: { brand: string; key: string }[],
-): string | null {
-  for (const line of lines) {
-    const read = readKey(line.text);
-    if (read.length < BRAND_FRAGMENT.minReadLength) continue;
-    const scored = keys
-      .map(k => ({ ...k, lcs: lcsLength(read, k.key) }))
-      .sort((a, b) => b.lcs - a.lcs);
-    const passing = scored.filter(
-      k =>
-        k.lcs >= BRAND_FRAGMENT.minReadCoverage * read.length &&
-        k.lcs >= BRAND_FRAGMENT.minBrandCoverage * k.key.length,
-    );
-    const [best, next] = scored;
-    if (passing.length === 1 && passing[0] === best && best.lcs > (next?.lcs ?? 0)) {
-      sidewallLog('brand matched (logo fragment)', { read: line.text, brand: best.brand, matched: best.lcs });
-      return best.brand;
-    }
-  }
-  return null;
-}
-
-export function fieldCandidate(
-  field: SidewallField,
-  lines: OcrLineLike[],
-  now: Date = new Date(),
-): string | null {
-  if (lines.length === 0) return null;
-  switch (field) {
-    case 'size':
-      return sizeCandidate(lines);
-    case 'dotTin':
-      return dotCandidate(lines, now, 'crop');
-    case 'make':
-      return brandCandidate(lines);
-    case 'model':
-      return nameCandidate(lines);
-  }
-}
-
-/**
  * Reads compare without case, spaces or punctuation, so `MICHELIN` and
  * `Michelin.` agree.
  */
@@ -265,55 +81,19 @@ export const readKey = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]
 
 export type FieldRead = { value: string; score: number };
 
-/** Edit distance (insertions, deletions, substitutions). */
-export function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    }
-    prev = cur;
-  }
-  return prev[b.length];
-}
-
-/**
- * Model reads that count as the same value for agreement: within edit
- * distance 2 (1 for keys under 6 characters), and with exactly the same
- * digits, so `Primacy 3` and `Primacy 4` never merge.
- */
-export function nearSameModel(a: string, b: string): boolean {
-  const ka = readKey(a);
-  const kb = readKey(b);
-  if (ka.replace(/\D/g, '') !== kb.replace(/\D/g, '')) return false;
-  const maxDistance = Math.min(ka.length, kb.length) < 6 ? 1 : 2;
-  return levenshtein(ka, kb) <= maxDistance;
-}
-
 type ReadGroup = { key: string; reads: FieldRead[]; total: number };
 
 /**
  * The value read the most times, if at least `minAgreeing` reads agree.
- * Reads agree when their keys match, or when `similar` says so (model only).
- * Ties go to the higher total detector score. The returned text is always one
- * of the reads: the most frequent spelling in the winning group, then the
- * best-scoring one.
+ * Reads agree when their keys match. Ties go to the higher total score (the
+ * line's text height, see sidewallTextFilter.ts). The returned text is always
+ * one of the reads: the most frequent spelling, then the best-scoring one.
  */
-export function agreedValue(
-  reads: FieldRead[],
-  minAgreeing: number,
-  /** Field name, to log grouped near-identical reads (calibration logs). */
-  logAs?: string,
-  similar?: (a: string, b: string) => boolean,
-): string | null {
+export function agreedValue(reads: FieldRead[], minAgreeing: number): string | null {
   const groups: ReadGroup[] = [];
   for (const r of reads) {
     const key = readKey(r.value);
-    const g =
-      groups.find(x => x.key === key) ??
-      (similar ? groups.find(x => x.reads.some(o => similar(o.value, r.value))) : undefined);
+    const g = groups.find(x => x.key === key);
     if (g) {
       g.reads.push(r);
       g.total += r.score;
@@ -343,35 +123,30 @@ export function agreedValue(
   const pick = [...bySpelling.values()].sort(
     (a, b) => b.count - a.count || b.best.score - a.best.score,
   )[0];
-  if (logAs && similar && bySpelling.size > 1) {
-    sidewallLog(`${logAs}: near-identical reads grouped`, {
-      reads: winner.reads.map(r => r.value),
-      chosen: pick.best.value,
-    });
-  }
   return pick.best.value;
 }
 
 // ---------------------------------------------------------------- full frame
 
-// Used only when the text detector found no regions in a frame (or isn't in
-// the build). A whole sidewall frame has lots of other text, so only strict
-// patterns are accepted, and make / model are never read this way.
+// A whole sidewall frame has lots of other text (load and pressure markings,
+// rim stamps, plant codes), so only strict patterns are accepted, and model is
+// never read this way.
 
 /** Plausible tyre size ranges (mm width, aspect %, rim inches) for full-frame reads. */
 export const FULL_FRAME_SIZE_LIMITS = { width: [100, 395], aspect: [20, 95], rim: [8, 26] } as const;
 
 const within = (v: number, [lo, hi]: readonly [number, number]) => v >= lo && v <= hi;
 
-const sizeWithinLimits = (p: { widthMm: number; aspectRatio: number; rimInches: number }) =>
+export const sizeWithinLimits = (p: { widthMm: number; aspectRatio: number; rimInches: number }) =>
   within(p.widthMm, FULL_FRAME_SIZE_LIMITS.width) &&
   within(p.aspectRatio, FULL_FRAME_SIZE_LIMITS.aspect) &&
   within(p.rimInches, FULL_FRAME_SIZE_LIMITS.rim);
 
 /**
- * Size from a whole frame (or from crops of other text): one OCR line at a
- * time, never joined across the frame, parsed by `parseTyreSize` and within
- * `FULL_FRAME_SIZE_LIMITS`; then `recoverSize`.
+ * Size from a whole frame: one OCR line at a time, never joined across the
+ * frame, parsed by `parseTyreSize` and within `FULL_FRAME_SIZE_LIMITS`; then
+ * `recoverSize`. The first line in reading order wins; use
+ * `sidewallTextFilter.ts` (`rankedSizeCandidate`) to rank several.
  */
 export function fullFrameSizeCandidate(lines: OcrLineLike[]): string | null {
   for (const line of readingOrder(lines)) {

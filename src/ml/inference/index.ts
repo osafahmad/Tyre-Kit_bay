@@ -14,7 +14,6 @@ export {
   classifyFrames,
   confirmedSidewallExtractor,
   createSidewallExtractor,
-  createSidewallTextDetector,
   createTreadEstimator,
   createDamageClassifier,
   AnalysisFailedError,

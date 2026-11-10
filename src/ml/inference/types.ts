@@ -6,7 +6,6 @@ import type {
   ModelManifest,
   TensorDType,
   TreadManifestEntry,
-  YoloDetectorManifestEntry,
 } from '../manifest';
 
 // Structures for the on-device pipeline (spec §7). Screens never see these;
@@ -88,7 +87,7 @@ export interface TyreDetector {
   detect(input: TyreDetectorInput): Promise<TyreDetectorOutput>;
 }
 
-// ---- Sidewall: OCR plus parsers (spec §7). The text detector only finds regions. ----
+// ---- Sidewall: values the user confirmed after ML Kit OCR (spec §7). No model runs. ----
 
 /** Rectangle in pixels of the original (saved) frame. */
 export type PixelRect = { x: number; y: number; width: number; height: number };
@@ -115,21 +114,6 @@ export type Detection = {
   y2: number;
 };
 
-/** A sidewall text region found in one saved frame, ready for an OCR crop. */
-export type SidewallTextRegion = {
-  frame: string;
-  label: string;
-  score: number;
-  /** The box in frame pixels, clipped to the frame. */
-  box: PixelRect;
-  /** `box` grown by the OCR margin, as whole pixels inside the frame. */
-  cropRect: PixelRect;
-};
-
-export interface SidewallTextDetector {
-  detect(frame: string): Promise<SidewallTextRegion[]>;
-}
-
 export type SidewallExtractorInput = {
   frames: string[];
   /** Values the user read or typed and confirmed on Sidewall captured. */
@@ -141,14 +125,7 @@ export type SidewallValues = Pick<
   'size' | 'rimInches' | 'make' | 'model' | 'dotTin' | 'ageYears' | 'ageMonths'
 >;
 
-export type SidewallExtractorOutput = SidewallValues & {
-  /**
-   * Where Brand / DOT / Model / Size text is, per frame, for OCR cropping.
-   * Empty when the detector isn't in the build or found nothing. Never used to
-   * fill in values: those come only from what the user confirmed.
-   */
-  textRegions: SidewallTextRegion[];
-};
+export type SidewallExtractorOutput = SidewallValues;
 
 export interface SidewallExtractor {
   extract(input: SidewallExtractorInput): Promise<SidewallExtractorOutput>;
@@ -188,6 +165,4 @@ export interface DamageClassifier {
 export type AnalysisModels = {
   tread: LoadedModel<TreadManifestEntry>;
   damage: LoadedModel<DamageManifestEntry>;
-  /** Optional: analysis works without it, just with no text regions. */
-  sidewallText?: LoadedModel<YoloDetectorManifestEntry>;
 };

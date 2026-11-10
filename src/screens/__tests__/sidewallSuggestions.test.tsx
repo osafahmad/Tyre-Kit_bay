@@ -4,7 +4,7 @@ import { SidewallCapturedScreen } from '../SidewallCaptured/SidewallCapturedScre
 import { useInspectionStore } from '../../features/inspection/store';
 import type { SidewallReadOutcome } from '../../ml/sidewallReader';
 
-// The reader is mocked; its crop → OCR → parser logic is tested in src/ml/__tests__/sidewallReader.test.ts.
+// The reader is mocked; its whole-frame OCR → filter logic is tested in src/ml/__tests__/sidewallReader.test.ts.
 const mockReader = {
   canRead: jest.fn((_frames: string[]) => true),
   read: jest.fn(),
@@ -52,10 +52,7 @@ function renderScreen(tyreId: string) {
 const done = (suggestions: Record<string, string>): SidewallReadOutcome => ({
   status: 'done',
   suggestions,
-  detector: 'used',
-  regionsFound: 4,
-  ocrRuns: 4,
-  fullFrameRuns: 0,
+  ocrRuns: 2,
 });
 
 beforeEach(() => {

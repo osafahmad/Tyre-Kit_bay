@@ -30,8 +30,8 @@ const fields: { key: keyof SidewallDetails; label: string; upper: boolean }[] = 
  * 14 Sidewall captured (SidewallDone.dc.html). Fields hold what OCR read;
  * anything it couldn't read stays empty and shows `Not read`.
  *
- * On open, the sidewall frames are read on the phone (text detector → crop →
- * ML Kit → field parsers). Results only fill fields that are still empty and
+ * On open, the sidewall frames are read on the phone (whole saved frame →
+ * ML Kit → sidewall text filter; size, DOT/TIN and a known make, never model). Results only fill fields that are still empty and
  * that the user hasn't edited; they stay editable, so the user confirms or
  * corrects them. If nothing can be read, fields stay `Not read`.
  */

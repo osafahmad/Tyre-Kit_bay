@@ -1,4 +1,5 @@
 import { NativeModules } from 'react-native';
+import type { OcrResult } from 'rn-mlkit-ocr';
 import type { OcrLineLike } from './textCandidates';
 
 /**
@@ -17,6 +18,10 @@ export async function recognizeLines(filePath: string): Promise<OcrLineLike[]> {
   // Required lazily so a build without the module doesn't fail at import.
   const { recognizeText } = require('rn-mlkit-ocr') as typeof import('rn-mlkit-ocr');
   const uri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
-  const result = await recognizeText(uri, 'latin');
+  return ocrResultLines(await recognizeText(uri, 'latin'));
+}
+
+/** Every line of every ML Kit text block, with its frame (pixels of the image read). */
+export function ocrResultLines(result: OcrResult): OcrLineLike[] {
   return result.blocks.flatMap(block => block.lines);
 }

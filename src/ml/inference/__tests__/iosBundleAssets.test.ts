@@ -43,28 +43,18 @@ const REGISTERED = {
     name: 'tread_wear',
     type: 'tflite',
   },
-  sidewallTextDetector: {
-    __packager_asset: true,
-    httpServerLocation: '/assets/assets/models',
-    scales: [1],
-    hash: '0d8ec9c41127f72eefa453dedf3fd1f6',
-    name: 'tyre_detector',
-    type: 'tflite',
-  },
 } as const;
 
 const BUNDLED_PATH = {
   treadWear: `${APP}/assets/assets/models/tread_wear.tflite`,
-  sidewallTextDetector: `${APP}/assets/assets/models/tyre_detector.tflite`,
 };
 
 const SOURCE_FILE = {
   treadWear: `${ROOT}/assets/models/tread_wear.tflite`,
-  sidewallTextDetector: `${ROOT}/assets/models/tyre_detector.tflite`,
 };
 
 type BundledKey = keyof typeof REGISTERED;
-const KEYS: BundledKey[] = ['treadWear', 'sidewallTextDetector'];
+const KEYS: BundledKey[] = ['treadWear'];
 
 /** What `Image.resolveAssetSource` returns for this asset in an iOS release build. */
 function releaseUri(key: BundledKey): string {
@@ -100,7 +90,7 @@ function iosReleaseDeps(key: BundledKey, files: Record<string, BundledKey>, core
   });
 }
 
-const bothBundled = { [BUNDLED_PATH.treadWear]: 'treadWear', [BUNDLED_PATH.sidewallTextDetector]: 'sidewallTextDetector' } as Record<string, BundledKey>;
+const bundled = { [BUNDLED_PATH.treadWear]: 'treadWear' } as Record<string, BundledKey>;
 
 describe('iOS release bundle', () => {
   test.each(KEYS)('%s resolves to its file next to main.jsbundle', key => {
@@ -108,7 +98,7 @@ describe('iOS release bundle', () => {
   });
 
   test.each(KEYS)('%s loads from the app bundle with Core ML', async key => {
-    const deps = iosReleaseDeps(key, bothBundled);
+    const deps = iosReleaseDeps(key, bundled);
     const r = await loadModel(key, modelManifest, deps);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.model.delegate).toBe('core-ml');
@@ -117,7 +107,7 @@ describe('iOS release bundle', () => {
   });
 
   test.each(KEYS)('%s falls back to CPU when Core ML fails', async key => {
-    const deps = iosReleaseDeps(key, bothBundled, false);
+    const deps = iosReleaseDeps(key, bundled, false);
     const r = await loadModel(key, modelManifest, deps);
     expect(r.ok && r.model.delegate).toBe('cpu');
     expect(deps.createModel).toHaveBeenLastCalledWith(`file://${BUNDLED_PATH[key]}`, []);
@@ -138,7 +128,7 @@ describe('iOS release bundle', () => {
   });
 
   test('a model missing from the bundle is asset_missing, never loaded from anywhere else', async () => {
-    const deps = iosReleaseDeps('treadWear', { [BUNDLED_PATH.sidewallTextDetector]: 'sidewallTextDetector' });
+    const deps = iosReleaseDeps('treadWear', {});
     const r = await loadModel('treadWear', modelManifest, deps);
     expect(r).toEqual({
       ok: false,
@@ -160,8 +150,8 @@ describe('iOS release bundle', () => {
 
 describe('"Analysis pending" on iOS with this build', () => {
   test('comes from the missing tread status and damage models, not from bundling', async () => {
-    // Both bundled models are present and load; the analyzer still can't run.
-    const deps = iosReleaseDeps('treadWear', bothBundled);
+    // The bundled model is present and loads; the analyzer still can't run.
+    const deps = iosReleaseDeps('treadWear', bundled);
     const analyzer = new TfliteTyreAnalyzer(modelManifest, () => deps);
     const error = await analyzer.load().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ModelUnavailableError);
@@ -171,9 +161,9 @@ describe('"Analysis pending" on iOS with this build', () => {
       ['tread', 'not_in_manifest'],
       ['damage', 'not_in_manifest'],
     ] satisfies [ModelKey, string][]);
-    // Neither bundled model was the cause: both resolve and open on their own.
+    // The bundled model wasn't the cause: it resolves and opens on its own.
     for (const key of KEYS) {
-      expect((await loadModel(key, modelManifest, iosReleaseDeps(key, bothBundled))).ok).toBe(true);
+      expect((await loadModel(key, modelManifest, iosReleaseDeps(key, bundled))).ok).toBe(true);
     }
   });
 });

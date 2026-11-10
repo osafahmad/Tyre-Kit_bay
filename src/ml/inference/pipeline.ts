@@ -1,4 +1,3 @@
-import { ocrConfig } from '../../config/capture';
 import type { TyreResult } from '../../features/inspection/types';
 import { tyreStatus } from '../../features/inspection/status';
 import { parseDotAge, parseTyreSize } from '../ocr/parsers';
@@ -7,13 +6,8 @@ import type { ClassifierManifestEntry } from '../manifest';
 import {
   argmax,
   classifierProbabilities,
-  decodeYoloDetections,
-  detectionToFrameRect,
-  imageFileToModelInput,
   imageFileToTensor,
   meanVectors,
-  ocrCropRect,
-  extendAlongText,
   tensorSpecFromManifest,
   type ImageDecoder,
 } from './tensorUtils';
@@ -27,8 +21,6 @@ import type {
   SidewallExtractor,
   SidewallExtractorInput,
   SidewallExtractorOutput,
-  SidewallTextDetector,
-  SidewallTextRegion,
   SidewallValues,
   TreadEstimator,
   TreadEstimatorInput,
@@ -47,15 +39,10 @@ export type PipelineDeps = {
   /** Saved (relative) frame path → path the image decoder can open. */
   resolveFramePath(path: string): string;
   decoder: ImageDecoder;
-  /**
-   * Receives the sidewall text regions found during analysis, for OCR
-   * cropping. They aren't part of the saved `TyreResult`.
-   */
-  onSidewallTextRegions?(regions: SidewallTextRegion[]): void;
 };
 
 /** Saved frame → local file path for the decoder. */
-export function localFramePath(frame: string, deps: PipelineDeps): string {
+export function localFramePath(frame: string, deps: Pick<PipelineDeps, 'resolveFramePath'>): string {
   let path = deps.resolveFramePath(frame);
   if (path.startsWith('file://')) path = decodeURI(path.slice('file://'.length));
   if (/^[a-z]+:\/\//i.test(path)) {
@@ -105,74 +92,19 @@ function framesFor(
 }
 
 /**
- * Finds Brand / DOT / Model / Size text regions in one saved sidewall frame.
- * Boxes are mapped back to the frame's pixels and given an OCR crop rect.
+ * Sidewall values come only from what the user confirmed on Sidewall captured
+ * (ML Kit OCR suggestions from sidewallReader.ts + parsers, then the user's
+ * edits). Nothing is guessed, and no model runs here.
  */
-export function createSidewallTextDetector(
-  loaded: NonNullable<AnalysisModels['sidewallText']>,
-  deps: PipelineDeps,
-  marginRatio: number = ocrConfig.sidewallRegionMarginRatio,
-  minCropPx: number = ocrConfig.sidewallMinCropPx,
-  sizeExtraLength: number = ocrConfig.sidewallSizeExtraLengthRatio,
-): SidewallTextDetector {
-  const spec = tensorSpecFromManifest(loaded.entry);
+export function createSidewallExtractor(): SidewallExtractor {
   return {
-    async detect(frame: string): Promise<SidewallTextRegion[]> {
-      const input = await imageFileToModelInput(localFramePath(frame, deps), spec, deps.decoder);
-      if (!input.letterbox) throw new Error('The sidewall text detector needs letterbox resize.');
-      const lb = input.letterbox;
-      const [output] = await loaded.model.run([input.tensor]);
-      if (!output) throw new AnalysisFailedError('The sidewall text detector returned nothing.');
-      const detections = decodeYoloDetections(output, loaded.entry);
-      const regions: SidewallTextRegion[] = [];
-      for (const d of detections) {
-        const box = detectionToFrameRect(d, lb);
-        if (!box) continue;
-        regions.push({
-          frame,
-          label: d.label,
-          score: d.score,
-          box,
-          cropRect: (() => {
-            const rect = ocrCropRect(box, lb.sourceWidth, lb.sourceHeight, marginRatio, minCropPx);
-            // Size boxes stop short of the numbers: lengthen them along the text.
-            return d.label === 'Size'
-              ? extendAlongText(rect, lb.sourceWidth, lb.sourceHeight, sizeExtraLength)
-              : rect;
-          })(),
-        });
-      }
-      return regions;
+    async extract({ userDetails }: SidewallExtractorInput): Promise<SidewallExtractorOutput> {
+      return confirmedSidewallValues(userDetails);
     },
   };
 }
 
-/**
- * Sidewall values come only from what the user confirmed (OCR + parsers).
- * Nothing is guessed. With a text detector, it also returns where the text
- * regions are in each frame, for OCR cropping. A frame the detector can't
- * read is skipped: regions are an aid, never a reason to fail the analysis.
- */
-export function createSidewallExtractor(detector: SidewallTextDetector | null): SidewallExtractor {
-  return {
-    async extract({ frames, userDetails }: SidewallExtractorInput): Promise<SidewallExtractorOutput> {
-      const textRegions: SidewallTextRegion[] = [];
-      if (detector) {
-        for (const frame of frames) {
-          try {
-            textRegions.push(...(await detector.detect(frame)));
-          } catch {
-            // Unreadable frame or detector error: no regions from this frame.
-          }
-        }
-      }
-      return { ...confirmedSidewallValues(userDetails), textRegions };
-    },
-  };
-}
-
-/** Without a text detector: confirmed values only, no regions. */
-export const confirmedSidewallExtractor: SidewallExtractor = createSidewallExtractor(null);
+export const confirmedSidewallExtractor: SidewallExtractor = createSidewallExtractor();
 
 function confirmedSidewallValues(userDetails: Partial<TyreResult>): SidewallValues {
   const size = userDetails.size ?? null;
@@ -245,12 +177,10 @@ export async function runTyrePipeline(
   deps: PipelineDeps,
 ): Promise<TyreResult> {
   onStep('sidewall');
-  const detector = models.sidewallText ? createSidewallTextDetector(models.sidewallText, deps) : null;
-  const { textRegions, ...sidewall } = await createSidewallExtractor(detector).extract({
+  const sidewall = await confirmedSidewallExtractor.extract({
     frames: input.sidewallFrames,
     userDetails: input.userDetails,
   });
-  deps.onSidewallTextRegions?.(textRegions);
 
   onStep('tread');
   const tread = await createTreadEstimator(models.tread, deps).estimate({

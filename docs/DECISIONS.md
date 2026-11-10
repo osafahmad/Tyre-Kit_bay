@@ -346,6 +346,8 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 
 ## M7 Phase 2a: first model registered (`tyre_detector.tflite`)
 
+> **Superseded 2026-11-10:** the file and its manifest entry were removed. See "Sidewall text without a detector" at the end of this file.
+
 **Status: manifest entry and loader checks unit-tested against the real file. Not yet loaded on a phone, and nothing runs the model yet.**
 
 ### What the file really is (read from the file, 2026-11-06)
@@ -362,7 +364,7 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 - Jest maps `*.tflite` to a numeric asset-id stub (`jest/tfliteAssetStub.js`). `src/ml/__tests__/manifest.test.ts` reads the real file's flatbuffer and embedded `metadata.json` and checks the manifest against them.
 
 ### Risks
-- **ACTIVE RELEASE BLOCKER: licence AGPL-3.0** (Ultralytics, from the file's metadata). Spec §7: closed-source commercial use needs an Ultralytics enterprise licence. **Owner decision (2026-11-06): this model must be replaced (or licensed) before any commercial release.** It is used for development only until then.
+- ~~**ACTIVE RELEASE BLOCKER: licence AGPL-3.0**~~ **Cleared 2026-11-10: the file was removed** ("Sidewall text without a detector"). Was: licence AGPL-3.0 (Ultralytics, from the file's metadata). Spec §7: closed-source commercial use needs an Ultralytics enterprise licence. **Owner decision (2026-11-06): this model must be replaced (or licensed) before any commercial release.** It is used for development only until then.
 - Spec §7 lists YOLOX-Nano at 320×320 for the detector. This model is a different architecture, at a different size, for a different job.
 
 ### Decoder and preprocessing (M7 Phase 2b, 2026-11-06)
@@ -382,7 +384,7 @@ Owner request: filter OCR garbage before `Chassis found`, while typed chassis nu
 
 ## M7 Phase 2c: sidewall text regions → ML Kit OCR → suggestions (2026-11-06)
 
-**Status: unit-tested with a mocked detector and mocked OCR. Not run on a phone. The model is AGPL-3.0, an active release blocker (see Phase 2a).**
+**Status: superseded 2026-11-10. The detector, region crops and crop-only parsers were removed; ML Kit now reads the whole saved frame ("Sidewall text without a detector").** The text below records the earlier design.
 
 ### Where it runs
 - **On Sidewall captured, not in the post-capture analyzer.** Suggestions must reach the user before they confirm, and the analyzer only runs after tread capture (and only once tread and damage models exist). `SidewallCapturedScreen` calls `getSidewallReader()` (`src/ml/sidewallReader.ts`) when it opens. Screens never touch TFLite or ML Kit directly.
@@ -500,7 +502,7 @@ Make, model and DOT now fill on the device (`Continental`, `colnortcontae`, `012
 Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame agreement · 24 OCR runs · brand list (59) with contains / Levenshtein 1 / fragment rules · model grouping (≤2 edits, same digits) · DOT crop marker clean-up, O→0 first date-code character, single date code rule · size: one-line parse, adjacent rim join, rim-gated width (175–225, R13–R17), Size+Model band crop, full-frame fallback.
 
 ### Still open
-- **Licence: the detector is AGPL-3.0 — active release blocker.**
+- ~~**Licence: the detector is AGPL-3.0 — active release blocker.**~~ Cleared 2026-11-10: the detector was removed.
 - iOS device test; more tyres and brands (lighting, wear, dirt); tread and damage models (owner input).
 
 ## M7 Phase 3: tread wear detector (`tread_wear.tflite`)
@@ -510,7 +512,7 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 ### What the file is (read from the file, 2026-11-06)
 - Ultralytics 8.4.203 YOLOv8n, `task: detect`, `end2end: false`, `imgsz` 224×224, 14 wear classes (`Alternate Lug Wear` … `Wavy Wear`, metadata `names` order).
 - Input float32 `[1, 3, 224, 224]` NCHW; output float32 `[1, 18, 1029]` (4 box + 14 class scores per anchor). Matches the owner's export notes. `_NormalizeCoords` is in the graph, so boxes are 0–1.
-- ~~**Licence AGPL-3.0**: same release blocker as the sidewall text detector.~~ **Cleared 2026-11-10 for this model:** replaced by an SSDLite model, see "M7 Phase 3b" below. The sidewall text detector's AGPL blocker is still open.
+- ~~**Licence AGPL-3.0**: same release blocker as the sidewall text detector.~~ **Cleared 2026-11-10 for this model:** replaced by an SSDLite model, see "M7 Phase 3b" below. The sidewall text detector's AGPL blocker was cleared the same day by removing the file ("Sidewall text without a detector").
 
 ### Choices (owner decisions, 2026-11-06)
 - **Registered as `modelManifest.treadWear`** (a `YoloDetectorManifestEntry`), separate from `tread`. It says what kind of wear there is, never Good / Replace soon / Replace now. `tread` and `damage` stay `null`, so analysis is still pending.
@@ -578,7 +580,7 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 
 ### Why
 - The YOLOv8 `tread_wear.tflite` was Ultralytics AGPL-3.0 (release blocker, Phase 3). The owner replaced it with torchvision `ssdlite320_mobilenet_v3_large` trained on a tyre wear dataset.
-- **Licences (owner, 2026-11-10):** model code torchvision BSD-3-Clause; dataset from Roboflow under CC BY 4.0. **The AGPL blocker is cleared for the tread wear model only.** `tyre_detector.tflite` (sidewall text detector) is still Ultralytics YOLOv8 AGPL-3.0 and still blocks release (Phase 2a).
+- **Licences (owner, 2026-11-10):** model code torchvision BSD-3-Clause; dataset from Roboflow under CC BY 4.0. **The AGPL blocker is cleared for the tread wear model only.** ~~`tyre_detector.tflite` (sidewall text detector) is still Ultralytics YOLOv8 AGPL-3.0 and still blocks release (Phase 2a).~~ Removed later on 2026-11-10 ("Sidewall text without a detector").
 - **CC BY 4.0 attribution (owner, 2026-11-10):** dataset title, provider and notice text recorded in `docs/LICENSES.md` and `src/config/licenses.ts` (`LICENSE_NOTICES`). Creator (`smart-inspection`) and URL (`https://universe.roboflow.com/smart-inspection/tire-tread-wear`) supplied by the owner 2026-11-10; the attribution is complete. The `tyre_detector.tflite` replacement is scheduled as its own milestone before App Store submission.
 
 ### What the file is (read from the file, 2026-11-10)
@@ -622,3 +624,37 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - **No network:** URLs are selectable text, not links. The app opens nothing and fetches nothing.
 - Theme tokens only. The backdrop is the black token at 50% alpha.
 - **Needs a real phone:** sheet height and scrolling with large text, VoiceOver focus staying inside the sheet, and swipe or back-gesture dismissal on Android.
+
+## Sidewall text without a detector: `tyre_detector.tflite` removed (owner decision 2026-11-10)
+
+**Status: unit-tested with mocked ML Kit results. Not run on a phone since the change. The device-proven 2026-11-06 results came from the detector pipeline, so sidewall reading must be re-tested on real tyres.**
+
+### Why
+- `assets/models/tyre_detector.tflite` (Ultralytics YOLOv8n sidewall text detector) was AGPL-3.0, the last copyleft release blocker. The owner deleted the file and asked for the sidewall to be read by ML Kit alone.
+- Bundled models are now `tread_wear.tflite` only (torchvision BSD-3-Clause; dataset CC BY 4.0). ML Kit Text Recognition is Google's on-device SDK through `rn-mlkit-ocr` (MIT wrapper). The ML Kit SDK's own terms still need checking in the release licence review.
+
+### New flow
+Saved sidewall frame (full resolution, cropped to the guide) → `recognizeLines` (`rn-mlkit-ocr`, Latin, bundled, on-device) → `filterSidewallText` (`src/ml/sidewallTextFilter.ts`) → 2-frame agreement → suggestions on Sidewall captured → the user confirms or corrects.
+- **Library kept: `rn-mlkit-ocr` 0.3.1** (spec §8), not `@react-native-ml-kit/text-recognition` as the request named. It's the same ML Kit recogniser, already in the build and on device, so there's no new package, no compatibility check and no substitution.
+- **Size:** spec §5 `parseTyreSize` (`TYRE_SIZE_PATTERN`, now exported) per line, within `FULL_FRAME_SIZE_LIMITS`. It covers `205/55R16`, `195/65 R15` and `225/45ZR17`. The request's `[R|r]` regex would also match `|` and miss `ZR`, so it wasn't used. With several matches in a frame, a size followed by a load/speed index wins, then the taller line, then reading order (`rankedSizeCandidate`). With none, split lines are joined by `recoverSize` (width/aspect plus a rim on the same or an adjacent line; rim-gated width exception unchanged).
+- **Load/speed index:** 2–3 digits (or dual `121/118`) and an ISO speed symbol (not I, O or X), right after the size or after the size's rim on a split line. Load index at most 279 (the ISO table's range). **Only used for ranking and logs. It isn't a sidewall field** (spec §5 / screen 14 have four fields), so it isn't shown or saved. Showing it needs a spec and screen change.
+- **DOT/TIN:** `fullFrameDotCandidate`, unchanged: the word `DOT`, then 8–13 letters and digits ending in a valid week/year (O→0 first date-code exception unchanged). The request's `DOT\s?[A-Z0-9]{4,13}` was not used. The 8-character minimum for whole frames is the earlier owner decision, because a lone `DOT 2319`-length read on a busy frame is too loose. The single-date-code rule across frames still applies.
+- **Make:** `fullFrameMakeCandidate`, unchanged: a `tyreBrands.ts` name read exactly as a whole word, kept as read. The list already has every brand the request named. `General` stays as `General Tire` only, as before.
+- **"Prioritise higher OCR confidence": not possible as written.** `rn-mlkit-ocr` returns no confidence values. Ranking uses the load/speed index and text height instead.
+
+### Lost with the detector (CLAUDE.md rules, not choices)
+- **Model is no longer suggested.** It needed a detector `Model` crop; picking the model from a whole frame would be a guess. The user types it.
+- **Fuzzy and logo-fragment brand matching** (Levenshtein 1, `Ontnem` → Continental) is gone. CLAUDE.md allows it only inside a detector `Brand` crop. On the 2026-11-06 Continental test tyre the full frame read `iental`, so Make will likely be `Not read` on that tyre now.
+- **DOT crop marker clean-up** (`D0T`, `DQT`, `1D0T`) is gone. It was crop-only. A misread `DOT` word now means no whole-frame DOT read.
+- **Size+Model band crop and lengthened Size crop** are gone. On the test tyre the size came from those crops (the full frame read `A95/55` with no adjacent rim), so Size may also be `Not read` there.
+- Removed code: `sidewallTextDetector` manifest entry, `YoloDetectorManifestEntry`, `YOLO_MODELS`, `decodeYoloDetections`, `createSidewallTextDetector`, `detectionToFrameRect` / `ocrCropRect` / `extendAlongText`, `SidewallTextRegion`, `AnalysisModels.sidewallText`, `PipelineDeps.onSidewallTextRegions`, the crop OCR config values (`sidewallRegionMarginRatio`, `sidewallMinCropPx`, `sidewallSizeExtraLengthRatio`), and the crop parsers (`sizeCandidate`, `nameCandidate`, `brandCandidate`, `fieldCandidate`, `nearSameModel`). Kept: generic letterbox preprocessing and NMS (tested with a synthetic entry), and `tyreDetector: null`, the spec's separate YOLOX-Nano preview detector, which was never this file.
+- `SidewallReadOutcome` is now `{ status: 'done', suggestions, ocrRuns }`. The screen only reads `suggestions`.
+
+### Demo analyzer
+- Unchanged. `createAnalyzer` still picks the demo analyzer in development, or in Release with `allowDemoAnalyzerInRelease`, while the tread and damage models are missing, labelled `Demo data`. It never read sidewall text.
+- **Not done:** filling sidewall fields with demo values when no tyre text is read (a reading of the request). That would show made-up OCR values as if they were read, which CLAUDE.md forbids. Unread fields stay `Not read`, and the user types them.
+
+### Needs a real phone
+- Whole-frame ML Kit accuracy on moulded black-on-black sidewall text, across several tyres and brands, on iOS and Android. Expect fewer suggestions than the detector pipeline gave on 2026-11-06.
+- Whether the 2-frame agreement and 24-run cap still fit (one OCR run per frame now, so at most one run per saved frame).
+
