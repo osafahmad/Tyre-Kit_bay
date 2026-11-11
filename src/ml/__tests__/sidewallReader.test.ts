@@ -172,6 +172,65 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
     expect(suggestionsOf(await lbs.reader.read(FRAMES))).toEqual({});
   });
 
+  describe('round 12: one 8-frame burst, size in the first frames and DOT in the last (Redmi 13, owner 2026-11-11)', () => {
+    const BURST = ['f1.jpg', 'f2.jpg', 'f3.jpg', 'f4.jpg', 'f5.jpg', 'f6.jpg', 'f7.jpg', 'f8.jpg'];
+    const sizeBlock = [line('Continental', 0, 40), line('195/55 R15 85V', 50)];
+    const dotStamp = [line('DOT 16092UT 0124')];
+    /** Frames 1–4 show the size block, frames 5–8 the DOT stamp; the whole frame reads nothing. */
+    const burst = (frame: string, part: Part) =>
+      part !== 'centre' ? [] : Number(frame.match(/\d+/)![0]) <= 4 ? sizeBlock : dotStamp;
+
+    test('each field keeps its own best read: all three are suggested together', async () => {
+      const { reader } = setup({ ocr: burst });
+      const outcome = await reader.read(BURST);
+      expect(suggestionsOf(outcome)).toEqual({ make: 'Continental', size: '195/55 R15', dotTin: '16092UT 0124' });
+      expect(outcome).toMatchObject({ status: 'done' });
+    });
+
+    test('the same with the frames the other way round, and with the DOT read in one frame only', async () => {
+      const reversed = (frame: string, part: Part) =>
+        part !== 'centre' ? [] : Number(frame.match(/\d+/)![0]) <= 4 ? dotStamp : sizeBlock;
+      expect(suggestionsOf(await setup({ ocr: reversed }).reader.read(BURST))).toEqual({
+        make: 'Continental',
+        size: '195/55 R15',
+        dotTin: '16092UT 0124',
+      });
+      const once = (frame: string, part: Part) =>
+        part !== 'centre' ? [] : frame === 'f7.jpg' ? dotStamp : frame === 'f8.jpg' ? [] : sizeBlock;
+      expect(suggestionsOf(await setup({ ocr: once }).reader.read(BURST))).toEqual({
+        make: 'Continental',
+        size: '195/55 R15',
+        dotTin: '16092UT 0124',
+      });
+    });
+
+    test('a field read by no frame is simply left out; the others are kept', async () => {
+      const noDot = (frame: string, part: Part) => (part === 'centre' ? sizeBlock : []);
+      expect(suggestionsOf(await setup({ ocr: noDot }).reader.read(BURST))).toEqual({ make: 'Continental', size: '195/55 R15' });
+    });
+
+    test('the OCR run cap never stops the burst before the DOT frames (2 runs per frame at most)', async () => {
+      const { reader, calls } = setup({ ocr: burst });
+      const outcome = await reader.read(BURST);
+      expect(suggestionsOf(outcome).dotTin).toBe('16092UT 0124');
+      expect(calls.length).toBeLessThanOrEqual(BURST.length * 2);
+      expect(outcome).toMatchObject({ ocrRuns: calls.length });
+    });
+
+    test('punctuation noise around the DOT marker is dropped; letters are kept as read', async () => {
+      for (const text of ['DOT:16092UT 0124', 'DOT: 16092UT 0124', '.D0T 16092UT 0124', '~DOT 16092UT 0124']) {
+        const { reader } = setup({ ocr: perFrame([line(text)], [], []) });
+        expect(suggestionsOf(await reader.read(FRAMES)).dotTin).toBe('16092UT 0124');
+      }
+      const wrapped = setup({ ocr: perFrame([line('DOT: 16092UT'), line('0124', 30)], [], []) });
+      expect(suggestionsOf(await wrapped.reader.read(FRAMES)).dotTin).toBe('16092UT 0124');
+      // `tYe0e` is letters and digits, not punctuation: dropping it would guess where the TIN starts,
+      // and with it the read is 16 characters, over the 13 of a TIN. It stays empty (CLAUDE.md).
+      const noisy = setup({ ocr: perFrame([line('DOT:tYe0e 16092UT 0124')], [line('DOT:tYe0e'), line('16092UT 0124', 30)], []) });
+      expect(suggestionsOf(await noisy.reader.read(FRAMES))).not.toHaveProperty('dotTin');
+    });
+  });
+
   test('dominantValue: a tie gives nothing', () => {
     const { dominantValue } = require('../sidewallReader') as typeof import('../sidewallReader');
     expect(dominantValue(['a', 'b', 'a'])).toBe('a');
