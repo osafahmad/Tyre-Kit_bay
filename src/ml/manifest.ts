@@ -1,4 +1,5 @@
 import type { TyreStatus } from '../features/inspection/types';
+import type { ModelDelegate } from './inference/types';
 
 /**
  * Model manifest (spec §7). Every value must come from the training output
@@ -39,6 +40,13 @@ type ModelEntryBase = {
   inputQuantization: Quantization | null;
   labels: string[];
   confidenceThreshold: number;
+  /**
+   * Optional, per platform: the hardware delegates to try for this model,
+   * replacing the platform default (`ACCELERATION_BY_PLATFORM`). `[]` opens it
+   * on CPU straight away. Set only from a device measurement, and checked again
+   * whenever the model file changes. This is a runtime choice, not a model value.
+   */
+  acceleration?: Partial<Record<'ios' | 'android', ModelDelegate[]>>;
 };
 
 /** Single output tensor with one score per label, in `labels` order. */
@@ -213,6 +221,11 @@ export const modelManifest: ModelManifest = {
     boxCoder: { weights: [10, 10, 5, 5], bboxXformClip: Math.log(1000 / 16) },
     iouThreshold: 0.45,
     maxDetections: 300,
+    // iOS: CPU only (owner decision 2026-11-11, iPhone 13 logs). Core ML can't
+    // build an interpreter for this SSDLite graph ("Failed to create TFLite
+    // interpreter!") and the failed attempt cost 2,033 ms before the CPU
+    // fallback. On CPU, inference is about 16 ms per frame. Android keeps the GPU default.
+    acceleration: { ios: [] },
   },
 };
 

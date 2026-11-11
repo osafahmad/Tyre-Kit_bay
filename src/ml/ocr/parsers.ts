@@ -51,12 +51,15 @@ export const COMPACT_SHORT_SIZE_PATTERN =
  * - Round 9 (owner decision 2026-11-10, iPhone 13: `oTELDT`, `OT1DT`):
  *   `TELDT` and `T1DT` anywhere, glued; and as whole tokens only, `D` + `0/O/Q`
  *   + `T/I/L` (`DQT`, `DOI`) or one or two `0/O/Q` + `T/I/L` (`OT`, `0T`, `OOI`).
+ * - Round 10 (owner request 2026-11-11, iPhone 13 + Redmi 13 logs): `00T`
+ *   glued to other text, as long as no digit is directly before it (`1000T`
+ *   is a number); and `POT` / `P0T` as whole tokens only (`P` read for `D`).
  * Only locates where the TIN starts. The TIN after it is kept as read, and is
  * accepted only if it has 8–13 letters/digits ending in a valid week/year
  * (`fullFrameDotCandidate`).
  */
 export const DOT_MARKER =
-  /(?:^|[^A-Z])DOT(?![A-Z])|D0T|OOT|DTS|TELDT|T1DT|(?:^|[^A-Z0-9])(?:D[0OQ][TIL]|[0OQ]{1,2}[TIL])(?![A-Z0-9])/;
+  /(?:^|[^A-Z])DOT(?![A-Z])|D0T|OOT|(?:^|[^0-9])00T|DTS|TELDT|T1DT|(?:^|[^A-Z0-9])(?:D[0OQ][TIL]|P[0O]T|[0OQ]{1,2}[TIL])(?![A-Z0-9])/;
 
 /** Text after the first DOT marker (anything before it dropped), or null when there is none. Uppercase input. */
 export function textAfterDotMarker(upper: string): string | null {

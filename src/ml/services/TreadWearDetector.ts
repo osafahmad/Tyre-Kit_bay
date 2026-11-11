@@ -212,7 +212,8 @@ export function defaultTreadWearDetectorDeps(
   loaderDeps: () => ModelLoaderDeps = defaultModelLoaderDeps,
 ): TreadWearDetectorDeps {
   return {
-    // Core ML (iOS) / GPU (Android), then CPU: the shared loader's order.
+    // iOS: CPU only (the manifest's `acceleration.ios: []`; Core ML can't build
+    // this SSDLite interpreter). Android: GPU, then CPU (the shared loader's order).
     loadModel: async () => {
       const r = await loadModel('treadWear', manifest, { ...loaderDeps(), log: treadLog });
       if (!r.ok) treadLog('model load failed', r.failure);

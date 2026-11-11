@@ -220,6 +220,22 @@ describe('iPhone 13 Continental 195/55 R15 85V (owner decision 2026-11-10)', () 
     expect(read(mlKitResult([{ text: 'ODTS 1Y6 032MKT 0124', y: 0 }])).dotTin).toBe('1Y6 032MKT 0124');
   });
 
+  test('round 10: rejection reasons for the iPhone 13 / Redmi 13 size lines', () => {
+    const outside = ocrResultLines(mlKitResult([{ text: '495/35 R1585VLT:', y: 0 }]));
+    expect(explainRejections(outside, filterSidewallText(outside, NOW)).size).toContain('"495/35"');
+    expect(explainRejections(outside, filterSidewallText(outside, NOW)).size).toContain('outside 100–395');
+    const noRim = ocrResultLines(mlKitResult([{ text: 'ES 195/55', y: 0 }, { text: '3R585V', y: 30 }]));
+    expect(explainRejections(noRim, filterSidewallText(noRim, NOW)).size).toContain('no rim 13–22 read');
+    const ok = ocrResultLines(mlKitResult([{ text: 'ES 195/55 3R1585VLT:', y: 0 }]));
+    expect(filterSidewallText(ok, NOW).size).toBe('195/55 R15');
+    expect(explainRejections(ok, filterSidewallText(ok, NOW))).not.toHaveProperty('size');
+  });
+
+  test('round 10: POT and 00T markers locate the TIN', () => {
+    expect(read(mlKitResult([{ text: 'POT 4B8R 1222', y: 0 }])).dotTin).toBe('4B8R 1222');
+    expect(read(mlKitResult([{ text: 'x00T 4B8R 1222', y: 0 }])).dotTin).toBe('4B8R 1222');
+  });
+
   test('rejection reasons name the new rules', () => {
     const lines = ocrResultLines(mlKitResult([{ text: 'oottDE', y: 0 }, { text: 'ienla', y: 30 }]));
     expect(explainRejections(lines, filterSidewallText(lines, NOW))).toMatchObject({

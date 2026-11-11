@@ -97,13 +97,20 @@ describe('iOS release bundle', () => {
     expect(releaseUri(key)).toBe(`file://${BUNDLED_PATH[key]}`);
   });
 
-  test.each(KEYS)('%s loads from the app bundle with Core ML', async key => {
+  test.each(KEYS)('%s loads from the app bundle on the delegates its manifest entry sets for iOS', async key => {
     const deps = iosReleaseDeps(key, bundled);
     const r = await loadModel(key, modelManifest, deps);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.model.delegate).toBe('core-ml');
+    const ios = modelManifest[key]!.acceleration?.ios ?? ['core-ml'];
+    if (r.ok) expect(r.model.delegate).toBe(ios[0] ?? 'cpu');
     expect(deps.fileExists).toHaveBeenCalledWith(BUNDLED_PATH[key]);
-    expect(deps.createModel).toHaveBeenCalledWith(`file://${BUNDLED_PATH[key]}`, ['core-ml']);
+    expect(deps.createModel).toHaveBeenCalledWith(`file://${BUNDLED_PATH[key]}`, ios.length ? [ios[0]] : []);
+  });
+
+  test('treadWear never tries Core ML on iOS: one CPU open, no 2 s failed attempt', async () => {
+    const deps = iosReleaseDeps('treadWear', bundled);
+    await loadModel('treadWear', modelManifest, deps);
+    expect(deps.createModel.mock.calls).toEqual([[`file://${BUNDLED_PATH.treadWear}`, []]]);
   });
 
   test.each(KEYS)('%s falls back to CPU when Core ML fails', async key => {

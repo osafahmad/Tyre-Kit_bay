@@ -163,7 +163,8 @@ describe('round 9: DOT marker misreads and marker-less TINs (owner decision 2026
 
   test('short marker tokens only count as whole tokens', () => {
     expect(fullFrameDotCandidate([line('TOTAL 4B8R 1222')], NOW)).toBeNull();
-    expect(fullFrameDotCandidate([line('POT 4B8R 1222')], NOW)).toBeNull();
+    expect(fullFrameDotCandidate([line('TEAPOT 4B8R 1222')], NOW)).toBeNull();
+    expect(fullFrameDotCandidate([line('POT 4B8R 1222')], NOW)).toBe('4B8R 1222'); // whole token: round 10 marker
   });
 
   test('date code: week 01–53, not in the future', () => {
@@ -384,4 +385,61 @@ describe('size recovery (round 5)', () => {
     expect(recoverSize(rows('A95/6S R15'))).toBeNull(); // aspect misread: no healing of S→5
   });
 
+  describe('round 10: iPhone 13 + Redmi 13 size lines (owner request 2026-11-11)', () => {
+    test('load/speed after the rim on the same line, glued or not, with OCR noise around it', () => {
+      expect(recoverSize(rows('195/55 R15 85V'))).toBe('195/55 R15');
+      expect(recoverSize(rows('195/55 R1585V'))).toBe('195/55 R15');
+      expect(recoverSize(rows('195/55 R1585VLt:'))).toBe('195/55 R15');
+      expect(recoverSize(rows('195/55 3R1585V'))).toBe('195/55 R15'); // stray digit before the R
+      expect(recoverSize(rows('ES 195/55', 'R1585V'))).toBe('195/55 R15'); // letters before the width
+      expect(recoverSize(rows('ES 195/55 3R1585VLT:'))).toBe('195/55 R15');
+    });
+
+    test('3R585V: the rim digits were not read (R5…), so no rim is invented', () => {
+      expect(recoverSize(rows('195/55 3R585V'))).toBeNull();
+      expect(recoverSize(rows('ES 195/55', '3R585V'))).toBeNull();
+      expect(recoverSize(rows('Continental', 'ES 195/55', 'ComfortContact', '3R585V'))).toBeNull();
+    });
+
+    test('495/35 R1585VLT: the width 495 is outside the limits and is never corrected', () => {
+      expect(recoverSize(rows('495/35 R1585VLT:'))).toBeNull();
+      expect(fullFrameSizeCandidate(rows('495/35 R1585VLT:'))).toBeNull();
+    });
+
+    test('a size line with its load/speed still gives its parts for the cross-frame join', () => {
+      const { sizeParts } = require('../sidewallFields') as typeof import('../sidewallFields');
+      expect(sizeParts(rows('195/55 3R585V'))).toEqual({ widthAspect: '195/55', rim: null });
+      expect(sizeParts(rows('495/35 R1585VLT:'))).toEqual({ widthAspect: null, rim: 15 });
+    });
+  });
+});
+
+describe('round 10: marker-less TIN wrapped over two lines (owner request 2026-11-11)', () => {
+  const { markerlessTinCandidate } = require('../sidewallFields') as typeof import('../sidewallFields');
+  const rows = (...texts: string[]) => texts.map((t, i) => line(t, i * 30));
+
+  test('TIN body then the date code alone on the next line', () => {
+    expect(markerlessTinCandidate(rows('EX2H 4KR', '3721'), NOW)).toBe('EX2H 4KR 3721');
+    expect(markerlessTinCandidate(rows('1Y6 032MKT', '0124'), NOW)).toBe('1Y6 032MKT 0124');
+    expect(markerlessTinCandidate(rows('OUTSIDE', 'EX2H 4KR', '3721'), NOW)).toBe('EX2H 4KR 3721');
+  });
+
+  test('a bare 4-digit number is never a DOT/TIN read', () => {
+    expect(markerlessTinCandidate(rows('3721'), NOW)).toBeNull();
+    expect(markerlessTinCandidate(rows('OUTSIDE', '3721'), NOW)).toBeNull(); // a word, not a plant/size code
+    expect(markerlessTinCandidate(rows('TUBELESS RADIAL', '1323'), NOW)).toBeNull();
+    expect(markerlessTinCandidate(rows('MAX LOAD 600', '1323'), NOW)).toBeNull();
+    expect(markerlessTinCandidate(rows('600 KG', '1323'), NOW)).toBeNull();
+    expect(markerlessTinCandidate(rows('1234 5678', '1323'), NOW)).toBeNull(); // no letter
+    expect(markerlessTinCandidate(rows('EX2H 4KR', '1323 LBS'), NOW)).toBeNull(); // next line must be the date code alone
+    expect(markerlessTinCandidate(rows('EX2H 4KR', '5724'), NOW)).toBeNull(); // week 57
+    expect(markerlessTinCandidate(rows('EX2H 4KR', 'OUTSIDE', '3721'), NOW)).toBeNull(); // not adjacent
+  });
+
+  test('size text is never a TIN, even followed by a 4-digit number', () => {
+    expect(markerlessTinCandidate(rows('195/55 R15 1323'), NOW)).toBeNull();
+    expect(markerlessTinCandidate(rows('195/55', '1323'), NOW)).toBeNull();
+    expect(markerlessTinCandidate(rows('R15 85V', '1323'), NOW)).toBeNull();
+    expect(markerlessTinCandidate(rows('R1585V 3721'), NOW)).toBeNull();
+  });
 });

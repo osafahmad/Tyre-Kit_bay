@@ -734,7 +734,7 @@ Make now works on the device. These rules cover the size reads that were still m
 
 #### iPhone 13 logs: round 9 DOT/TIN rules (owner decision 2026-11-10)
 
-- **More marker misreads** (`DOT_MARKER` in `parsers.ts`): `TELDT` and `T1DT` anywhere, glued on. As whole tokens only: `D` + `0/O/Q` + `T/I/L`, or one or two of `0/O/Q` + `T/I/L` (`OT`, `0T`, `OOI`). The owner's regex used `\b` word boundaries, which matched none of the device samples (`oTELDT`, `OT1DT` are glued to letters and digits), so the glued forms are listed separately. Words like `TOTAL` or `POT` don't count. The TIN after the marker is kept as read (`OT1DT IOES 2421` → `IOES 2421`; the user corrects `IOES`). `otS1OUUSs` and `100ULSS` have no date code, so they give nothing.
+- **More marker misreads** (`DOT_MARKER` in `parsers.ts`): `TELDT` and `T1DT` anywhere, glued on. As whole tokens only: `D` + `0/O/Q` + `T/I/L`, or one or two of `0/O/Q` + `T/I/L` (`OT`, `0T`, `OOI`). The owner's regex used `\b` word boundaries, which matched none of the device samples (`oTELDT`, `OT1DT` are glued to letters and digits), so the glued forms are listed separately. Words like `TOTAL` or `POT` don't count (round 10 below later accepted `POT` as a whole token). The TIN after the marker is kept as read (`OT1DT IOES 2421` → `IOES 2421`; the user corrects `IOES`). `otS1OUUSs` and `100ULSS` have no date code, so they give nothing.
 - **Single-frame DOT/TIN:** a valid marked read with no competing read in any other frame is now suggested whole, not just its date code. If frames read different TINs, the earlier rules still apply: an agreed date code only, or nothing.
 - **TIN with no marker** (`markerlessTinCandidate`): accepted only with a strict shape:
   - 2 or more tokens, with a valid date code as the last token.
@@ -742,6 +742,20 @@ Make now works on the device. These rules cover the size reads that were still m
   - No load, pressure or grading word (MAX, LOAD, KG, LBS, PSI, kPa, TREADWEAR…).
   - It also needs **2 agreeing frames, never one**, and is used only when no frame read a marker.
   - This is stricter than asked, because sidewalls carry other 4-digit numbers that pass as dates (`600 KG (1323 LBS)` is week 13 of 2023). A wrong date code gives a wrong tyre age.
+
+#### iPhone 13 + Redmi 13 logs: round 10 size lines and DOT markers (owner request 2026-11-11)
+
+The logs on both phones read Make `Continental` but rejected size lines such as `195/55 3R585V`, `495/35 R1585VLT:` and `ES 195/55`, and never read a DOT marker. The owner asked for a parser calibration. What changed, and what was deliberately left as it was:
+
+- **Size lines already handled (tests added, no code change):** `195/55 R15 85V`, `195/55 R1585VLt:`, `195/55 3R1585V`, `ES 195/55 3R1585VLT:` and `ES 195/55` with `R1585V` within two lines all give `195/55 R15`. `RIM_TOKEN` already accepts a stray digit before the `R`, the load/speed glued on, and trailing letters (`LT:`). Letters before the width (`ES`) were never a problem.
+- **`195/55 3R585V` stays empty (CLAUDE.md):** the token is `R` + `5` + `85V`. The rim's `1` was not read, so making it `R15` would invent a digit. The request's "strip `3R` → `R` and extract the rim `15`" isn't possible from this text without that guess. The frame still gives `195/55` to the round-8 cross-frame parts join (`sizeParts`), which is how the device already arrived at `195/55 R15`.
+- **`495/35 R1585VLT:` stays empty (CLAUDE.md):** the rim is read fine; the width `495` is outside `FULL_FRAME_SIZE_LIMITS` (100–395 mm) and the aspect was read as `35`. Neither is corrected. The frame gives `rim: 15` to the parts join.
+- **Clearer rejection reasons** (`explainRejections`, dev logs only): a width outside 100–395 now says so (`width/aspect "495/35" read but the width is outside 100–395 mm`), instead of the misleading "no usable rim" text. The no-rim reason now says `no rim 13–22 read within two lines`.
+- **DOT markers** (`DOT_MARKER` in `parsers.ts`): added `00T` glued to other text, unless a digit is directly before it (`1000T` is a number), and `POT` / `P0T` as whole tokens only (`P` read for `D`). This reverses the round-9 note that `POT` doesn't count. `TEAPOT`, `SPOT`, `POTS` and `TOTAL` still don't. `D0T` and `OOT` were already listed.
+- **Marker-less TIN wrapped over two lines** (`markerlessTinCandidate`): a round-9-shaped TIN body (`EX2H 4KR`) followed by a line that is exactly one valid 4-digit date code (`3721`) is joined, as marked TINs already are in `fullFrameDotCandidate`. The body line must contain a digit and a letter (a plant/size code), so `OUTSIDE` above `1323` gives nothing. Still only when **2 frames agree** and no frame read a marker.
+- **Tightening (both one- and two-line marker-less TINs):** a line with a width/aspect (`195/55`) or a rim with load/speed (`R15 85V`) is size text and is never a TIN, so `195/55 R15 1323` no longer passes the marker-less shape.
+- **Not done: a bare 4-digit WWYY code as a DOT read.** The request asked for a fallback that accepts a lone 4-digit week/year (weeks 01–53, years 10–26) "near the bead/rim line or within the TIN crop". There is no TIN crop any more (the text detector was removed, "Sidewall text without a detector"), and in a whole frame nothing marks the bead line, so this would mean accepting any 4-digit number on the sidewall: `1323` from `600 KG (1323 LBS)` is week 13 of 2023, and a wrong date code gives a wrong tyre age shown as a result. It conflicts with CLAUDE.md ("never guess OCR values") and with the round-9 decision above. The two-line join is the conservative version of the same idea: a date code is accepted on its own line only when a TIN body sits directly above it. If the owner still wants the bare-code fallback, it needs an explicit CLAUDE.md exception and a UI label that the age is unconfirmed.
+- Tests: `parsers.test.ts` (markers), `sidewallFields.test.ts` (round 10 size lines, wrapped TIN, guards), `sidewallTextFilter.test.ts` (reasons, markers), `sidewallReader.test.ts` (2-frame rule for the wrapped TIN; a bare number in every frame gives nothing). Not yet verified on a phone.
 
 #### iPhone 13 verification and release logging (owner, 2026-11-10)
 
@@ -784,3 +798,15 @@ Make now works on the device. These rules cover the size reads that were still m
   - Frames are referred to by index. No paths, plates or OCR text are logged.
   - On in all builds for phone verification. It must be off for store builds (release checklist).
 - **Flow check:** capture saves the tread frames (`setTreadCaptured`), Analysing sets the result and replaces the route with Tyre result, and the screen's auto-scan runs on those frames. `Checking…` is shown until `scanTreadWear` resolves and commits its state. A cancelled or replaced scan never updates the state.
+
+#### Tread wear model: CPU only on iOS (owner decision 2026-11-11, iPhone 13 logs)
+
+- **Device result (owner-verified, iPhone 13):** `Checking…` held until the scan resolved. The card and Wear pattern row then changed to `Exposed Cords` in the same render, with no flicker. The critical finding was the one chosen.
+- **Problem:** the Core ML delegate can't build an interpreter for `ssdlite320-mobilenetv3-large` ("Failed to create TFLite interpreter!"). The failed attempt took 2,033 ms before the CPU fallback. On CPU, inference is about 16 ms per frame.
+- **Change:**
+  - Manifest entries can now set their own delegates per platform (`acceleration`). That list replaces `ACCELERATION_BY_PLATFORM` for that model, and `[]` means CPU straight away.
+  - The tread wear entry sets `acceleration: { ios: [] }`. Android keeps GPU, then CPU.
+  - `validateManifestEntry` rejects unknown delegate names.
+  - The `[TreadWear]` log says when a model uses its own delegates.
+- **CPU path:** fast-tflite opens the model with no delegate (`TfLiteInterpreterCreate`, TensorFlowLiteC 2.17.0). TFLite then uses its default CPU kernels. Prebuilt TFLite applies XNNPACK to float models by default, which fits the 16 ms result, but nothing in our code or logs confirms it.
+- **Revisit:** when the model file or `version` changes, measure Core ML again on a phone before removing the override.

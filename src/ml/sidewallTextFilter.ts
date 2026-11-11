@@ -1,5 +1,6 @@
 import { DOT_MARKER, TYRE_SIZE_PATTERN, parseTyreSize } from './ocr/parsers';
 import {
+  FULL_FRAME_SIZE_LIMITS,
   fullFrameDotCandidate,
   fullFrameMakeCandidate,
   readingOrder,
@@ -158,6 +159,8 @@ export function filterSidewallText(lines: OcrLineLike[], now: Date = new Date())
 
 /** Width/aspect-shaped text (`205/55`, `95/55`), to say why no size was taken. */
 const WIDTH_ASPECT_SHAPE = /\d{2,3}\s*\/\s*\d{2}/;
+/** A 3-digit width/aspect whose width is below 100 or above 395 (`495/35`): read, but never corrected. */
+const WIDTH_ASPECT_OUTSIDE_LIMITS = /(?:^|[^0-9])(0\d\d|[4-9]\d\d)\s*\/\s*(\d{2})(?!\d)/;
 
 /**
  * Diagnostics only: why each field in `reading` is empty, as short reasons for
@@ -173,11 +176,15 @@ export function explainRejections(
   if (!reading.size) {
     const parsed = texts.map(t => parseTyreSize(t)).find(p => p !== null);
     const shaped = texts.find(t => WIDTH_ASPECT_SHAPE.test(t));
+    const outside = texts.map(t => WIDTH_ASPECT_OUTSIDE_LIMITS.exec(t)).find(m => m !== null);
+    const [minWidth, maxWidth] = FULL_FRAME_SIZE_LIMITS.width;
     why.size = parsed
       ? `regex matched "${parsed.value}" but it is outside the size limits`
-      : shaped
-        ? `width/aspect-shaped text "${shaped}" but no full size on its line and no usable rim within two lines`
-        : 'no size-shaped text (regex mismatch)';
+      : outside
+        ? `width/aspect "${outside[1]}/${outside[2]}" read but the width is outside ${minWidth}–${maxWidth} mm (not completed or corrected)`
+        : shaped
+          ? `width/aspect-shaped text "${shaped}" but no full size on its line and no rim 13–22 read within two lines`
+          : 'no size-shaped text (regex mismatch)';
   }
   if (!reading.dotTin) {
     const dot = texts.find(t => DOT_MARKER.test(t));

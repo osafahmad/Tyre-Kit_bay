@@ -69,20 +69,34 @@ describe('shipped manifest: treadWear (tread_wear.tflite, SSDLite)', () => {
     expect(checkModelMatchesManifest('treadWear', treadModel(), treadWear)).toEqual([]);
   });
 
-  test('the loader opens it, trying the hardware delegate before CPU', async () => {
-    const createModel = jest
-      .fn()
-      .mockRejectedValueOnce(new Error('no GPU'))
-      .mockResolvedValueOnce(treadModel());
+  test('iOS: the loader opens it on CPU straight away, never trying Core ML', async () => {
+    const createModel = jest.fn().mockResolvedValue(treadModel());
     const deps = fakeLoaderDeps({
+      platform: 'ios',
       resolveAssetUri: f => (f === treadWear.file ? 'file:///bundle/tread_wear.tflite' : null),
       createModel,
       acceleration: ['core-ml'],
     });
     const r = await loadModel('treadWear', modelManifest, deps);
     expect(r.ok && r.model.delegate).toBe('cpu');
+    expect(createModel.mock.calls).toEqual([['file:///bundle/tread_wear.tflite', []]]);
+  });
+
+  test('Android: the loader tries the GPU delegate before CPU', async () => {
+    const createModel = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('no GPU'))
+      .mockResolvedValueOnce(treadModel());
+    const deps = fakeLoaderDeps({
+      platform: 'android',
+      resolveAssetUri: f => (f === treadWear.file ? 'file:///bundle/tread_wear.tflite' : null),
+      createModel,
+      acceleration: ['android-gpu'],
+    });
+    const r = await loadModel('treadWear', modelManifest, deps);
+    expect(r.ok && r.model.delegate).toBe('cpu');
     expect(createModel.mock.calls).toEqual([
-      ['file:///bundle/tread_wear.tflite', ['core-ml']],
+      ['file:///bundle/tread_wear.tflite', ['android-gpu']],
       ['file:///bundle/tread_wear.tflite', []],
     ]);
   });

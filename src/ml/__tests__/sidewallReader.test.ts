@@ -247,6 +247,20 @@ describe('DOT/TIN across frames', () => {
     expect(suggestionsOf(await agreed.reader.read(['f1.jpg', 'f2.jpg'])).dotTin).toBe('EX2H 4KR 3721');
   });
 
+  test('round 10: a marker-less TIN wrapped over two lines needs 2 agreeing frames', async () => {
+    const wrapped = [line('EX2H 4KR'), line('3721', 30)];
+    const single = setup({ ocr: perFrame(wrapped, []) });
+    expect(suggestionsOf(await single.reader.read(['f1.jpg', 'f2.jpg']))).not.toHaveProperty('dotTin');
+    const agreed = setup({ ocr: perFrame(wrapped, [line('EX2H 4KR 3721')]) });
+    expect(suggestionsOf(await agreed.reader.read(['f1.jpg', 'f2.jpg'])).dotTin).toBe('EX2H 4KR 3721');
+  });
+
+  test('round 10: a bare 4-digit number under a word is never a DOT/TIN, even in every frame', async () => {
+    const bare = [line('OUTSIDE'), line('1323', 30)];
+    const { reader } = setup({ ocr: perFrame(bare, bare) });
+    expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg']))).not.toHaveProperty('dotTin');
+  });
+
   test('round 9: load and pressure numbers never become a marker-less TIN, even in every frame', async () => {
     const load = [line('MAX LOAD 600 KG (1323 LBS)'), line('MAX LOAD 600 KG 1323')];
     const { reader } = setup({ ocr: perFrame(load, load) });

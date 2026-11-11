@@ -1,4 +1,5 @@
 import {
+  accelerationFor,
   checkModelMatchesManifest,
   defaultModelLoaderDeps,
   loadModel,
@@ -214,6 +215,45 @@ describe('loadModel', () => {
     expect(log.mock.calls[4][1]).toEqual(
       expect.objectContaining({ delegate: 'cpu', inputs: [expect.objectContaining({ shape: expect.any(Array) })] }),
     );
+  });
+
+  test('a model with its own iOS delegates skips Core ML and opens on CPU first time', async () => {
+    const log = jest.fn();
+    const opened = fakeModel(treadEntry);
+    const createModel = jest.fn(async (_url: string, _delegates: string[]) => opened);
+    const manifest: ModelManifest = { ...fullManifest, tread: { ...treadEntry, acceleration: { ios: [] } } };
+    const deps = fakeLoaderDeps({ platform: 'ios', acceleration: ['core-ml'], createModel, log });
+    const r = await loadModel('tread', manifest, deps);
+    expect(r.ok && r.model.delegate).toBe('cpu');
+    expect(createModel.mock.calls.map(c => c[1])).toEqual([[]]);
+    expect(log.mock.calls.map(c => c[0])).not.toContain('opening model with core-ml delegate');
+  });
+
+  test('an iOS-only override leaves Android on its default delegates', async () => {
+    const opened = fakeModel(treadEntry);
+    const createModel = jest.fn(async (_url: string, _delegates: string[]) => opened);
+    const manifest: ModelManifest = { ...fullManifest, tread: { ...treadEntry, acceleration: { ios: [] } } };
+    const deps = fakeLoaderDeps({ platform: 'android', acceleration: ['android-gpu'], createModel });
+    const r = await loadModel('tread', manifest, deps);
+    expect(r.ok && r.model.delegate).toBe('android-gpu');
+    expect(createModel.mock.calls.map(c => c[1])).toEqual([['android-gpu']]);
+  });
+
+  test('accelerationFor: entry list for this platform, else the default', () => {
+    expect(accelerationFor({ acceleration: { ios: [] } }, { platform: 'ios', acceleration: ['core-ml'] })).toEqual([]);
+    expect(accelerationFor({}, { platform: 'ios', acceleration: ['core-ml'] })).toEqual(['core-ml']);
+    expect(accelerationFor({ acceleration: { ios: [] } }, { platform: 'android', acceleration: ['android-gpu'] })).toEqual([
+      'android-gpu',
+    ]);
+  });
+
+  test('an unknown delegate in acceleration is an invalid manifest', () => {
+    const bad = { ...treadEntry, acceleration: { ios: ['tpu' as never] } };
+    expect(validateManifestEntry('tread', bad)).toContain('acceleration.ios must list known delegates ([] = CPU)');
+  });
+
+  test('shipped tread wear model: CPU only on iOS (Core ML cannot build its interpreter), Android default', () => {
+    expect(modelManifest.treadWear!.acceleration).toEqual({ ios: [] });
   });
 
   test('a file TFLite cannot open is load_failed', async () => {

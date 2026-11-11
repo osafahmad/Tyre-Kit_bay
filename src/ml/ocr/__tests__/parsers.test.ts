@@ -1,4 +1,4 @@
-import { parseDotAge, parseTyreSize } from '../parsers';
+import { DOT_MARKER, parseDotAge, parseTyreSize, textAfterDotMarker } from '../parsers';
 
 describe('parseTyreSize', () => {
   test('P215/65R15', () => {
@@ -65,5 +65,22 @@ describe('parseDotAge', () => {
 
   test('no date code', () => {
     expect(parseDotAge('DOT', now)).toBeNull();
+  });
+});
+
+describe('DOT_MARKER round 10: more misreads (owner request 2026-11-11, iPhone 13 + Redmi 13 logs)', () => {
+  test('00T glued to text, POT / P0T as whole tokens', () => {
+    expect(textAfterDotMarker('00T 4B8R 1222')).toBe('4B8R 1222');
+    expect(textAfterDotMarker('X00T4B8R 1222')).toBe('4B8R 1222');
+    expect(textAfterDotMarker('POT 4B8R 1222')).toBe('4B8R 1222');
+    expect(textAfterDotMarker('P0T 4B8R 1222')).toBe('4B8R 1222');
+    expect(textAfterDotMarker('D0T 4B8R 1222')).toBe('4B8R 1222');
+    expect(textAfterDotMarker('OOT 4B8R 1222')).toBe('4B8R 1222');
+  });
+
+  test('numbers ending in 00T and words containing POT are not markers', () => {
+    for (const text of ['1000T 4B8R 1222', 'TEAPOT 4B8R 1222', 'POTS 4B8R 1222', 'SPOT 4B8R 1222', 'TOTAL 4B8R 1222']) {
+      expect(DOT_MARKER.test(text)).toBe(false);
+    }
   });
 });

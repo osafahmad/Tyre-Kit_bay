@@ -133,6 +133,12 @@ export function validateManifestEntry(
       p.push('letterboxPadValue must be an integer 0–255 for letterbox resize');
     }
   }
+  const DELEGATES: readonly string[] = ['metal', 'core-ml', 'nnapi', 'android-gpu'];
+  for (const [platform, list] of Object.entries(entry.acceleration ?? {})) {
+    if (!Array.isArray(list) || !list.every(d => DELEGATES.includes(d))) {
+      p.push(`acceleration.${platform} must list known delegates ([] = CPU)`);
+    }
+  }
   if (entry.labels.length === 0) p.push('labels are empty');
   if (new Set(entry.labels).size !== entry.labels.length) p.push('labels are not unique');
   if (!isNum(entry.confidenceThreshold) || entry.confidenceThreshold < 0 || entry.confidenceThreshold > 1) {
@@ -336,12 +342,26 @@ export async function locateModelAsset(
 
 // ---------------------------------------------------------------- loading
 
+/**
+ * Delegates to try for one model: the entry's own list for this platform if it
+ * has one (e.g. `[]` = CPU only, from a device measurement), else the default.
+ */
+export function accelerationFor(
+  entry: { acceleration?: Partial<Record<'ios' | 'android', ModelDelegate[]>> },
+  deps: Pick<ModelLoaderDeps, 'platform' | 'acceleration'>,
+): ModelDelegate[] {
+  const platform = deps.platform === 'ios' ? 'ios' : deps.platform === 'android' ? 'android' : null;
+  const override = platform ? entry.acceleration?.[platform] : undefined;
+  return override ? [...override] : deps.acceleration;
+}
+
 async function openWithFallback(
   url: string,
   deps: ModelLoaderDeps,
+  acceleration: ModelDelegate[],
 ): Promise<{ model: InferenceModel; delegate: ModelDelegate | 'cpu' }> {
   const log = deps.log;
-  for (const delegate of deps.acceleration) {
+  for (const delegate of acceleration) {
     const started = Date.now();
     log?.(`opening model with ${delegate} delegate`);
     try {
@@ -376,7 +396,13 @@ export async function loadModel<K extends ModelKey>(
 
   let opened: Awaited<ReturnType<typeof openWithFallback>>;
   try {
-    opened = await openWithFallback(located.url, deps);
+    const acceleration = accelerationFor(entry, deps);
+    if (acceleration !== deps.acceleration) {
+      deps.log?.(`model sets its own delegates on ${deps.platform}`, {
+        delegates: acceleration.length ? acceleration : ['cpu'],
+      });
+    }
+    opened = await openWithFallback(located.url, deps, acceleration);
   } catch (e) {
     deps.log?.('model could not be opened on any delegate', { error: message(e) });
     return failure(key, 'load_failed', message(e));

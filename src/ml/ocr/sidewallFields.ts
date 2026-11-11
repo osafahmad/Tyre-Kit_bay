@@ -472,27 +472,67 @@ export function fullFrameDotCandidate(lines: OcrLineLike[], now: Date = new Date
 /** Words that mark load / pressure / approval text, never a TIN. */
 const NOT_TIN_WORDS = new Set(['MAX', 'LOAD', 'PRESS', 'PRESSURE', 'KG', 'LBS', 'LB', 'PSI', 'KPA', 'TREADWEAR', 'TRACTION', 'TEMPERATURE']);
 
+/** Width/aspect-shaped text (`195/55`, `95/55`): a size line, never a TIN. */
+const WIDTH_ASPECT_SHAPED = /\d{2,3}\s*\/\s*\d{2}/;
+
+/** Letters, digits and single spaces, uppercase; everything else becomes a space. */
+const tinText = (line: OcrLineLike) =>
+  line.text.toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/**
+ * The round-9 marker-less TIN shape on already-cleaned tokens: 2+ tokens, the
+ * last a valid 4-digit week/year date code; 8–13 letters and digits; at least
+ * one letter before the date code; no load / pressure / grading word.
+ */
+function markerlessTinFromTokens(tokens: string[], now: Date): string | null {
+  if (tokens.length < 2 || tokens.some(t => NOT_TIN_WORDS.has(t))) return null;
+  const date = tokens[tokens.length - 1];
+  if (!/^\d{4}$/.test(date) || !parseDotAge(date, now)) return null;
+  const chars = tokens.join('');
+  if (chars.length < FULL_FRAME_DOT_MIN_CHARS || chars.length > DOT_MAX_CHARS) return null;
+  if (!/[A-Z]/.test(tokens.slice(0, -1).join(''))) return null;
+  return tokens.join(' ');
+}
+
 /**
  * Owner decision 2026-11-10 (round 9): a TIN whose DOT marker wasn't read.
  * Strict shape, because sidewalls carry other 4-digit numbers that pass as a
- * date (`1323 LBS`): 2+ tokens, ending in a valid 4-digit week/year date
- * code; 8–13 letters and digits; at least one letter before the date code;
- * no load / pressure / grading word; no DOT marker (those go through
- * `fullFrameDotCandidate`). sidewallReader.ts suggests one only when 2 frames
- * agree, never from a single frame.
+ * date (`1323 LBS`): see `markerlessTinFromTokens`. Lines with a DOT marker go
+ * through `fullFrameDotCandidate`; lines with a width/aspect or a rim+load
+ * (`195/55 R15 1323`) are size text, never a TIN. sidewallReader.ts suggests
+ * one only when 2 frames agree, never from a single frame.
+ *
+ * Round 10 (owner request 2026-11-11): the date code may have wrapped to the
+ * next line (`EX2H 4KR` then `3721`), as marked TINs already may in
+ * `fullFrameDotCandidate`. The next line must be exactly one 4-digit token,
+ * and the body line must then have a digit as well as a letter (a plant /
+ * size code, not a word such as `OUTSIDE` above a load number). A bare
+ * 4-digit number with no TIN body is never a DOT/TIN read (CLAUDE.md).
  */
 export function markerlessTinCandidate(lines: OcrLineLike[], now: Date = new Date()): string | null {
-  for (const line of readingOrder(lines)) {
-    const text = line.text.toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const ordered = readingOrder(lines);
+  for (let i = 0; i < ordered.length; i++) {
+    const upper = ordered[i].text.toUpperCase();
+    if (WIDTH_ASPECT_SHAPED.test(upper) || RIM_WITH_LOAD.test(upper)) continue;
+    const text = tinText(ordered[i]);
     if (DOT_MARKER.test(text)) continue;
     const tokens = text.split(' ').filter(Boolean);
-    if (tokens.length < 2 || tokens.some(t => NOT_TIN_WORDS.has(t))) continue;
-    const date = tokens[tokens.length - 1];
-    if (!/^\d{4}$/.test(date) || !parseDotAge(date, now)) continue;
-    const chars = tokens.join('');
-    if (chars.length < FULL_FRAME_DOT_MIN_CHARS || chars.length > DOT_MAX_CHARS) continue;
-    if (!/[A-Z]/.test(tokens.slice(0, -1).join(''))) continue;
-    return tokens.join(' ');
+    const own = markerlessTinFromTokens(tokens, now);
+    if (own) return own;
+    const next = ordered[i + 1];
+    if (!next) continue;
+    const wrapped = tinText(next);
+    if (!/^\d{4}$/.test(wrapped) || tokens.length === 0) continue;
+    const body = tokens.join('');
+    if (!/[A-Z]/.test(body) || !/\d/.test(body)) continue;
+    const joined = markerlessTinFromTokens([...tokens, wrapped], now);
+    if (joined) {
+      sidewallLog('dot: TIN-shaped line without a marker joined with a date code on the next line', {
+        lines: [ordered[i].text, next.text],
+        tin: joined,
+      });
+      return joined;
+    }
   }
   return null;
 }
