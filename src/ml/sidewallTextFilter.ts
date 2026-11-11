@@ -183,7 +183,7 @@ export function explainRejections(
     const dot = texts.find(t => DOT_MARKER.test(t));
     why.dotTin = dot
       ? `DOT line "${dot}" (+ next line) is not 8–13 letters/digits ending in a valid week/year`
-      : 'no DOT marker read (DOT, D0T, OOT, DTS)';
+      : 'no DOT marker read (DOT or a listed misread)';
   }
   if (!reading.make) why.make = 'no listed brand read as a whole word, no brand root, no model-family word';
   return why;

@@ -26,7 +26,7 @@ import { isDemoVersion } from '../../ml';
 import { AUTOMATED_CHECK_NOTICE } from '../../features/report/reportHtml';
 import { colors, sizes } from '../../theme';
 import { useTyreInspection } from '../../hooks/useTyreInspection';
-import { TreadWearCard } from './TreadWearCard';
+import { TreadWearCard, isTreadWearBusy, wearPatternRowValue } from './TreadWearCard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TyreResult'>;
 
@@ -50,6 +50,7 @@ export function TyreResultScreen({ navigation, route }: Props) {
   const hasDepth = result.treadDepthMm !== null;
   const demo = isDemoVersion(inspection.analyzerVersion);
 
+  const wearBusy = isTreadWearBusy(treadWear);
   const rows: [string, string | null][] = [
     ['Tyre size', result.size],
     ['Rim diameter', formatRim(result.rimInches)],
@@ -57,7 +58,7 @@ export function TyreResultScreen({ navigation, route }: Props) {
     ['Model', result.model],
     ['DOT/TIN', result.dotTin],
     ['Tyre age', formatAge(result)],
-    ['Wear pattern', result.wearPattern],
+    ['Wear pattern', wearPatternRowValue(treadWear, result.wearPattern)],
     ['Cracks or damage', formatDamage(result.damageFound)],
   ];
 
@@ -93,7 +94,13 @@ export function TyreResultScreen({ navigation, route }: Props) {
       </View>
       <ScrollView contentContainerStyle={styles.rows}>
         {rows.map(([label, value], i) => (
-          <ResultRow key={label} label={label} value={value} last={i === rows.length - 1} />
+          <ResultRow
+            key={label}
+            label={label}
+            value={value}
+            pending={label === 'Wear pattern' && wearBusy}
+            last={i === rows.length - 1}
+          />
         ))}
         <TreadWearCard state={treadWear} />
         <AppText variant="caption" color="textSecondary" style={styles.notice}>

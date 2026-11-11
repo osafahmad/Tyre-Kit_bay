@@ -54,6 +54,24 @@ function WearBadge({ tone, label }: { tone: BadgeTone; label: string }) {
   );
 }
 
+/** Shown in the Wear pattern row while the check runs, so it never shows a value that is about to change. */
+export const WEAR_ROW_PENDING = 'Checking…';
+
+/** The check hasn't finished yet (the card shows its spinner). */
+export function isTreadWearBusy(state: TreadWearState): boolean {
+  return state.status === 'idle' || state.status === 'scanning';
+}
+
+/**
+ * Value for the Wear pattern row. While the check runs: the pending text, not
+ * the value saved before it (which may be an initial or demo value and would
+ * flip seconds later). Afterwards: the saved value, which a finished check has
+ * set to its title; if the model couldn't run, the row is left as it was.
+ */
+export function wearPatternRowValue(state: TreadWearState, saved: string | null): string | null {
+  return isTreadWearBusy(state) ? WEAR_ROW_PENDING : saved;
+}
+
 /** What the card says, as plain data (also used for the screen-reader announcement). */
 export function treadWearCardContent(state: TreadWearState): {
   tone: BadgeTone | null;
@@ -100,7 +118,7 @@ function recordContent(record: TreadWearRecord): ReturnType<typeof treadWearCard
 
 export function TreadWearCard({ state }: { state: TreadWearState }) {
   const content = treadWearCardContent(state);
-  const busy = state.status === 'idle' || state.status === 'scanning';
+  const busy = isTreadWearBusy(state);
 
   // Announce the outcome once the check finishes (spec §8).
   const announcement = busy ? null : [content.badge, content.title].filter(Boolean).join(': ');

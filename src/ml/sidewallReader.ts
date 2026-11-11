@@ -3,7 +3,14 @@ import { ocrConfig } from '../config/capture';
 import { absoluteFramePath } from '../features/capture/frameFiles';
 import { localFramePath, type PipelineDeps } from './inference/pipeline';
 import { isOcrAvailable, recognizeLines } from './ocr/ocr';
-import { agreedValue, readKey, sizeParts, type FieldRead, type SidewallField } from './ocr/sidewallFields';
+import {
+  agreedValue,
+  markerlessTinCandidate,
+  readKey,
+  sizeParts,
+  type FieldRead,
+  type SidewallField,
+} from './ocr/sidewallFields';
 import { parseTyreSize } from './ocr/parsers';
 import type { OcrLineLike } from './ocr/textCandidates';
 import { sidewallLog } from './ocr/sidewallDebug';
@@ -152,6 +159,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
 
       const reads: Record<ReadField, FieldRead[]> = { size: [], dotTin: [], make: [] };
       const parts = { widthAspect: [] as string[], rim: [] as number[] };
+      const markerlessTins: FieldRead[] = [];
       const agreed = (field: ReadField) => agreedValue(reads[field], minAgreeing) !== null;
       const open = () => READ_FIELDS.filter(f => !agreed(f));
       let ocrRuns = 0;
@@ -188,6 +196,13 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           }
         }
         sidewallLog(`${label}: parsed (${source})`, { parsed, rejected: explainRejections(lines, parsed) });
+        if (!parsed.dotTin) {
+          const tin = markerlessTinCandidate(lines, deps.now());
+          if (tin) {
+            markerlessTins.push({ value: tin, score: 0 });
+            sidewallLog(`${label}: TIN-shaped line without a DOT marker`, { tin });
+          }
+        }
         if (!parsed.size) {
           const p = sizeParts(lines);
           if (p.widthAspect) parts.widthAspect.push(p.widthAspect);
@@ -235,6 +250,13 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           });
         }
       }
+      if (!suggestions.dotTin && reads.dotTin.length > 0 && new Set(reads.dotTin.map(r => readKey(r.value))).size === 1) {
+        // Owner decision 2026-11-10 (round 9): a single valid DOT/TIN read
+        // (marker + 8–13 characters + valid date code), with no competing
+        // read in any other frame, is suggested whole.
+        suggestions.dotTin = reads.dotTin[0].value;
+        sidewallLog('dotTin: single read, no competing reads; suggesting it whole', { value: suggestions.dotTin });
+      }
       if (!suggestions.dotTin && reads.dotTin.length > 0) {
         // Whole TINs disagree (noisy plant/size code) but the date code, which
         // gives the age, may agree: suggest the date code alone.
@@ -254,6 +276,15 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
               : 'dotTin: whole TINs disagree; suggesting the agreed date code only',
             { code, reads: dateCodes.length },
           );
+        }
+      }
+      if (!suggestions.dotTin && reads.dotTin.length === 0) {
+        // Round 9: no frame read a DOT marker. A marker-less TIN-shaped line
+        // is suggested only when 2 frames agree (never from one frame).
+        const tin = agreedValue(markerlessTins, minAgreeing);
+        if (tin) {
+          suggestions.dotTin = tin;
+          sidewallLog(`dotTin: no DOT marker read; ${minAgreeing} frames agree on a TIN-shaped line`, { value: tin });
         }
       }
       for (const field of READ_FIELDS) {

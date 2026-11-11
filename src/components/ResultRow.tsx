@@ -10,10 +10,12 @@ type Props = {
   /** null or empty shows `Not read`. Never pass a guessed value. */
   value: string | null;
   last?: boolean;
+  /** The value is a placeholder while a check runs (shown muted, like `Not read`). */
+  pending?: boolean;
 };
 
 /** Label / value row used on Tyre result. */
-export function ResultRow({ label, value, last = false }: Props) {
+export function ResultRow({ label, value, last = false, pending = false }: Props) {
   const shown = value && value.trim() !== '' ? value : NOT_READ;
   return (
     <View style={[styles.row, !last && styles.divider]} accessible accessibilityLabel={`${label}: ${shown}`}>
@@ -23,7 +25,7 @@ export function ResultRow({ label, value, last = false }: Props) {
       <AppText
         variant="rowLabel"
         weight="semibold"
-        color={shown === NOT_READ ? 'textSecondary' : 'black'}
+        color={pending || shown === NOT_READ ? 'textSecondary' : 'black'}
         style={styles.value}
       >
         {shown}

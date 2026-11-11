@@ -155,3 +155,40 @@ test('sidewall: good frames are not taken until Capture is pressed', async () =>
   });
   expect(converter.convertFrameToImage).toHaveBeenCalledTimes(1);
 });
+
+test('expected frame drops are handled quietly, without a console warning per drop', async () => {
+  const { frameDropCounts, resetFrameDropCounts } = jest.requireActual('../frameDrops') as typeof import('../frameDrops');
+  resetFrameDropCounts();
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  await render(<Harness stage="tread" active />);
+  const opts = mock.frameOutputOptions as unknown as { dropFramesWhileBusy: boolean; onFrameDropped?: (r: string) => void };
+  expect(opts.dropFramesWhileBusy).toBe(true);
+  expect(opts.onFrameDropped).toEqual(expect.any(Function));
+  for (let i = 0; i < 20; i++) opts.onFrameDropped!('frame-was-late');
+  expect(warn).not.toHaveBeenCalled();
+  expect(frameDropCounts()['frame-was-late']).toBe(20);
+});
+
+test('a run of passing frames reaches JS once; every rejected frame is still counted', async () => {
+  await render(<Harness stage="sidewall" active />);
+  const sample = jest.spyOn(hook.session, 'sample');
+  for (let i = 0; i < 4; i++) {
+    now += 200;
+    await act(async () => mock.frameOutputOptions.onFrame(fakeFrame(sharp)));
+  }
+  // First frame has no previous one (moving), then steady: moving, ok — the other oks are skipped.
+  expect(sample.mock.calls.map(c => c[0])).toEqual(['moving', 'ok']);
+  expect(hook.snapshot.status).toBe('ok');
+  for (let i = 0; i < 3; i++) {
+    now += 200;
+    await act(async () => mock.frameOutputOptions.onFrame(fakeFrame(10)));
+  }
+  expect(sample.mock.calls.map(c => c[0])).toEqual(['moving', 'ok', 'too_dark', 'too_dark', 'too_dark']);
+  now += 200;
+  await act(async () => mock.frameOutputOptions.onFrame(fakeFrame(sharp)));
+  now += 200;
+  await act(async () => mock.frameOutputOptions.onFrame(fakeFrame(sharp)));
+  // After a rejection the next ok is sent again, so the status shown updates.
+  expect(sample.mock.calls.slice(5).map(c => c[0])).toEqual(['moving', 'ok']);
+  expect(hook.snapshot.status).toBe('ok');
+});

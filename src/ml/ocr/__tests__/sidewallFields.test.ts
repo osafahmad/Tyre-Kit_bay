@@ -145,6 +145,45 @@ describe('OCR misreads around DOT', () => {
   });
 });
 
+describe('round 9: DOT marker misreads and marker-less TINs (owner decision 2026-11-10)', () => {
+  const { markerlessTinCandidate } = require('../sidewallFields') as typeof import('../sidewallFields');
+
+  test('iPhone 13 marker misreads locate the TIN; the TIN is kept as read', () => {
+    expect(fullFrameDotCandidate([line('OT1DT IOES 2421')], NOW)).toBe('IOES 2421');
+    expect(fullFrameDotCandidate([line('oTELDT 4B8R 1222')], NOW)).toBe('4B8R 1222');
+    expect(fullFrameDotCandidate([line('OT 4B8R 1222')], NOW)).toBe('4B8R 1222');
+    expect(fullFrameDotCandidate([line('DQT EX2H 4KR 3721')], NOW)).toBe('EX2H 4KR 3721');
+  });
+
+  test('logged reads with no date code stay empty', () => {
+    for (const text of ['otS1OUUSs', '100ULSS', 'oTELDT', 'OT1DT IOES']) {
+      expect(fullFrameDotCandidate([line(text)], NOW)).toBeNull();
+    }
+  });
+
+  test('short marker tokens only count as whole tokens', () => {
+    expect(fullFrameDotCandidate([line('TOTAL 4B8R 1222')], NOW)).toBeNull();
+    expect(fullFrameDotCandidate([line('POT 4B8R 1222')], NOW)).toBeNull();
+  });
+
+  test('date code: week 01–53, not in the future', () => {
+    expect(fullFrameDotCandidate([line('OT 4B8R 5324')], NOW)).toBe('4B8R 5324');
+    expect(fullFrameDotCandidate([line('OT 4B8R 5424')], NOW)).toBeNull(); // week 54
+    expect(fullFrameDotCandidate([line('OT 4B8R 0024')], NOW)).toBeNull(); // week 00
+    expect(fullFrameDotCandidate([line('OT 4B8R 0127')], NOW)).toBeNull(); // 2027
+  });
+
+  test('marker-less TIN: strict shape only', () => {
+    expect(markerlessTinCandidate([line('EX2H 4KR 3721')], NOW)).toBe('EX2H 4KR 3721');
+    expect(markerlessTinCandidate([line('MAX LOAD 600 KG (1323 LBS)')], NOW)).toBeNull(); // date not last; unit words
+    expect(markerlessTinCandidate([line('600 KG 1323')], NOW)).toBeNull(); // unit word
+    expect(markerlessTinCandidate([line('1234 5678 1323')], NOW)).toBeNull(); // no letter
+    expect(markerlessTinCandidate([line('2421')], NOW)).toBeNull(); // date code alone
+    expect(markerlessTinCandidate([line('EX2H 5719')], NOW)).toBeNull(); // week 57
+    expect(markerlessTinCandidate([line('DOT EX2H 4KR 3721')], NOW)).toBeNull(); // has a marker: other path
+  });
+});
+
 describe('make from a whole frame: known brand names only', () => {
   test('exact whole-word brand, as read', () => {
     expect(fullFrameMakeCandidate([line('OUTSIDE'), line('Continental', 30, 40)])).toBe('Continental');

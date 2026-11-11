@@ -10,6 +10,7 @@ import { classifyFrame, measureLuma, thumbDifference, type FrameIssue } from './
 import type { Rect, Size } from './guideGeometry';
 import { cropFrameToGuide } from './frameCrop';
 import { deleteQuietly, isNoSpace, newTempFramePath, type CaptureStage } from './frameFiles';
+import { onFrameDropped } from './frameDrops';
 
 type Geometry = { guide: Rect; view: Size } | null;
 
@@ -77,6 +78,8 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
       lastAnalysis: createSynchronizable(0),
       lastAccept: createSynchronizable(0),
       prevThumb: createSynchronizable<number[] | null>(null),
+      /** Last result sent to JS, so a run of passing frames doesn't call JS 10 times a second. */
+      lastSentIssue: createSynchronizable<FrameIssue | 'repeat' | null>(null),
       lastAcceptedThumb: createSynchronizable<number[] | null>(null),
       geometry: createSynchronizable<Geometry>(null),
     }),
@@ -195,7 +198,12 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
             else sync.busy.setBlocking(false);
           }
         }
-        scheduleOnRN(onSample, issue);
+        // `ok` frames aren't counted, so only a change to `ok` is sent. Rejections
+        // are always sent: the session counts them while collecting.
+        if (issue !== 'ok' || sync.lastSentIssue.getBlocking() !== 'ok') {
+          sync.lastSentIssue.setBlocking(issue);
+          scheduleOnRN(onSample, issue);
+        }
       } catch {
         // A bad frame is skipped; the next one is analysed.
       } finally {
@@ -221,6 +229,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
     pixelFormat: 'yuv',
     dropFramesWhileBusy: true,
     onFrame,
+    onFrameDropped,
   });
 
   const setGuide = useCallback(

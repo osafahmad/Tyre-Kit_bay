@@ -2,7 +2,13 @@ import React from 'react';
 import { AccessibilityInfo } from 'react-native';
 import { act, render, screen } from '@testing-library/react-native';
 import { TyreResultScreen } from '../TyreResult/TyreResultScreen';
-import { TREAD_WEAR_CARD_TITLE, TreadWearCard, treadWearCardContent } from '../TyreResult/TreadWearCard';
+import {
+  TREAD_WEAR_CARD_TITLE,
+  TreadWearCard,
+  WEAR_ROW_PENDING,
+  treadWearCardContent,
+  wearPatternRowValue,
+} from '../TyreResult/TreadWearCard';
 import { useInspectionStore } from '../../features/inspection/store';
 import type { TyreResult } from '../../features/inspection/types';
 import { buildTreadWearRecord } from '../../features/inspection/treadWear';
@@ -85,6 +91,24 @@ describe('treadWearCardContent', () => {
     );
     expect(c.title).toBe('Shoulder Wear');
     expect(c.alsoSeen).toEqual(['Flat Spot', 'Camber Wear']);
+  });
+});
+
+describe('wearPatternRowValue', () => {
+  test.each([['idle'], ['scanning']] as const)('%s: the pending text, never the earlier value', status => {
+    expect(wearPatternRowValue({ status }, 'Even wear')).toBe(WEAR_ROW_PENDING);
+    expect(wearPatternRowValue({ status }, null)).toBe(WEAR_ROW_PENDING);
+  });
+
+  test('finished or saved: the saved value', () => {
+    const d = done([finding('center_wear', 0.7)], 'critical');
+    expect(wearPatternRowValue(d, 'Center Wear')).toBe('Center Wear');
+    if (d.status !== 'done') throw new Error('unreachable');
+    expect(wearPatternRowValue({ status: 'saved', record: d.record }, 'Center Wear')).toBe('Center Wear');
+  });
+
+  test('model unavailable: the row is left as it was', () => {
+    expect(wearPatternRowValue({ status: 'unavailable', reason: 'model_missing' }, null)).toBeNull();
   });
 });
 
@@ -175,6 +199,56 @@ describe('Tyre result screen', () => {
       wearPattern: 'Center Wear',
       treadWear: expect.objectContaining({ severity: 'critical', label: 'center_wear', confidence: 0.72 }),
     });
+  });
+
+  test('the Wear pattern row waits for the active scan to settle before showing the final title', async () => {
+    let finish!: (o: TreadWearScanOutcome) => void;
+    mockScan.mockImplementation(() => new Promise(r => (finish = r)));
+    const params = seed();
+    // An initial value saved with the result (e.g. from the analyzer) that the scan will replace.
+    useInspectionStore.getState().setResult(params.tyreId, { ...result, wearPattern: 'Even wear' });
+    await show(params);
+
+    // Scanning: the row and the card are both pending; the earlier value never shows.
+    expect(screen.getByText('Checking tread wear on this phone…')).toBeTruthy();
+    expect(screen.getByLabelText(`Wear pattern: ${WEAR_ROW_PENDING}`)).toBeTruthy();
+    expect(screen.queryByText('Even wear')).toBeNull();
+    expect(screen.queryByText('Center Wear')).toBeNull();
+
+    // Re-renders during the scan (a store update) still show the pending text.
+    await act(async () => {
+      useInspectionStore.getState().setResult(params.tyreId, { ...result, wearPattern: 'Even wear' });
+    });
+    expect(screen.getByLabelText(`Wear pattern: ${WEAR_ROW_PENDING}`)).toBeTruthy();
+    expect(screen.queryByText('Even wear')).toBeNull();
+
+    await act(async () => {
+      finish({
+        status: 'done',
+        frames: [
+          { frame: 'frames/t1.jpg', detections: [{ label: 'center_wear', confidence: 0.72, bbox: [0, 0, 0.5, 0.5], frameRect: null }] },
+          { frame: 'frames/t2.jpg', detections: [{ label: 'center_wear', confidence: 0.65, bbox: [0, 0, 0.5, 0.5], frameRect: null }] },
+        ],
+        framesFailed: 0,
+        delegate: 'cpu',
+        modelVersion: 'tread-test-1',
+      });
+    });
+
+    // Settled: card and row show the same final title, together.
+    expect(screen.queryByText(WEAR_ROW_PENDING)).toBeNull();
+    expect(screen.queryByText('Checking tread wear on this phone…')).toBeNull();
+    expect(screen.getByLabelText('Wear pattern: Center Wear')).toBeTruthy();
+    expect(screen.getAllByText('Center Wear')).toHaveLength(2);
+    expect(screen.queryByText('Even wear')).toBeNull();
+  });
+
+  test('model missing: once settled, the Wear pattern row is left as it was', async () => {
+    mockScan.mockResolvedValue({ status: 'unavailable', reason: 'model_missing' });
+    await show(seed());
+    await act(async () => {});
+    expect(screen.queryByText(WEAR_ROW_PENDING)).toBeNull();
+    expect(screen.getByLabelText('Wear pattern: Not read')).toBeTruthy();
   });
 
   test('a sidewall bulge at 0.50 or more raises the shown status to Replace now, with its text label', async () => {

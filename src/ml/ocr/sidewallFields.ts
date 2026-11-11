@@ -452,8 +452,7 @@ export const FULL_FRAME_DOT_MIN_CHARS = 8;
 
 /**
  * DOT/TIN from a whole frame: a line must contain a DOT marker (`DOT_MARKER`:
- * the word `DOT`, or the misreads `D0T`, `OOT`, `DTS`; anything before it is
- * dropped). That line
+ * the word `DOT`, or its listed misreads; anything before it is dropped). That line
  * alone, or joined with the next line in reading order (TINs often wrap), must
  * give 8–13 letters and digits after `DOT`, ending in a valid date code.
  */
@@ -466,6 +465,34 @@ export function fullFrameDotCandidate(lines: OcrLineLike[], now: Date = new Date
       const value = dotCandidate(group, now);
       if (value && value.replace(/ /g, '').length >= FULL_FRAME_DOT_MIN_CHARS) return value;
     }
+  }
+  return null;
+}
+
+/** Words that mark load / pressure / approval text, never a TIN. */
+const NOT_TIN_WORDS = new Set(['MAX', 'LOAD', 'PRESS', 'PRESSURE', 'KG', 'LBS', 'LB', 'PSI', 'KPA', 'TREADWEAR', 'TRACTION', 'TEMPERATURE']);
+
+/**
+ * Owner decision 2026-11-10 (round 9): a TIN whose DOT marker wasn't read.
+ * Strict shape, because sidewalls carry other 4-digit numbers that pass as a
+ * date (`1323 LBS`): 2+ tokens, ending in a valid 4-digit week/year date
+ * code; 8–13 letters and digits; at least one letter before the date code;
+ * no load / pressure / grading word; no DOT marker (those go through
+ * `fullFrameDotCandidate`). sidewallReader.ts suggests one only when 2 frames
+ * agree, never from a single frame.
+ */
+export function markerlessTinCandidate(lines: OcrLineLike[], now: Date = new Date()): string | null {
+  for (const line of readingOrder(lines)) {
+    const text = line.text.toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (DOT_MARKER.test(text)) continue;
+    const tokens = text.split(' ').filter(Boolean);
+    if (tokens.length < 2 || tokens.some(t => NOT_TIN_WORDS.has(t))) continue;
+    const date = tokens[tokens.length - 1];
+    if (!/^\d{4}$/.test(date) || !parseDotAge(date, now)) continue;
+    const chars = tokens.join('');
+    if (chars.length < FULL_FRAME_DOT_MIN_CHARS || chars.length > DOT_MAX_CHARS) continue;
+    if (!/[A-Z]/.test(tokens.slice(0, -1).join(''))) continue;
+    return tokens.join(' ');
   }
   return null;
 }

@@ -9,6 +9,7 @@ import { isOcrAvailable, recognizeLines } from '../../ml/ocr/ocr';
 import type { OcrLineLike } from '../../ml/ocr/textCandidates';
 import type { Rect, Size } from './guideGeometry';
 import { cropFrameToGuide, type GuideGeometry } from './frameCrop';
+import { onFrameDropped } from './frameDrops';
 
 /**
  * Why a pass produced no lines, kept apart from "no text found":
@@ -169,6 +170,7 @@ export function useTextScanner({
     pixelFormat: 'yuv',
     dropFramesWhileBusy: true,
     onFrame,
+    onFrameDropped,
   });
 
   /** Capture button: use the next OCR pass as a one-off read. Always answered. */

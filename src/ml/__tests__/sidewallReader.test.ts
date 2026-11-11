@@ -93,9 +93,13 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
     expect(deps.deleteFile).toHaveBeenCalledWith('/docs/f1.jpg#centre');
   });
 
-  test('read in only one frame: size and make are suggested (owner 2026-11-10); DOT gives its date code', async () => {
+  test('read in only one frame: size, make and the whole DOT/TIN are suggested (owner 2026-11-10)', async () => {
     const { reader } = setup({ ocr: perFrame(SIDEWALL, [], []) });
-    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({ size: '205/55 R16', make: 'MICHELIN', dotTin: '2319' });
+    expect(suggestionsOf(await reader.read(FRAMES))).toEqual({
+      size: '205/55 R16',
+      make: 'MICHELIN',
+      dotTin: '4B7Y ABC 2319',
+    });
   });
 
   test('frame 2 blurred: the size from frame 1 is kept', async () => {
@@ -218,10 +222,35 @@ describe('DOT/TIN across frames', () => {
     expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg'])).dotTin).toBe('0124');
   });
 
-  test('one valid date code read and no competing date code → date code only', async () => {
+  test('one valid DOT/TIN read and no competing read → the whole TIN (round 9, owner 2026-11-10)', async () => {
     const { reader } = setup({ ocr: perFrame([line('DOT 1Y6 032MKT 0124')], [line('DOT')]) });
-    // The single, unconfirmed TIN body is not suggested.
+    expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg'])).dotTin).toBe('1Y6 032MKT 0124');
+  });
+
+  test('two different TINs with the same date code → still the date code only', async () => {
+    const { reader } = setup({ ocr: perFrame([line('DOT 1Y6 032MKT 0124')], [line('DOT EX2H 4KR 0124')]) });
     expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg'])).dotTin).toBe('0124');
+  });
+
+  test('round 9: iPhone 13 marker misreads, single frame', async () => {
+    const one = setup({ ocr: perFrame([line('OT1DT IOES 2421')], []) });
+    expect(suggestionsOf(await one.reader.read(['f1.jpg', 'f2.jpg'])).dotTin).toBe('IOES 2421');
+    const two = setup({ ocr: perFrame([line('oTELDT 4B8R 1222')], []) });
+    expect(suggestionsOf(await two.reader.read(['f1.jpg', 'f2.jpg'])).dotTin).toBe('4B8R 1222');
+  });
+
+  test('round 9: a TIN with no DOT marker needs 2 agreeing frames', async () => {
+    const tin = [line('EX2H 4KR 3721')];
+    const single = setup({ ocr: perFrame(tin, []) });
+    expect(suggestionsOf(await single.reader.read(['f1.jpg', 'f2.jpg']))).not.toHaveProperty('dotTin');
+    const agreed = setup({ ocr: perFrame(tin, tin) });
+    expect(suggestionsOf(await agreed.reader.read(['f1.jpg', 'f2.jpg'])).dotTin).toBe('EX2H 4KR 3721');
+  });
+
+  test('round 9: load and pressure numbers never become a marker-less TIN, even in every frame', async () => {
+    const load = [line('MAX LOAD 600 KG (1323 LBS)'), line('MAX LOAD 600 KG 1323')];
+    const { reader } = setup({ ocr: perFrame(load, load) });
+    expect(suggestionsOf(await reader.read(['f1.jpg', 'f2.jpg']))).not.toHaveProperty('dotTin');
   });
 
   test('competing date codes across frames → no DOT suggestion', async () => {
@@ -285,7 +314,7 @@ describe('[SidewallOCR] logs', () => {
     const parsed = out.find(m => m.includes('frame 1/3: parsed (centre'))!;
     expect(parsed).toContain('"size":"205/55 R16"');
     expect(parsed).toContain('"loadSpeed":"91V"');
-    expect(parsed).toContain('"dotTin":"no DOT marker read (DOT, D0T, OOT, DTS)"');
+    expect(parsed).toContain('"dotTin":"no DOT marker read (DOT or a listed misread)"');
     expect(out.find(m => m.includes('make: not suggested'))).toContain('no frame gave a valid read');
     expect(out.some(m => m.includes('read done'))).toBe(true);
   });
