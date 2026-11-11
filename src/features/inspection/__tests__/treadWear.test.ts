@@ -1,10 +1,14 @@
 import { escapeHtml, reportHtml } from '../../report/reportHtml';
 import { CRITICAL_WEAR_ADVISORY, reportSummary, reportTyreRows } from '../../report/summary';
 import { emptySidewallDetails } from '../store';
-import { buildTreadWearRecord, wearReportLines, withTreadWear } from '../treadWear';
+import { buildTreadWearRecord, wearReportLines, wearUnverifiedNote, withTreadWear, type WearFinding } from '../treadWear';
 import type { Inspection, TyreInspection, TyreResult } from '../types';
 
 const NOW = new Date('2026-11-06T12:00:00Z');
+
+/** A finding that 3 frames agree on at 0.70 or above (`TREAD_WEAR_CONSENSUS`). */
+const agreed = (label: string, maxConfidence: number): WearFinding => ({ label, maxConfidence, consensusFrames: 3 });
+const NOTE = ' (Beta / Model Unverified)';
 
 const result = (over: Partial<TyreResult> = {}): TyreResult => ({
   status: 'good',
@@ -24,12 +28,12 @@ const result = (over: Partial<TyreResult> = {}): TyreResult => ({
 });
 
 describe('buildTreadWearRecord', () => {
-  test('nothing found: Normal Wear Distribution, nothing to recommend', () => {
+  test('nothing found: No Abnormal Wear Pattern Detected, nothing to recommend', () => {
     expect(buildTreadWearRecord([], 'v1', NOW)).toEqual({
       severity: 'none',
       minimumStatus: null,
       label: null,
-      title: 'Normal Wear Distribution',
+      title: 'No Abnormal Wear Pattern Detected',
       cause: null,
       recommendation: null,
       confidence: null,
@@ -69,16 +73,16 @@ describe('buildTreadWearRecord', () => {
     );
   });
 
-  test('0.60 and above: urgent recommendation without class advice', () => {
-    expect(buildTreadWearRecord([{ label: 'diagonal_wear', maxConfidence: 0.6 }], 'v1', NOW).recommendation).toBe(
+  test('with consensus: urgent recommendation without class advice', () => {
+    expect(buildTreadWearRecord([agreed('diagonal_wear', 0.7)], 'v1', NOW).recommendation).toBe(
       'Get this checked as soon as possible.',
     );
   });
 
-  test('critical if any class reaches 0.60; other titles listed once, without the main one', () => {
+  test('critical if any class has consensus; other titles listed once, without the main one', () => {
     const r = buildTreadWearRecord(
       [
-        { label: 'shoulder_wear', maxConfidence: 0.7 },
+        agreed('shoulder_wear', 0.7),
         { label: 'inner_edge_wear', maxConfidence: 0.65 },
         { label: 'flat_spot', maxConfidence: 0.36 },
       ],
@@ -92,17 +96,51 @@ describe('buildTreadWearRecord', () => {
   });
 });
 
-describe('damage classes raise the status (owner decision 2026-11-10)', () => {
+describe('cross-frame consensus (owner decision 2026-11-11)', () => {
+  const rec = (label: string, maxConfidence: number, consensusFrames?: number) =>
+    buildTreadWearRecord([{ label, maxConfidence, consensusFrames }], 'v1', NOW);
+
+  test('fewer than 3 frames at 0.70 or above: shown as detected, never critical, status untouched', () => {
+    // The Redmi 13 sidewall scan would have needed 3 strong frames; 2 are not enough.
+    for (const frames of [undefined, 0, 1, 2]) {
+      expect(rec('camber_wear', 0.98, frames)).toEqual(
+        expect.objectContaining({ severity: 'detected', minimumStatus: null, title: 'Camber Wear', recommendation: null }),
+      );
+      expect(rec('exposed_cords', 0.98, frames)).toEqual(
+        expect.objectContaining({ severity: 'detected', minimumStatus: null, title: 'Exposed Cords' }),
+      );
+      expect(rec('cracking_dry_rot', 0.98, frames).minimumStatus).toBeNull();
+    }
+  });
+
+  test('3 frames at 0.70 or above: critical, and damage classes raise the status', () => {
+    expect(rec('camber_wear', 0.98, 3)).toEqual(expect.objectContaining({ severity: 'critical', minimumStatus: null }));
+    expect(rec('exposed_cords', 0.75, 3)).toEqual(
+      expect.objectContaining({ severity: 'critical', minimumStatus: 'replace_now' }),
+    );
+  });
+
+  test('a finding without consensus never outranks or hides one with it', () => {
+    const r = buildTreadWearRecord(
+      [{ label: 'exposed_cords', maxConfidence: 0.99, consensusFrames: 1 }, agreed('cracking_dry_rot', 0.8)],
+      'v1',
+      NOW,
+    );
+    expect(r).toEqual(
+      expect.objectContaining({ label: 'cracking_dry_rot', minimumStatus: 'replace_soon', alsoSeen: ['Exposed Cords'] }),
+    );
+  });
+});
+
+describe('damage classes raise the status (owner decision 2026-11-10), with consensus', () => {
   const rec = (...f: [string, number][]) =>
-    buildTreadWearRecord(f.map(([label, maxConfidence]) => ({ label, maxConfidence })), 'v1', NOW);
+    buildTreadWearRecord(f.map(([label, maxConfidence]) => agreed(label, maxConfidence)), 'v1', NOW);
 
   test.each([
-    ['exposed_cords', 0.5, 'replace_now'],
-    ['sidewall_bulge', 0.5, 'replace_now'],
-    ['exposed_cords', 0.49, null],
-    ['sidewall_bulge', 0.36, null],
-    ['cracking_dry_rot', 0.35, 'replace_soon'],
-    ['puncture_object', 0.35, 'replace_soon'],
+    ['exposed_cords', 0.7, 'replace_now'],
+    ['sidewall_bulge', 0.7, 'replace_now'],
+    ['cracking_dry_rot', 0.7, 'replace_soon'],
+    ['puncture_object', 0.7, 'replace_soon'],
     ['center_wear', 0.99, null],
     ['normal_even_wear', 0.99, null],
   ])('%s at %s → minimum status %s', (label, c, status) => {
@@ -110,7 +148,7 @@ describe('damage classes raise the status (owner decision 2026-11-10)', () => {
   });
 
   test('a status-raising finding is shown first and is critical, even when weaker', () => {
-    const r = rec(['center_wear', 0.9], ['exposed_cords', 0.55]);
+    const r = rec(['center_wear', 0.9], ['exposed_cords', 0.75]);
     expect(r).toEqual(
       expect.objectContaining({
         severity: 'critical',
@@ -120,17 +158,20 @@ describe('damage classes raise the status (owner decision 2026-11-10)', () => {
         alsoSeen: ['Center Wear'],
       }),
     );
-    expect(rec(['puncture_object', 0.4]).severity).toBe('critical');
+    expect(rec(['puncture_object', 0.7]).severity).toBe('critical');
   });
 
   test('the worst rule wins', () => {
-    expect(rec(['cracking_dry_rot', 0.9], ['sidewall_bulge', 0.6]).minimumStatus).toBe('replace_now');
-    expect(rec(['cracking_dry_rot', 0.9], ['sidewall_bulge', 0.4]).minimumStatus).toBe('replace_soon');
+    expect(rec(['cracking_dry_rot', 0.9], ['sidewall_bulge', 0.7]).minimumStatus).toBe('replace_now');
+    expect(
+      buildTreadWearRecord([agreed('cracking_dry_rot', 0.9), { label: 'sidewall_bulge', maxConfidence: 0.9 }], 'v1', NOW)
+        .minimumStatus,
+    ).toBe('replace_soon');
   });
 
   test('withTreadWear raises the status, never lowers it', () => {
     const now = rec(['exposed_cords', 0.8]);
-    const soon = rec(['cracking_dry_rot', 0.4]);
+    const soon = rec(['cracking_dry_rot', 0.7]);
     expect(withTreadWear(result({ status: 'good' }), now).status).toBe('replace_now');
     expect(withTreadWear(result({ status: 'good' }), soon).status).toBe('replace_soon');
     expect(withTreadWear(result({ status: 'replace_now' }), soon).status).toBe('replace_now');
@@ -151,19 +192,28 @@ test('withTreadWear without a status-raising finding changes only the wear field
 });
 
 describe('wearReportLines', () => {
-  const lines = (findings: { label: string; maxConfidence: number }[]) =>
+  const lines = (findings: WearFinding[]) =>
     wearReportLines(withTreadWear(result(), buildTreadWearRecord(findings, 'v1', NOW)));
 
   test('normal, detected and critical', () => {
-    expect(lines([])).toEqual({ pattern: 'Wear: Normal Wear Distribution', recommendation: null });
+    // Nothing found: no escalation and no note.
+    expect(lines([])).toEqual({ pattern: 'Wear: No Abnormal Wear Pattern Detected', recommendation: null });
     expect(lines([{ label: 'center_wear', maxConfidence: 0.4 }])).toEqual({
-      pattern: 'Wear: Center Wear · Wear pattern found',
+      pattern: `Wear: Center Wear · Wear pattern found${NOTE}`,
       recommendation: null,
     });
-    expect(lines([{ label: 'center_wear', maxConfidence: 0.8 }])).toEqual({
-      pattern: 'Wear: Center Wear · Maintenance needed',
+    expect(lines([agreed('center_wear', 0.8)])).toEqual({
+      pattern: `Wear: Center Wear · Maintenance needed${NOTE}`,
       recommendation: 'Get this checked as soon as possible.',
     });
+  });
+
+  test('the staging note: findings only, and only while the guard is on', () => {
+    expect(wearUnverifiedNote({ severity: 'detected' })).toBe('Beta / Model Unverified');
+    expect(wearUnverifiedNote({ severity: 'critical' })).toBe('Beta / Model Unverified');
+    expect(wearUnverifiedNote({ severity: 'none' })).toBeNull();
+    expect(wearUnverifiedNote(null)).toBeNull();
+    expect(wearUnverifiedNote({ severity: 'critical' }, false)).toBeNull();
   });
 
   test('results saved before the wear model: analyzer pattern if any, else nothing', () => {
@@ -182,9 +232,9 @@ describe('wear separator', () => {
     [0.8, 'Maintenance needed'],
   ])('"Wear: {title} · {severity}" with a U+00B7 and one space each side (confidence %s)', (c, severity) => {
     const { pattern } = wearReportLines(
-      withTreadWear(result(), buildTreadWearRecord([{ label: 'center_wear', maxConfidence: c }], 'v1', NOW)),
+      withTreadWear(result(), buildTreadWearRecord([{ ...agreed('center_wear', c), consensusFrames: c >= 0.7 ? 3 : 0 }], 'v1', NOW)),
     )!;
-    expect(pattern).toBe(`Wear: Center Wear ${DOT} ${severity}`);
+    expect(pattern).toBe(`Wear: Center Wear ${DOT} ${severity}${NOTE}`);
     expect(pattern).toMatch(/^Wear: [^·]+[^ ] · [^ ][^·]+$/);
   });
 
@@ -193,7 +243,7 @@ describe('wear separator', () => {
   });
 
   test('the PDF keeps the dot, also when the title needs escaping', () => {
-    const record = { ...buildTreadWearRecord([{ label: 'center_wear', maxConfidence: 0.8 }], 'v1', NOW), title: 'A & <B>' };
+    const record = { ...buildTreadWearRecord([agreed('center_wear', 0.8)], 'v1', NOW), title: 'A & <B>' };
     const html = reportHtml(
       {
         id: 'i',
@@ -219,7 +269,7 @@ describe('wear separator', () => {
       { demo: false },
     );
     expect(html).toContain('<meta charset="utf-8" />');
-    expect(html).toContain(`<div class="wear">Wear: A &amp; &lt;B&gt; ${DOT} Maintenance needed</div>`);
+    expect(html).toContain(`<div class="wear">Wear: A &amp; &lt;B&gt; ${DOT} Maintenance needed${NOTE}</div>`);
   });
 });
 
@@ -235,7 +285,7 @@ describe('report and PDF', () => {
     sidewallDetails: emptySidewallDetails,
     ...over,
   });
-  const critical = buildTreadWearRecord([{ label: 'center_wear', maxConfidence: 0.8 }], 'v1', NOW);
+  const critical = buildTreadWearRecord([agreed('center_wear', 0.8)], 'v1', NOW);
   const normal = buildTreadWearRecord([], 'v1', NOW);
   const inspection: Inspection = {
     id: 'i',
@@ -255,8 +305,8 @@ describe('report and PDF', () => {
 
   test('report rows carry the wear pattern and recommendation', () => {
     expect(reportTyreRows(inspection).map(r => [r.position, r.status, r.wear, r.wearRecommendation])).toEqual([
-      ['Left front', 'good', 'Wear: Center Wear · Maintenance needed', 'Get this checked as soon as possible.'],
-      ['Right front', 'good', 'Wear: Normal Wear Distribution', null],
+      ['Left front', 'good', `Wear: Center Wear · Maintenance needed${NOTE}`, 'Get this checked as soon as possible.'],
+      ['Right front', 'good', 'Wear: No Abnormal Wear Pattern Detected', null],
       ['Left rear', 'good', null, null],
       ['Right rear', null, null, null],
     ]);
@@ -264,9 +314,9 @@ describe('report and PDF', () => {
 
   test('the PDF includes them, escaped, and the status badges are unchanged', () => {
     const html = reportHtml(inspection, { demo: false });
-    expect(html).toContain('<div class="wear">Wear: Center Wear · Maintenance needed</div>');
+    expect(html).toContain(`<div class="wear">Wear: Center Wear · Maintenance needed${NOTE}</div>`);
     expect(html).toContain('<div class="advice">Get this checked as soon as possible.</div>');
-    expect(html).toContain('<div class="wear">Wear: Normal Wear Distribution</div>');
+    expect(html).toContain('<div class="wear">Wear: No Abnormal Wear Pattern Detected</div>');
     expect(html.match(/class="advice"/g)).toHaveLength(1);
     expect(html.match(/>Good</g)).toHaveLength(3);
     expect(html).toContain('All scanned tyres are in good condition');

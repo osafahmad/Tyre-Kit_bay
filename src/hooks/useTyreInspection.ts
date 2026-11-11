@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useInspectionStore, useTyre } from '../features/inspection/store';
 import { buildTreadWearRecord } from '../features/inspection/treadWear';
 import type { TreadWearRecord } from '../features/inspection/types';
-import { NO_DEFECT_CLASS, type TreadWearClass } from '../ml/config/treadWearConfig';
+import { NO_DEFECT_CLASS, TREAD_WEAR_CONSENSUS, type TreadWearClass } from '../ml/config/treadWearConfig';
 import {
   getTreadWearDetector,
   type TreadWearFrameResult,
@@ -27,6 +27,8 @@ export type TreadWearFinding = {
   maxConfidence: number;
   /** Frames this class was found in. */
   frames: number;
+  /** Frames where it scored at or above `TREAD_WEAR_CONSENSUS.minConfidence`. */
+  consensusFrames: number;
 };
 
 export type TreadWearState =
@@ -53,13 +55,18 @@ export function summariseTreadWear(frames: TreadWearFrameResult[]): TreadWearFin
   const byLabel = new Map<TreadWearClass, TreadWearFinding>();
   for (const f of frames) {
     const seen = new Set<TreadWearClass>();
+    const strong = new Set<TreadWearClass>();
     for (const d of f.detections) {
       if (d.label === NO_DEFECT_CLASS) continue;
-      const cur = byLabel.get(d.label) ?? { label: d.label, maxConfidence: 0, frames: 0 };
+      const cur = byLabel.get(d.label) ?? { label: d.label, maxConfidence: 0, frames: 0, consensusFrames: 0 };
       cur.maxConfidence = Math.max(cur.maxConfidence, d.confidence);
       if (!seen.has(d.label)) {
         cur.frames++;
         seen.add(d.label);
+      }
+      if (d.confidence >= TREAD_WEAR_CONSENSUS.minConfidence && !strong.has(d.label)) {
+        cur.consensusFrames++;
+        strong.add(d.label);
       }
       byLabel.set(d.label, cur);
     }
@@ -127,7 +134,10 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
         treadLog(`consensus (run ${run})`, {
           framesRead: outcome.frames.length,
           framesFailed: outcome.framesFailed,
-          findings: findings.map(f => ({ label: f.label, maxConfidence: r3(f.maxConfidence), frames: f.frames })),
+          findings: findings.map(f => ({ label: f.label, maxConfidence: r3(f.maxConfidence),
+            frames: f.frames,
+            consensusFrames: f.consensusFrames,
+          })),
           winner: { title: record.title, label: record.label, severity: record.severity, confidence: record.confidence },
           alsoSeen: record.alsoSeen,
         });

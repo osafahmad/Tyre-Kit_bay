@@ -29,4 +29,12 @@ export const diagnosticsConfig = {
    * MUST be false for any store build (docs/RELEASE_CHECKLIST.md).
    */
   allowDemoAnalyzerInRelease: true,
+  /**
+   * STAGING GUARD (owner decision 2026-11-11). The tread wear model hasn't been
+   * validated on real tyres (it called a sidewall photo camber wear at 0.98),
+   * so every wear finding shown in the app, report and PDF carries
+   * `Beta / Model Unverified`. Turn off only once the owner has validated the
+   * model on real tyres (docs/RELEASE_CHECKLIST.md).
+   */
+  treadWearModelUnverified: true,
 } as const;

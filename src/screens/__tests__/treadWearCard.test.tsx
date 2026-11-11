@@ -22,7 +22,20 @@ jest.mock('../../ml/services/TreadWearDetector', () => ({
   getTreadWearDetector: () => ({ scan: (f: string[], c?: () => boolean) => mockScan(f, c) }),
 }));
 
-const finding = (label: TreadWearClass, maxConfidence: number) => ({ label, maxConfidence, frames: 1 });
+/** A finding; at 0.70 or above it is taken as agreed by 3 frames (`TREAD_WEAR_CONSENSUS`) unless told otherwise. */
+const finding = (label: TreadWearClass, maxConfidence: number, consensusFrames = maxConfidence >= 0.7 ? 3 : 0) => ({
+  label,
+  maxConfidence,
+  frames: Math.max(1, consensusFrames),
+  consensusFrames,
+});
+const NOTE = 'Beta / Model Unverified';
+/** `n` frames that each detect `label` at `confidence`. */
+const framesWith = (label: TreadWearClass, confidence: number, n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    frame: `frames/t${i + 1}.jpg`,
+    detections: [{ label, confidence, bbox: [0, 0, 0.5, 0.5] as [number, number, number, number], frameRect: null }],
+  }));
 /** A just-finished check. `severity` is what the record builder must have worked out. */
 const done = (findings: ReturnType<typeof finding>[], severity: 'none' | 'detected' | 'critical'): TreadWearState => {
   const record = buildTreadWearRecord(findings, 'tread-test-1');
@@ -47,34 +60,40 @@ describe('treadWearCardContent', () => {
     );
   });
 
-  test('nothing found: Normal Wear Distribution', () => {
+  test('nothing found: No Abnormal Wear Pattern Detected, not escalated, no note', () => {
     expect(treadWearCardContent(done([], 'none'))).toEqual(
-      expect.objectContaining({ tone: 'normal', badge: 'Normal Wear Distribution', title: null }),
+      expect.objectContaining({ tone: 'normal', badge: 'No Abnormal Wear Pattern Detected', title: null, note: null }),
     );
   });
 
-  test('below 0.60: warning badge with the title; no cause or advice until the owner supplies it', () => {
+  test('no consensus: warning badge with the title and the note; no cause or advice until the owner supplies it', () => {
     expect(treadWearCardContent(done([finding('feathering', 0.45)], 'detected'))).toEqual({
       tone: 'warning',
       badge: 'Wear pattern found',
       title: 'Feathering',
       lines: [],
       alsoSeen: [],
+      note: NOTE,
     });
+    // Strong, but in too few frames (the Redmi 13 sidewall scan needed 3): still not critical.
+    expect(treadWearCardContent(done([finding('camber_wear', 0.98, 2)], 'detected'))).toEqual(
+      expect.objectContaining({ tone: 'warning', badge: 'Wear pattern found', lines: [], note: NOTE }),
+    );
   });
 
-  test('0.60 and above: critical badge with urgent maintenance advice', () => {
-    expect(treadWearCardContent(done([finding('center_wear', 0.6)], 'critical'))).toEqual({
+  test('3 frames at 0.70 or above: critical badge with urgent maintenance advice and the note', () => {
+    expect(treadWearCardContent(done([finding('center_wear', 0.7)], 'critical'))).toEqual({
       tone: 'critical',
       badge: 'Maintenance needed',
       title: 'Center Wear',
       lines: ['Get this checked as soon as possible.'],
       alsoSeen: [],
+      note: NOTE,
     });
   });
 
   test('class names become clean titles, with no made-up cause or advice', () => {
-    expect(treadWearCardContent(done([finding('cracking_dry_rot', 0.4)], 'critical'))).toEqual(
+    expect(treadWearCardContent(done([finding('cracking_dry_rot', 0.7)], 'critical'))).toEqual(
       expect.objectContaining({ title: 'Cracking Dry Rot', lines: ['Get this checked as soon as possible.'] }),
     );
   });
@@ -101,11 +120,13 @@ describe('wearPatternRowValue', () => {
     expect(wearPatternRowValue({ status }, null)).toBe(WEAR_ROW_PENDING);
   });
 
-  test('finished or saved: the saved value', () => {
+  test('finished or saved: the saved value; a finding carries the staging note', () => {
     const d = done([finding('center_wear', 0.7)], 'critical');
-    expect(wearPatternRowValue(d, 'Center Wear')).toBe('Center Wear');
+    expect(wearPatternRowValue(d, 'Center Wear')).toBe(`Center Wear (${NOTE})`);
     if (d.status !== 'done') throw new Error('unreachable');
-    expect(wearPatternRowValue({ status: 'saved', record: d.record }, 'Center Wear')).toBe('Center Wear');
+    expect(wearPatternRowValue({ status: 'saved', record: d.record }, 'Center Wear')).toBe(`Center Wear (${NOTE})`);
+    const none = done([], 'none');
+    expect(wearPatternRowValue(none, 'No Abnormal Wear Pattern Detected')).toBe('No Abnormal Wear Pattern Detected');
   });
 
   test('model unavailable: the row is left as it was', () => {
@@ -117,6 +138,7 @@ test('TreadWearCard announces the finished check', async () => {
   const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
   await render(<TreadWearCard state={done([finding('center_wear', 0.8)], 'critical')} />);
   expect(screen.getByText('Maintenance needed')).toBeTruthy();
+  expect(screen.getByText(`(${NOTE})`)).toBeTruthy();
   expect(announce).toHaveBeenCalledWith('Tread wear check: Maintenance needed: Center Wear');
   announce.mockRestore();
 });
@@ -177,7 +199,7 @@ describe('Tyre result screen', () => {
     await act(async () => {
       finish({
         status: 'done',
-        frames: [{ frame: 'frames/t1.jpg', detections: [{ label: 'center_wear', confidence: 0.72, bbox: [0, 0, 0.5, 0.5], frameRect: null }] }],
+        frames: framesWith('center_wear', 0.72, 3),
         framesFailed: 0,
         delegate: 'cpu',
         modelVersion: 'tread-test-1',
@@ -186,8 +208,9 @@ describe('Tyre result screen', () => {
 
     expect(screen.getByText('Maintenance needed')).toBeTruthy();
     // Card title and the Wear pattern row now say the same thing.
-    expect(screen.getAllByText('Center Wear')).toHaveLength(2);
-    expect(screen.getByLabelText('Wear pattern: Center Wear')).toBeTruthy();
+    expect(screen.getByText('Center Wear')).toBeTruthy();
+    expect(screen.getByLabelText(`Wear pattern: Center Wear (${NOTE})`)).toBeTruthy();
+    expect(screen.getByTestId('tread-wear-unverified')).toBeTruthy();
     expect(screen.queryByText(/Likely cause/)).toBeNull();
     // Status and sidewall rows unchanged.
     expect(screen.getByText('Good')).toBeTruthy();
@@ -239,8 +262,11 @@ describe('Tyre result screen', () => {
     // Settled: card and row show the same final title, together.
     expect(screen.queryByText(WEAR_ROW_PENDING)).toBeNull();
     expect(screen.queryByText('Checking tread wear on this phone…')).toBeNull();
-    expect(screen.getByLabelText('Wear pattern: Center Wear')).toBeTruthy();
-    expect(screen.getAllByText('Center Wear')).toHaveLength(2);
+    expect(screen.getByLabelText(`Wear pattern: Center Wear (${NOTE})`)).toBeTruthy();
+    expect(screen.getByText('Center Wear')).toBeTruthy();
+    // Two frames only, one below 0.70: found, but not escalated.
+    expect(screen.getByText('Wear pattern found')).toBeTruthy();
+    expect(screen.queryByText('Maintenance needed')).toBeNull();
     expect(screen.queryByText('Even wear')).toBeNull();
   });
 
@@ -262,7 +288,7 @@ describe('Tyre result screen', () => {
     await act(async () => {
       finish({ status: 'done', frames: [{ frame: 'frames/t1.jpg', detections: [] }], framesFailed: 0, delegate: 'core-ml', modelVersion: 'tread-test-1' });
     });
-    expect(screen.getByLabelText('Wear pattern: Normal Wear Distribution')).toBeTruthy();
+    expect(screen.getByLabelText('Wear pattern: No Abnormal Wear Pattern Detected')).toBeTruthy();
   });
 
   test('after capture: Tyre result scans the frames saved for this tyre', async () => {
@@ -293,7 +319,7 @@ describe('Tyre result screen', () => {
       await act(async () => {
         finish({
           status: 'done',
-          frames: [{ frame: 'frames/t1.jpg', detections: [{ label: 'center_wear', confidence: 0.72, bbox: [0, 0, 0.5, 0.5], frameRect: null }] }],
+          frames: framesWith('center_wear', 0.72, 3),
           framesFailed: 0,
           delegate: 'core-ml',
           modelVersion: 'tread-test-1',
@@ -305,7 +331,7 @@ describe('Tyre result screen', () => {
       expect(lines[at('consensus')]).toContain('"title":"Center Wear"');
       expect(at('UI committed: card scanning, Wear pattern row "Checking…"')).toBeGreaterThan(-1);
       const resolved = at('scanTreadWear resolved');
-      const committed = at('UI committed: card done, Wear pattern row "Center Wear"');
+      const committed = at('UI committed: card done, Wear pattern row "Center Wear');
       expect(resolved).toBeGreaterThan(at('consensus'));
       expect(committed).toBeGreaterThan(resolved);
       for (const l of lines) expect(l).toMatch(/^\[TreadWear\] \d\d:\d\d:\d\d\.\d{3} /);
@@ -323,10 +349,26 @@ describe('Tyre result screen', () => {
     expect(screen.getByLabelText('Wear pattern: Not read')).toBeTruthy();
   });
 
-  test('a sidewall bulge at 0.50 or more raises the shown status to Replace now, with its text label', async () => {
+  test('a sidewall bulge in one frame is shown but does not change the status', async () => {
     mockScan.mockResolvedValue({
       status: 'done',
-      frames: [{ frame: 'frames/t1.jpg', detections: [{ label: 'sidewall_bulge', confidence: 0.6, bbox: [0, 0, 0.5, 0.5], frameRect: null }] }],
+      frames: framesWith('sidewall_bulge', 0.95, 1),
+      framesFailed: 0,
+      delegate: 'cpu',
+      modelVersion: 'tread-test-1',
+    });
+    await show(seed());
+    await act(async () => {});
+    expect(screen.getByText('Good')).toBeTruthy();
+    expect(screen.queryByText('Replace now')).toBeNull();
+    expect(screen.getByText('Wear pattern found')).toBeTruthy();
+    expect(useInspectionStore.getState().inspections[0].tyres[0].result!.status).toBe('good');
+  });
+
+  test('a sidewall bulge in 3 frames at 0.70 or more raises the shown status to Replace now, with its text label', async () => {
+    mockScan.mockResolvedValue({
+      status: 'done',
+      frames: framesWith('sidewall_bulge', 0.7, 3),
       framesFailed: 0,
       delegate: 'cpu',
       modelVersion: 'tread-test-1',
@@ -344,7 +386,7 @@ describe('Tyre result screen', () => {
     await show(seed());
     await act(async () => {});
     expect(screen.getByText('Not checked')).toBeTruthy();
-    expect(screen.queryByText('Normal Wear Distribution')).toBeNull();
+    expect(screen.queryByText('No Abnormal Wear Pattern Detected')).toBeNull();
   });
 
   test('reopening the tyre shows the saved check instead of running the model again', async () => {
@@ -352,13 +394,13 @@ describe('Tyre result screen', () => {
     const params = seed();
     await show(params);
     await act(async () => {});
-    expect(screen.getByLabelText('Tread wear: Normal Wear Distribution')).toBeTruthy();
-    expect(screen.getByLabelText('Wear pattern: Normal Wear Distribution')).toBeTruthy();
+    expect(screen.getByLabelText('Tread wear: No Abnormal Wear Pattern Detected')).toBeTruthy();
+    expect(screen.getByLabelText('Wear pattern: No Abnormal Wear Pattern Detected')).toBeTruthy();
     await screen.unmount();
     await show(params);
     await act(async () => {});
-    expect(screen.getByLabelText('Tread wear: Normal Wear Distribution')).toBeTruthy();
-    expect(screen.getByLabelText('Wear pattern: Normal Wear Distribution')).toBeTruthy();
+    expect(screen.getByLabelText('Tread wear: No Abnormal Wear Pattern Detected')).toBeTruthy();
+    expect(screen.getByLabelText('Wear pattern: No Abnormal Wear Pattern Detected')).toBeTruthy();
     expect(mockScan).toHaveBeenCalledTimes(1);
   });
 });

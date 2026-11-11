@@ -152,3 +152,16 @@ export function describeTreadWear(label: string): TreadWearPresentation {
 export const TREAD_WEAR_SEVERITY = {
   criticalMinConfidence: 0.6,
 } as const;
+
+/**
+ * Cross-frame agreement needed before a finding may escalate (owner decision
+ * 2026-11-11, Redmi 13 logs: `camber_wear` at 0.98 on a sidewall image).
+ * A class becomes `critical`, or raises the tyre status, only when it was
+ * detected at `minConfidence` or above in at least `minFrames` frames of one
+ * scan. Without that it is shown as `detected` (never hidden) and changes
+ * nothing else. Owner values, not calibrated on real tyres.
+ */
+export const TREAD_WEAR_CONSENSUS = {
+  minFrames: 3,
+  minConfidence: 0.7,
+} as const;

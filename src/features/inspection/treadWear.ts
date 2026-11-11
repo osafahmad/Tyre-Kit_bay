@@ -2,15 +2,29 @@ import {
   describeTreadWear,
   isTreadWearClass,
   NO_DEFECT_CLASS,
+  TREAD_WEAR_CONSENSUS,
   TREAD_WEAR_SEVERITY,
   TREAD_WEAR_STATUS_RULES,
 } from '../../ml/config/treadWearConfig';
+import { diagnosticsConfig } from '../../config/diagnostics';
 import type { TreadWearRecord, TreadWearSeverity, TyreResult, TyreStatus } from './types';
 
 // Builds the saved tread wear record, and the wording shown for it on Tyre
 // result, the report screen and the PDF. One place, so they can't disagree.
 
-export const NORMAL_WEAR_TITLE = 'Normal Wear Distribution';
+/** Shown when no defect class passed the threshold (owner wording 2026-11-11; was `Normal Wear Distribution`). */
+export const NORMAL_WEAR_TITLE = 'No Abnormal Wear Pattern Detected';
+
+/** Staging guard: shown with every wear finding while the model is unverified. */
+export const WEAR_UNVERIFIED_NOTE = 'Beta / Model Unverified';
+
+/** The note for a record that shows a finding, or null (nothing found, or the guard is off). */
+export function wearUnverifiedNote(
+  record: Pick<TreadWearRecord, 'severity'> | null | undefined,
+  enabled: boolean = diagnosticsConfig.treadWearModelUnverified,
+): string | null {
+  return enabled && record && record.severity !== 'none' ? WEAR_UNVERIFIED_NOTE : null;
+}
 
 export const WEAR_SEVERITY_LABELS: Record<TreadWearSeverity, string> = {
   none: NORMAL_WEAR_TITLE,
@@ -19,7 +33,17 @@ export const WEAR_SEVERITY_LABELS: Record<TreadWearSeverity, string> = {
 };
 
 /** One wear class across all frames read. */
-export type WearFinding = { label: string; maxConfidence: number };
+export type WearFinding = {
+  label: string;
+  maxConfidence: number;
+  /** Frames where this class scored at or above `TREAD_WEAR_CONSENSUS.minConfidence`. Missing counts as 0. */
+  consensusFrames?: number;
+};
+
+/** Enough frames agree, strongly enough, for this finding to escalate (`TREAD_WEAR_CONSENSUS`). */
+export function hasConsensus(f: WearFinding): boolean {
+  return (f.consensusFrames ?? 0) >= TREAD_WEAR_CONSENSUS.minFrames;
+}
 
 const STATUS_RANK: Record<TyreStatus, number> = { good: 0, replace_soon: 1, replace_now: 2 };
 
@@ -35,10 +59,11 @@ export function isDefectFinding(f: WearFinding): boolean {
 
 /**
  * The lowest status a finding forces (`TREAD_WEAR_STATUS_RULES`), or null.
- * Every finding already passed the model's confidence threshold.
+ * Every finding already passed the model's confidence threshold. Without
+ * cross-frame consensus a finding never changes the status.
  */
 export function findingMinimumStatus(f: WearFinding): TyreStatus | null {
-  if (!isTreadWearClass(f.label)) return null;
+  if (!isTreadWearClass(f.label) || !hasConsensus(f)) return null;
   const rule = TREAD_WEAR_STATUS_RULES[f.label];
   if (!rule) return null;
   return rule.minConfidence === null || f.maxConfidence >= rule.minConfidence ? rule.minStatus : null;
@@ -61,7 +86,7 @@ export function treadWearSeverity(
   const defects = findings.filter(isDefectFinding);
   if (defects.length === 0) return 'none';
   if (statusRaisingFinding(defects)) return 'critical';
-  return defects.some(f => f.maxConfidence >= criticalMinConfidence) ? 'critical' : 'detected';
+  return defects.some(f => hasConsensus(f) && f.maxConfidence >= criticalMinConfidence) ? 'critical' : 'detected';
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -132,10 +157,11 @@ export function wearReportLines(
 ): { pattern: string; recommendation: string | null } | null {
   const record = result.treadWear;
   if (record) {
+    const note = wearUnverifiedNote(record);
     const pattern =
       record.severity === 'none'
         ? `Wear: ${record.title}`
-        : `Wear: ${record.title} · ${WEAR_SEVERITY_LABELS[record.severity]}`;
+        : `Wear: ${record.title} · ${WEAR_SEVERITY_LABELS[record.severity]}${note ? ` (${note})` : ''}`;
     return { pattern, recommendation: record.recommendation };
   }
   return result.wearPattern ? { pattern: `Wear: ${result.wearPattern}`, recommendation: null } : null;

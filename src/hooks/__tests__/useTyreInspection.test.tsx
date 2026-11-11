@@ -68,8 +68,8 @@ describe('severity and summary', () => {
       { frame: 'b', detections: [det('center_wear', 0.7), det('normal_even_wear', 0.9)] },
     ]);
     expect(findings).toEqual([
-      { label: 'center_wear', maxConfidence: 0.7, frames: 2 },
-      { label: 'feathering', maxConfidence: 0.3, frames: 1 },
+      { label: 'center_wear', maxConfidence: 0.7, frames: 2, consensusFrames: 1 },
+      { label: 'feathering', maxConfidence: 0.3, frames: 1, consensusFrames: 0 },
     ]);
   });
 
@@ -79,17 +79,32 @@ describe('severity and summary', () => {
     expect(treadWearSeverity(findings)).toBe('none');
   });
 
-  test('critical at 0.60 and above, detected below, none without findings', () => {
+  test('critical only with 3 frames at 0.70 or above; detected otherwise; none without findings', () => {
     expect(treadWearSeverity([])).toBe('none');
-    expect(treadWearSeverity([{ label: 'flat_spot', maxConfidence: 0.599 }])).toBe('detected');
-    expect(treadWearSeverity([{ label: 'flat_spot', maxConfidence: 0.6 }])).toBe('critical');
+    expect(treadWearSeverity([{ label: 'flat_spot', maxConfidence: 0.99 }])).toBe('detected');
+    expect(treadWearSeverity([{ label: 'flat_spot', maxConfidence: 0.99, consensusFrames: 2 }])).toBe('detected');
+    expect(treadWearSeverity([{ label: 'flat_spot', maxConfidence: 0.7, consensusFrames: 3 }])).toBe('critical');
+  });
+
+  test('frames at 0.70 or above are counted once each, per class', () => {
+    const frame = (c: number) => ({ frame: `f${c}`, detections: [det('camber_wear', c), det('camber_wear', c)] });
+    // The Redmi 13 sidewall scan: 0.62, 0.787, 0.982, 0.94, 0.764, 0.978, then nothing.
+    const [f] = summariseTreadWear([0.62, 0.787, 0.982, 0.94, 0.764, 0.978].map(frame));
+    expect(f).toEqual({ label: 'camber_wear', maxConfidence: 0.982, frames: 6, consensusFrames: 5 });
+    expect(summariseTreadWear([0.69, 0.7, 0.71].map(frame))[0].consensusFrames).toBe(2);
   });
 });
 
 describe('useTyreInspection', () => {
   test('saves the check into the result: wear fields only when nothing raises the status; sidewall values untouched', async () => {
     const [a] = seed();
-    const s = scanner(done([{ frame: 't1.jpg', detections: [det('center_wear', 0.65), det('feathering', 0.3)] }]));
+    const s = scanner(
+      done([
+        { frame: 't1.jpg', detections: [det('center_wear', 0.75), det('feathering', 0.3)] },
+        { frame: 't2.jpg', detections: [det('center_wear', 0.7)] },
+        { frame: 't3.jpg', detections: [det('center_wear', 0.72)] },
+      ]),
+    );
     await render(<Harness tyreId={a} s={s} />);
 
     expect(hook.treadWear).toEqual({ status: 'idle' });
@@ -104,7 +119,7 @@ describe('useTyreInspection', () => {
       title: 'Center Wear',
       cause: null,
       recommendation: 'Get this checked as soon as possible.',
-      confidence: 0.65,
+      confidence: 0.75,
       alsoSeen: ['Feathering'],
       modelVersion: 'tread-test-1',
       checkedAt: expect.any(String),
@@ -117,9 +132,23 @@ describe('useTyreInspection', () => {
     expect(saved.sidewallDetails).toEqual({ size: '215/65 R15', dotTin: null, make: 'Michelin', model: null });
   });
 
-  test('exposed cords at 0.50 or more: the saved status is raised to Replace now', async () => {
+  test('exposed cords in one frame only: shown, but the status is not raised', async () => {
     const [a] = seed();
-    await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [det('exposed_cords', 0.5)] }]))} />);
+    await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [det('exposed_cords', 0.99)] }]))} />);
+    await scan();
+    expect(tyre(a).result).toEqual(
+      expect.objectContaining({
+        status: 'good',
+        wearPattern: 'Exposed Cords',
+        treadWear: expect.objectContaining({ severity: 'detected', minimumStatus: null }),
+      }),
+    );
+  });
+
+  test('exposed cords in 3 frames at 0.70 or more: the saved status is raised to Replace now', async () => {
+    const [a] = seed();
+    const frames = ['t1.jpg', 't2.jpg', 't3.jpg'].map(frame => ({ frame, detections: [det('exposed_cords', 0.7)] }));
+    await render(<Harness tyreId={a} s={scanner(done(frames))} />);
     await scan();
     expect(tyre(a).result).toEqual(
       expect.objectContaining({
@@ -130,14 +159,14 @@ describe('useTyreInspection', () => {
     );
   });
 
-  test('no wear found: saved as Normal Wear Distribution', async () => {
+  test('no wear found: saved as No Abnormal Wear Pattern Detected, status untouched', async () => {
     const [a] = seed();
     await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [] }]))} />);
     await scan();
     expect(tyre(a).result).toEqual(
       expect.objectContaining({
         status: 'good',
-        wearPattern: 'Normal Wear Distribution',
+        wearPattern: 'No Abnormal Wear Pattern Detected',
         treadWear: expect.objectContaining({ severity: 'none', label: null, recommendation: null, confidence: null }),
       }),
     );

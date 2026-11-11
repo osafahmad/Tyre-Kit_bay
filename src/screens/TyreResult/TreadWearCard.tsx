@@ -3,7 +3,7 @@ import { AccessibilityInfo, ActivityIndicator, StyleSheet, View } from 'react-na
 import { CircleCheck, CircleHelp, OctagonAlert, TriangleAlert } from 'lucide-react-native';
 import { AppText } from '../../components';
 import type { TreadWearState } from '../../hooks/useTyreInspection';
-import { WEAR_SEVERITY_LABELS } from '../../features/inspection/treadWear';
+import { WEAR_SEVERITY_LABELS, wearUnverifiedNote } from '../../features/inspection/treadWear';
 import type { TreadWearRecord } from '../../features/inspection/types';
 import { colors, radius } from '../../theme';
 
@@ -69,7 +69,10 @@ export function isTreadWearBusy(state: TreadWearState): boolean {
  * set to its title; if the model couldn't run, the row is left as it was.
  */
 export function wearPatternRowValue(state: TreadWearState, saved: string | null): string | null {
-  return isTreadWearBusy(state) ? WEAR_ROW_PENDING : saved;
+  if (isTreadWearBusy(state)) return WEAR_ROW_PENDING;
+  // A model finding in the row carries the staging note, like the card.
+  const note = state.status === 'done' || state.status === 'saved' ? wearUnverifiedNote(state.record) : null;
+  return saved && note ? `${saved} (${note})` : saved;
 }
 
 /** What the card says, as plain data (also used for the screen-reader announcement). */
@@ -79,13 +82,15 @@ export function treadWearCardContent(state: TreadWearState): {
   lines: string[];
   title: string | null;
   alsoSeen: string[];
+  /** `Beta / Model Unverified` for a finding (staging guard), else null. */
+  note: string | null;
 } {
   switch (state.status) {
     case 'idle':
     case 'scanning':
-      return { tone: null, badge: null, lines: ['Checking tread wear on this phone…'], title: null, alsoSeen: [] };
+      return { tone: null, badge: null, lines: ['Checking tread wear on this phone…'], title: null, alsoSeen: [], note: null };
     case 'unavailable':
-      return { tone: 'neutral', badge: 'Not checked', lines: [UNAVAILABLE_TEXT[state.reason]], title: null, alsoSeen: [] };
+      return { tone: 'neutral', badge: 'Not checked', lines: [UNAVAILABLE_TEXT[state.reason]], title: null, alsoSeen: [], note: null };
     case 'done':
     case 'saved':
       return recordContent(state.record);
@@ -101,6 +106,7 @@ function recordContent(record: TreadWearRecord): ReturnType<typeof treadWearCard
       lines: ['No uneven wear pattern was found on the tread.'],
       title: null,
       alsoSeen: [],
+      note: null,
     };
   }
   const critical = record.severity === 'critical';
@@ -113,6 +119,7 @@ function recordContent(record: TreadWearRecord): ReturnType<typeof treadWearCard
     lines,
     title: record.title,
     alsoSeen: record.alsoSeen,
+    note: wearUnverifiedNote(record),
   };
 }
 
@@ -140,7 +147,14 @@ export function TreadWearCard({ state }: { state: TreadWearState }) {
         </View>
       ) : (
         <>
-          {content.tone && content.badge ? <WearBadge tone={content.tone} label={content.badge} /> : null}
+          <View style={styles.badgeRow}>
+            {content.tone && content.badge ? <WearBadge tone={content.tone} label={content.badge} /> : null}
+            {content.note ? (
+              <AppText variant="caption" color="textSecondary" testID="tread-wear-unverified">
+                {`(${content.note})`}
+              </AppText>
+            ) : null}
+          </View>
           {content.title ? (
             <AppText variant="bodySmall" weight="semibold" color="black">
               {content.title}
@@ -173,6 +187,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
   busy: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
