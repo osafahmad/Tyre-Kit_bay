@@ -181,11 +181,13 @@ export const SIZE_WIDTH_INFERENCE = {
 const RIM_TOKEN = /(?:^|[^A-Z])Z?[RB]\s?(\d{2})(?:\d{2,3}(?:\/\d{2,3})?\s?[A-Z]|\d)?(?!\d)/;
 /**
  * `8` read for `R` (owner decision 2026-11-10, iPhone 13: `815W5V`,
- * `815 85V`). Only rims 13–22, nothing glued before the `8`, and only when a
- * letter or a load/speed index follows directly (so `815 KG` or a bare `815`
- * is not a rim). Used only next to a width/aspect.
+ * `815 85V`). Only rims 13–22, nothing glued before the `8` except a symbol
+ * (`$815`, `#815`) or, round 11 (owner request 2026-11-11, screen-capture
+ * logs: `3815`), one `3` at a token start; any other digit still rules it
+ * out (`5815`). Only when a letter or a load/speed index follows directly
+ * (so `815 KG` or a bare `815` is not a rim). Used only next to a width/aspect.
  */
-const RIM_TOKEN_8 = /(?:^|[^A-Z0-9])8(1[3-9]|2[0-2])(?=[A-Z]|\s?\d{2,3}[A-Z])/;
+const RIM_TOKEN_8 = /(?:^|[^A-Z0-9])3?8(1[3-9]|2[0-2])(?=[A-Z]|\s?\d{2,3}[A-Z])/;
 /**
  * `l` or `I` read for the `1` of a rim (owner decision 2026-11-10, iPhone 13:
  * `Rl565V`), on uppercased text: `RL5`/`RI5` → R15. Only rims 13–19, followed
@@ -224,6 +226,14 @@ const SPACED_SHORT_WIDTH_ASPECT = /(?:^|[^0-9])(\d{2})\s*[\s.\-)]\s*([3-7][05])(
  * (`1585V6:`, `15 85V`). A bare `15` or `158` is not a rim.
  */
 const RIM_LOAD_UNMARKED_AT_START = /^\W*(1[3-9]|2[0-2])\s?\d{2,3}(?:\/\d{2,3})?\s?[A-HJ-NP-WYZ]/;
+/**
+ * Round 11 (owner request 2026-11-11): a whole line that is only an unmarked
+ * rim + load/speed index (`1545V)`, `15 85V`, `1585V6:`). Stricter than
+ * `RIM_LOAD_UNMARKED_AT_START`: no letter may follow the speed symbol, so
+ * `1323 LBS` (week 13 of 2023, or a load in pounds) is not a rim. Used after
+ * a full width/aspect on the previous line, and as a cross-frame size part.
+ */
+const RIM_LOAD_UNMARKED_LINE = /^\W*(1[3-9]|2[0-2])\s?\d{2,3}(?:\/\d{2,3})?\s?[A-HJ-NP-WYZ][^A-Z]*$/;
 
 /** Width/aspect then a rim marker ending the line, digits on the next line (`195/55 R`, `225/45 ZR`). */
 const WIDTH_ASPECT_MARKER_AT_END = /(?:^|[^0-9])(\d{3})\s*\/\s*(\d{2})\s?(ZR|R|B)\W*$/;
@@ -337,7 +347,11 @@ export function recoverSize(lines: OcrLineLike[]): string | null {
   for (let i = 0; i < ordered.length; i++) {
     const full = FULL_WIDTH_ASPECT.exec(ordered[i]);
     if (!full) continue;
-    const rim = rimNear(i, RIM_SEARCH_JOIN);
+    // Round 11: like the slash-less path below, an unmarked rim + load/speed
+    // line (`1545V)`) directly after the width/aspect counts as its rim.
+    const next = ordered[i + 1];
+    const unmarked = next === undefined ? null : RIM_LOAD_UNMARKED_LINE.exec(next);
+    const rim = rimNear(i, RIM_SEARCH_JOIN) ?? (unmarked ? Number(unmarked[1]) : null);
     if (rim === null) continue;
     const p = parseTyreSize(`${full[1]}/${full[2]} R${rim}`);
     if (p && sizeWithinLimits(p)) {
@@ -421,30 +435,69 @@ export function recoverSize(lines: OcrLineLike[]): string | null {
  * `Rl565V`). The shape of the size's own rim, not a stray `R15`.
  */
 const RIM_WITH_LOAD = /(?:^|[^A-Z])Z?(?:[RB]\s?(1[3-9]|2[0-2])|R\s?[LI]([3-9]))\s?\d{2,3}(?:\/\d{2,3})?\s?[A-HJ-NP-WYZ]/;
+/** Round 11: the same with `8` read for `R` (`$815 85V`, `3815 85V`, `$81525NE`), under the `RIM_TOKEN_8` rules. */
+const RIM_8_WITH_LOAD = /(?:^|[^A-Z0-9])3?8(1[3-9]|2[0-2])\s?\d{2,3}(?:\/\d{2,3})?\s?[A-HJ-NP-WYZ]/;
+
+export type SizeParts = {
+  widthAspect: string | null;
+  /** Two-digit width read with its aspect (`A95/55` → `95/55`): only completed through the rim-gated `SIZE_WIDTH_INFERENCE`. */
+  shortWidthAspect: string | null;
+  rim: number | null;
+};
 
 /**
  * Size pieces from one frame that gave no whole size, for joining across the
  * frames of one scan (owner decision 2026-11-10, round 8; see
  * `sidewallReader.ts`). Width/aspect: a full 3-digit width, read with a slash
  * (`195/55`), a separator (`195 55`) or as 5 digits alone on a line (`19555`).
- * Rim: only `RIM_WITH_LOAD`. Two-digit widths are never used here.
+ * Rim: `RIM_WITH_LOAD`, or round 11 (owner request 2026-11-11) `8` read for
+ * `R` (`RIM_8_WITH_LOAD`) or a whole line that is an unmarked rim + load/speed
+ * (`RIM_LOAD_UNMARKED_LINE`, `1545V)`).
+ * Round 11 also returns a two-digit width/aspect (`A95/55`, `I95/55`,
+ * `95/55`) separately, when no full one was read; `sidewallReader.ts`
+ * completes it only with the rim-gated `SIZE_WIDTH_INFERENCE`.
  */
-export function sizeParts(lines: OcrLineLike[]): { widthAspect: string | null; rim: number | null } {
+export function sizeParts(lines: OcrLineLike[]): SizeParts {
   let widthAspect: string | null = null;
+  let shortWidthAspect: string | null = null;
   let rim: number | null = null;
   for (const text of readingOrder(lines).map(l => l.text.toUpperCase())) {
     if (widthAspect === null) {
       const m = FULL_WIDTH_ASPECT.exec(text) ?? COMPACT_ALONE.exec(text) ?? SPACED_WIDTH_ASPECT.exec(text);
       if (m && within(Number(m[1]), FULL_FRAME_SIZE_LIMITS.width) && within(Number(m[2]), FULL_FRAME_SIZE_LIMITS.aspect)) {
         widthAspect = `${m[1]}/${m[2]}`;
+      } else if (shortWidthAspect === null && !SPACED_WIDTH_ASPECT.test(text)) {
+        const s = SHORT_WIDTH_ASPECT.exec(text) ?? SPACED_SHORT_WIDTH_ASPECT.exec(text);
+        if (s && within(Number(s[2]), FULL_FRAME_SIZE_LIMITS.aspect)) shortWidthAspect = `${s[1]}/${s[2]}`;
       }
     }
     if (rim === null) {
       const r = RIM_WITH_LOAD.exec(text);
       if (r) rim = r[1] ? Number(r[1]) : 10 + Number(r[2]);
+      else {
+        const u = RIM_8_WITH_LOAD.exec(text) ?? RIM_LOAD_UNMARKED_LINE.exec(text);
+        if (u) rim = Number(u[1]);
+      }
     }
   }
-  return { widthAspect, rim };
+  return { widthAspect, shortWidthAspect: widthAspect === null ? shortWidthAspect : null, rim };
+}
+
+/**
+ * Round 11 (owner request 2026-11-11): `SIZE_WIDTH_INFERENCE` applied to a
+ * two-digit width/aspect (`95/55`) and a rim read in different frames of one
+ * scan. The same gate as within a frame: rim 13–17, width completed only to
+ * 175–225. Null otherwise.
+ */
+export function completeShortWidthAspect(shortWidthAspect: string, rim: number): string | null {
+  const m = /^(\d{2})\/(\d{2})$/.exec(shortWidthAspect);
+  if (!m) return null;
+  const [minRim, maxRim] = SIZE_WIDTH_INFERENCE.rims;
+  if (rim < minRim || rim > maxRim) return null;
+  const width = (SIZE_WIDTH_INFERENCE.widths as readonly number[]).find(w => w % 100 === Number(m[1]));
+  if (width === undefined) return null;
+  const p = parseTyreSize(`${width}/${m[2]} R${rim}`);
+  return p && sizeWithinLimits(p) ? p.value : null;
 }
 
 /** Fewest letters and digits after `DOT` in a full-frame read: a whole TIN, not a lone number. */

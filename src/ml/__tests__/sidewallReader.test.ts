@@ -150,6 +150,28 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
     expect(suggestionsOf(await whole.reader.read(FRAMES))).toEqual({ size: '205/55 R16' });
   });
 
+  test('round 11: noisy rims and a two-digit width join across frames (owner request 2026-11-11)', async () => {
+    const dollar = setup({ ocr: perFrame([line('195/55')], [line('$815 85V')], []) });
+    expect(suggestionsOf(await dollar.reader.read(FRAMES))).toEqual({ size: '195/55 R15' });
+    const unmarked = setup({ ocr: perFrame([line('195/55')], [line('1545V)')], []) });
+    expect(suggestionsOf(await unmarked.reader.read(FRAMES))).toEqual({ size: '195/55 R15' });
+    const short = setup({ ocr: perFrame([line('A95/55')], [line('1545V)')], [line('$81525NE')]) });
+    expect(suggestionsOf(await short.reader.read(FRAMES))).toEqual({ size: '195/55 R15' });
+  });
+
+  test('round 11: the two-digit width is gated and never beats a 3-digit width read', async () => {
+    const bigRim = setup({ ocr: perFrame([line('A95/55')], [line('R18 95V')], []) });
+    expect(suggestionsOf(await bigRim.reader.read(FRAMES))).toEqual({});
+    const tie = setup({ ocr: perFrame([line('A95/55')], [line('05/55')], [line('R15 85V')]) });
+    expect(suggestionsOf(await tie.reader.read(FRAMES))).toEqual({});
+    const full = setup({ ocr: perFrame([line('A95/55')], [line('205/55')], [line('R15 85V')]) });
+    expect(suggestionsOf(await full.reader.read(FRAMES))).toEqual({ size: '205/55 R15' });
+    const noRim = setup({ ocr: perFrame([line('A95/55')], [line('A95/55')], []) });
+    expect(suggestionsOf(await noRim.reader.read(FRAMES))).toEqual({});
+    const lbs = setup({ ocr: perFrame([line('A95/55')], [line('1323 LBS')], []) });
+    expect(suggestionsOf(await lbs.reader.read(FRAMES))).toEqual({});
+  });
+
   test('dominantValue: a tie gives nothing', () => {
     const { dominantValue } = require('../sidewallReader') as typeof import('../sidewallReader');
     expect(dominantValue(['a', 'b', 'a'])).toBe('a');

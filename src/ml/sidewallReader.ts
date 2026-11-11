@@ -5,6 +5,7 @@ import { localFramePath, type PipelineDeps } from './inference/pipeline';
 import { isOcrAvailable, recognizeLines } from './ocr/ocr';
 import {
   agreedValue,
+  completeShortWidthAspect,
   markerlessTinCandidate,
   readKey,
   sizeParts,
@@ -158,7 +159,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       });
 
       const reads: Record<ReadField, FieldRead[]> = { size: [], dotTin: [], make: [] };
-      const parts = { widthAspect: [] as string[], rim: [] as number[] };
+      const parts = { widthAspect: [] as string[], shortWidthAspect: [] as string[], rim: [] as number[] };
       const markerlessTins: FieldRead[] = [];
       const agreed = (field: ReadField) => agreedValue(reads[field], minAgreeing) !== null;
       const open = () => READ_FIELDS.filter(f => !agreed(f));
@@ -206,8 +207,9 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         if (!parsed.size) {
           const p = sizeParts(lines);
           if (p.widthAspect) parts.widthAspect.push(p.widthAspect);
+          if (p.shortWidthAspect) parts.shortWidthAspect.push(p.shortWidthAspect);
           if (p.rim !== null) parts.rim.push(p.rim);
-          if (p.widthAspect || p.rim !== null) sidewallLog(`${label}: size parts`, p);
+          if (p.widthAspect || p.shortWidthAspect || p.rim !== null) sidewallLog(`${label}: size parts`, p);
         }
 
         for (const field of open()) {
@@ -248,6 +250,20 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
             value: p.value,
             parts,
           });
+        } else if (parts.widthAspect.length === 0 && rim !== null) {
+          // Round 11 (owner request 2026-11-11): no frame read a 3-digit
+          // width. The most-read two-digit width/aspect (`A95/55`) is
+          // completed with the cross-frame rim under the same rim gate as
+          // within a frame (rim 13–17, width 175–225 only).
+          const short = dominantValue(parts.shortWidthAspect);
+          const completed = short ? completeShortWidthAspect(short, rim) : null;
+          if (completed) {
+            suggestions.size = completed;
+            sidewallLog('size: two-digit width/aspect completed with a rim read in another frame (rim-gated, CLAUDE.md exception)', {
+              value: completed,
+              parts,
+            });
+          }
         }
       }
       if (!suggestions.dotTin && reads.dotTin.length > 0 && new Set(reads.dotTin.map(r => readKey(r.value))).size === 1) {

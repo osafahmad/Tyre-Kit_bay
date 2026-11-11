@@ -352,11 +352,11 @@ describe('size recovery (round 5)', () => {
 
   test('round 8: size parts for joining across frames', () => {
     const { sizeParts } = require('../sidewallFields') as typeof import('../sidewallFields');
-    expect(sizeParts(rows('195 55'))).toEqual({ widthAspect: '195/55', rim: null });
-    expect(sizeParts(rows('19555'))).toEqual({ widthAspect: '195/55', rim: null });
-    expect(sizeParts(rows('R15 85Vt'))).toEqual({ widthAspect: null, rim: 15 });
-    expect(sizeParts(rows('Rl565V'))).toEqual({ widthAspect: null, rim: 15 });
-    expect(sizeParts(rows('R15', '95/55', '15'))).toEqual({ widthAspect: null, rim: null }); // stray R15, short width, bare 15
+    expect(sizeParts(rows('195 55'))).toMatchObject({ widthAspect: '195/55', rim: null });
+    expect(sizeParts(rows('19555'))).toMatchObject({ widthAspect: '195/55', rim: null });
+    expect(sizeParts(rows('R15 85Vt'))).toMatchObject({ widthAspect: null, rim: 15 });
+    expect(sizeParts(rows('Rl565V'))).toMatchObject({ widthAspect: null, rim: 15 });
+    expect(sizeParts(rows('R15', '95/55', '15'))).toEqual({ widthAspect: null, shortWidthAspect: '95/55', rim: null }); // stray R15, bare 15; the short width is a round-11 part
   });
 
   test('width inference still needs the rim on the same or adjacent line', () => {
@@ -408,9 +408,59 @@ describe('size recovery (round 5)', () => {
 
     test('a size line with its load/speed still gives its parts for the cross-frame join', () => {
       const { sizeParts } = require('../sidewallFields') as typeof import('../sidewallFields');
-      expect(sizeParts(rows('195/55 3R585V'))).toEqual({ widthAspect: '195/55', rim: null });
-      expect(sizeParts(rows('495/35 R1585VLT:'))).toEqual({ widthAspect: null, rim: 15 });
+      expect(sizeParts(rows('195/55 3R585V'))).toMatchObject({ widthAspect: '195/55', rim: null });
+      expect(sizeParts(rows('495/35 R1585VLT:'))).toMatchObject({ widthAspect: null, rim: 15 });
     });
+  });
+});
+
+describe('round 11: screen-capture noise around the rim and two-digit widths (owner request 2026-11-11)', () => {
+  const { recoverSize, sizeParts, completeShortWidthAspect } = require('../sidewallFields') as typeof import('../sidewallFields');
+  const rows = (...texts: string[]) => texts.map((t, i) => line(t, i * 30));
+  const none = { widthAspect: null, shortWidthAspect: null, rim: null };
+
+  test('symbol or a single 3 before the 8-for-R marker, next to a width/aspect', () => {
+    expect(recoverSize(rows('195/55', '$815 85V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '#815 85V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '$81525NE'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '3815 85V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', 'R1545V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '3R15'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '5815 85V'))).toBeNull(); // other digits before the 8 still rule it out
+    expect(recoverSize(rows('195/55', '33815 85V'))).toBeNull();
+    expect(recoverSize(rows('195/55', '3815'))).toBeNull(); // nothing follows: not a rim
+  });
+
+  test('an unmarked rim + load/speed line directly after a full width/aspect', () => {
+    expect(recoverSize(rows('195/55', '1545V)'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '15 85V'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '1585V6:'))).toBe('195/55 R15');
+    expect(recoverSize(rows('195/55', '1323 LBS'))).toBeNull(); // a letter after the speed symbol: a unit, not a rim
+    expect(recoverSize(rows('195/55', 'OUTSIDE', '1545V'))).toBeNull(); // must be the next line
+    expect(recoverSize(rows('195/55', '15'))).toBeNull(); // bare number
+    expect(recoverSize(rows('A95/55', '1545V'))).toBeNull(); // the width digit still needs a marked rim
+  });
+
+  test('size parts for the cross-frame join take the noisy rims and a two-digit width', () => {
+    expect(sizeParts(rows('$815 85V'))).toEqual({ ...none, rim: 15 });
+    expect(sizeParts(rows('3815 85V'))).toEqual({ ...none, rim: 15 });
+    expect(sizeParts(rows('$81525NE'))).toEqual({ ...none, rim: 15 });
+    expect(sizeParts(rows('1545V)'))).toEqual({ ...none, rim: 15 });
+    expect(sizeParts(rows('1323 LBS'))).toEqual(none);
+    expect(sizeParts(rows('MAX LOAD 1545V'))).toEqual(none); // not a whole line
+    expect(sizeParts(rows('A95/55'))).toEqual({ ...none, shortWidthAspect: '95/55' });
+    expect(sizeParts(rows('I95/55'))).toEqual({ ...none, shortWidthAspect: '95/55' });
+    expect(sizeParts(rows('A95 55'))).toEqual({ ...none, shortWidthAspect: '95/55' });
+    expect(sizeParts(rows('195/55', 'A95/55'))).toEqual({ ...none, widthAspect: '195/55' });
+    expect(sizeParts(rows('AO5/35'))).toEqual(none); // O is not a digit: never repaired
+  });
+
+  test('completing a two-digit width across frames uses the same rim gate', () => {
+    expect(completeShortWidthAspect('95/55', 15)).toBe('195/55 R15');
+    expect(completeShortWidthAspect('05/55', 16)).toBe('205/55 R16');
+    expect(completeShortWidthAspect('95/55', 18)).toBeNull(); // rim outside 13–17
+    expect(completeShortWidthAspect('35/55', 15)).toBeNull(); // 235 is not in 175–225
+    expect(completeShortWidthAspect('O5/55', 15)).toBeNull();
   });
 });
 
