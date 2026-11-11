@@ -17,6 +17,7 @@ Everything in spec §11 plus project-specific items found while building. Every 
 ## Diagnostics
 - [ ] **`diagnosticsConfig.allowDemoAnalyzerInRelease` is `false`** (`src/config/diagnostics.ts`). On for staging since 2026-11-06 so Release builds use the demo analyzer (labelled `Demo data`) while the tread and damage models are missing. Check a store build shows `Analysis pending`, not `Demo data`.
 - [x] **`diagnosticsConfig.sidewallOcrLogs` is off in release** (`src/config/diagnostics.ts`). It was on in every build from 2026-11-06 for iPhone 13 diagnostics. Since 2026-11-10 it is `__DEV__`, so `[SidewallOCR]` lines (including raw ML Kit text) are logged in development builds only. `releaseGuards.test.ts` checks that a release build logs nothing.
+- [ ] **`diagnosticsConfig.treadWearLogs` is off** (`src/config/diagnostics.ts`). On in every build since 2026-11-11 (owner request) to check tread wear on iPhone: `[TreadWear]` lines with model load and delegate, tensor shapes, per-frame scores and boxes, the result across frames, and UI state times. No frame paths, plates or OCR text are logged. Set it to `false` (or `__DEV__`) before a store build.
 
 ## Bundle ID
 - [x] **Bundle ID / application ID** set to the final `com.velox.tyre.kit.bay` (iOS `PRODUCT_BUNDLE_IDENTIFIER`, Debug and Release; Android `applicationId`, `namespace` and Kotlin package).

@@ -192,6 +192,30 @@ describe('loadModel', () => {
     expect(createModel.mock.calls.map(c => c[1])).toEqual([['android-gpu'], ['nnapi'], []]);
   });
 
+  test('diagnostics: logs each delegate tried, the fallback and the allocated tensors', async () => {
+    const log = jest.fn();
+    const opened = fakeModel(treadEntry);
+    const createModel = jest.fn(async (_url: string, delegates: string[]) => {
+      if (delegates.length > 0) throw new Error('Core ML delegate unavailable');
+      return opened;
+    });
+    const deps = fakeLoaderDeps({ acceleration: ['core-ml'], createModel, log });
+    const r = await loadModel('tread', fullManifest, deps);
+    expect(r.ok).toBe(true);
+    const messages = log.mock.calls.map(c => c[0]);
+    expect(messages).toEqual([
+      'opening model with core-ml delegate',
+      'core-ml delegate failed, trying the next',
+      'opening model on CPU',
+      'CPU opened',
+      'tensors allocated',
+    ]);
+    expect(log.mock.calls[1][1]).toEqual(expect.objectContaining({ error: 'Core ML delegate unavailable' }));
+    expect(log.mock.calls[4][1]).toEqual(
+      expect.objectContaining({ delegate: 'cpu', inputs: [expect.objectContaining({ shape: expect.any(Array) })] }),
+    );
+  });
+
   test('a file TFLite cannot open is load_failed', async () => {
     const deps = fakeLoaderDeps({
       createModel: jest.fn(async () => {

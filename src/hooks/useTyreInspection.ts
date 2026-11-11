@@ -9,6 +9,7 @@ import {
   type TreadWearScanner,
   type TreadWearUnavailableReason,
 } from '../ml/services/TreadWearDetector';
+import { r3, treadLog } from '../ml/services/treadDebug';
 
 // One tyre's inspection data for a screen: the saved tyre and its confirmed
 // sidewall details (from the store, untouched), plus the tread wear check.
@@ -105,27 +106,46 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
     const run = ++runId.current;
     const isCancelled = () => run !== runId.current;
     const frames = framesRef.current ?? [];
+    const started = Date.now();
+    treadLog(`scanTreadWear started (run ${run})`, { savedTreadFrames: frames.length });
     setLocal({ status: 'scanning' });
     const scanner = scannerRef.current ?? getTreadWearDetector();
     let next: TreadWearState;
     try {
       const outcome = await scanner.scan(frames, isCancelled);
-      if (outcome.status === 'cancelled') return { status: 'idle' };
+      if (outcome.status === 'cancelled') {
+        treadLog(`scanTreadWear cancelled (run ${run}): a newer scan or screen replaced it`);
+        return { status: 'idle' };
+      }
       if (outcome.status === 'unavailable') {
         // Nothing was checked: nothing is saved, and the Wear pattern row is left as it was.
+        treadLog(`scanTreadWear unavailable (run ${run})`, { reason: outcome.reason });
         next = { status: 'unavailable', reason: outcome.reason };
       } else {
         const findings = summariseTreadWear(outcome.frames);
         const record = buildTreadWearRecord(findings, outcome.modelVersion);
+        treadLog(`consensus (run ${run})`, {
+          framesRead: outcome.frames.length,
+          framesFailed: outcome.framesFailed,
+          findings: findings.map(f => ({ label: f.label, maxConfidence: r3(f.maxConfidence), frames: f.frames })),
+          winner: { title: record.title, label: record.label, severity: record.severity, confidence: record.confidence },
+          alsoSeen: record.alsoSeen,
+        });
         // Saved even if the screen has moved on: the store checks the frames still match.
         useInspectionStore.getState().setTreadWear(tyreId, record, frames);
         next = { status: 'done', record, findings, frames: outcome.frames, framesFailed: outcome.framesFailed };
       }
-    } catch {
+    } catch (e) {
       // The scanner doesn't throw; if it ever does, report no model rather than a made-up result.
+      treadLog(`scanTreadWear threw (run ${run})`, { error: e instanceof Error ? e.message : String(e) });
       next = { status: 'unavailable', reason: 'model_missing' };
     }
-    if (!isCancelled()) setLocal(next);
+    if (isCancelled()) {
+      treadLog(`scanTreadWear finished after it was replaced (run ${run}); state not updated`);
+    } else {
+      setLocal(next);
+      treadLog(`scanTreadWear resolved (run ${run}): state → ${next.status}`, { ms: Date.now() - started });
+    }
     return next;
   }, [tyreId]);
 

@@ -9,7 +9,7 @@ import { isOcrAvailable, recognizeLines } from '../../ml/ocr/ocr';
 import type { OcrLineLike } from '../../ml/ocr/textCandidates';
 import type { Rect, Size } from './guideGeometry';
 import { cropFrameToGuide, type GuideGeometry } from './frameCrop';
-import { onFrameDropped } from './frameDrops';
+import { frameDropHandler } from './frameDrops';
 
 /**
  * Why a pass produced no lines, kept apart from "no text found":
@@ -31,6 +31,7 @@ export type ScanResult = {
 
 export type ScannerState = 'idle' | 'scanning' | 'unavailable' | 'error';
 
+const onTextFrameDropped = frameDropHandler('text-scanner');
 const PLATFORM = Platform.OS;
 const EMPTY = { width: 0, height: 0 };
 
@@ -145,7 +146,13 @@ export function useTextScanner({
         busy.setBlocking(true);
         const result = cropFrameToGuide(frame, g, PLATFORM, true);
         if (result.ok) {
-          scheduleOnRN(handleCrop, result.image);
+          try {
+            scheduleOnRN(handleCrop, result.image);
+          } catch {
+            // Not handed over: dispose it here and free the pipeline.
+            result.image.dispose();
+            busy.setBlocking(false);
+          }
         } else {
           busy.setBlocking(false);
           if (manualPending.getBlocking()) scheduleOnRN(handleNoCrop);
@@ -170,7 +177,7 @@ export function useTextScanner({
     pixelFormat: 'yuv',
     dropFramesWhileBusy: true,
     onFrame,
-    onFrameDropped,
+    onFrameDropped: onTextFrameDropped,
   });
 
   /** Capture button: use the next OCR pass as a one-off read. Always answered. */

@@ -759,3 +759,28 @@ Make now works on the device. These rules cover the size reads that were still m
   - Both frame outputs now use `onFrameDropped` from `src/features/capture/frameDrops.ts`. It only counts drops, and `frameDropCounts()` reads the counts for diagnostics. It warns once in development builds for `out-of-buffers`, which usually means a frame wasn't disposed, and never warns in release builds.
   - `useTyreCapture` no longer calls JS for every passing frame. A run of `ok` frames is sent once. Every rejected frame is still sent, because the session counts rejections.
 - **Device check:** still needed. Check that LogBox stays quiet during sidewall and tread capture, and that capture speed hasn't changed.
+
+#### Camera buffers and `[TreadWear]` diagnostics (owner request 2026-11-11)
+
+- **`out-of-buffers` warning on iPhone.** An `out-of-buffers` drop means the camera's buffer pool ran dry. The check against the code found:
+  - Both worklets (`useTyreCapture`, `useTextScanner`) already disposed every frame in `finally`, including inactive, throttled, rejected and failed frames.
+  - `HybridFrame.dispose()` invalidates the sample buffer and releases the planes.
+  - `convertFrameToImage` renders a new `CGImage`, and Nitro's `dispose()` removes the native state. So no JS path left a camera buffer held.
+- **What was tightened:**
+  - Planes are released in `finally` if reading the luminance throws (before, the frame's own dispose covered this on iOS only).
+  - If `scheduleOnRN` fails, an image that was never handed over is disposed and `busy` is freed.
+  - Tests check that every path disposes the frame exactly once.
+- **Per-output drop counts:** `frameDropHandler('tyre-capture' | 'text-scanner')`. If `out-of-buffers` happens again, the development warning names the output and includes its counts so far.
+- **If it still happens on the phone,** the likely holder is native: Core Image's Metal texture cache inside `convertFrameToImage`, which can keep camera buffers after the image is freed. That would need a VisionCamera patch (e.g. a `CIContext` without cached intermediates) or fewer conversions. Neither is done without owner approval.
+- **`[TreadWear]` logs** (`diagnosticsConfig.treadWearLogs: true`, set at start-up in `index.js`, using the existing `treadDebug.ts`):
+  - Every line has a wall-clock timestamp.
+  - Logged:
+    - Scan start, with the saved frame count.
+    - Each delegate tried (Core ML on iOS, then CPU) and why it failed.
+    - The tensors fast-tflite allocated.
+    - Per frame: decode and inference time, the highest raw score of each class, and every detection with its box.
+    - The result across frames and the winning pattern.
+    - When `scanTreadWear` resolves, and when the card and Wear pattern row change on screen.
+  - Frames are referred to by index. No paths, plates or OCR text are logged.
+  - On in all builds for phone verification. It must be off for store builds (release checklist).
+- **Flow check:** capture saves the tread frames (`setTreadCaptured`), Analysing sets the result and replaces the route with Tyre result, and the screen's auto-scan runs on those frames. `Checking…` is shown until `scanTreadWear` resolves and commits its state. A cancelled or replaced scan never updates the state.

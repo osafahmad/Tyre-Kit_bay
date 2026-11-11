@@ -11,6 +11,14 @@
 export const diagnosticsConfig = {
   sidewallOcrLogs: __DEV__,
   /**
+   * `[TreadWear]` logs (owner request 2026-11-11, for iPhone verification):
+   * model load and delegate, tensor shapes, per-frame scores and boxes, the
+   * cross-frame result and when the card and Wear pattern row update. On in
+   * every build while tread wear is verified on phones. No frame paths, plates
+   * or OCR text are logged. Turn off for store builds (docs/RELEASE_CHECKLIST.md).
+   */
+  treadWearLogs: true,
+  /**
    * STAGING ONLY (owner decision 2026-11-06). While the tread status and damage
    * models are missing, Release builds use the demo analyzer instead of
    * `Analysis pending`, so the full flow (result, Tread Pattern card, report,

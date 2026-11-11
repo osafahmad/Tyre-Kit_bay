@@ -5,7 +5,7 @@ import { imageFileToModelInput, tensorSpecFromManifest, type ImageDecoder } from
 import type { LoadedModel, ModelDelegate, PixelRect } from '../inference/types';
 import { modelManifest, type ModelManifest, type SsdDetectorManifestEntry } from '../manifest';
 import { parseTreadWearOutput, type TreadWearDetection } from '../utils/treadWearPostProcess';
-import { treadLog } from './treadDebug';
+import { isTreadDebugEnabled, r3, treadLog } from './treadDebug';
 
 // Runs the tread wear model on saved tread frames, after capture only (spec
 // §4.15: heavy tread models never run during preview). Screens don't use this
@@ -17,6 +17,29 @@ export type TreadWearFrameDetection = TreadWearDetection & {
 };
 
 export type TreadWearFrameResult = { frame: string; detections: TreadWearFrameDetection[] };
+
+/**
+ * Diagnostics only: the highest raw score of each class over all anchors,
+ * before the threshold and NMS (`entry.scores` says whether these are
+ * probabilities or logits). Null when the scores aren't plain float32.
+ */
+export function rawClassMaxScores(
+  scores: ArrayBuffer,
+  entry: SsdDetectorManifestEntry,
+): Record<string, number> | null {
+  if (entry.outputType !== 'float32') return null;
+  const [, anchors, classes] = entry.outputs.scores.shape;
+  if (classes !== entry.labels.length || scores.byteLength !== anchors * classes * 4) return null;
+  const v = new Float32Array(scores);
+  const max = new Array<number>(classes).fill(-Infinity);
+  for (let a = 0; a < anchors; a++) {
+    const row = a * classes;
+    for (let c = 0; c < classes; c++) if (v[row + c] > max[c]) max[c] = v[row + c];
+  }
+  const out: Record<string, number> = {};
+  entry.labels.forEach((label, c) => (out[label] = r3(max[c])));
+  return out;
+}
 
 export type TreadWearUnavailableReason = 'model_missing' | 'no_frames' | 'unreadable';
 
@@ -66,13 +89,23 @@ export class TreadWearDetector implements TreadWearScanner {
 
   /** Loads the model once. A failed load is retried on the next call. */
   async load(): Promise<LoadedModel<SsdDetectorManifestEntry> | null> {
+    const fresh = this.model === null;
+    const started = Date.now();
+    if (fresh) treadLog('model load started');
     this.model ??= this.deps.loadModel().catch(e => {
       treadLog('model load threw', { error: errorText(e) });
       return null;
     });
     const loaded = await this.model;
     if (!loaded) this.model = null;
-    treadLog(loaded ? `model loaded (delegate ${loaded.delegate})` : 'model NOT loaded');
+    if (!loaded) treadLog('model NOT loaded', { ms: Date.now() - started });
+    else if (fresh) {
+      treadLog(`model loaded (delegate ${loaded.delegate})`, {
+        ms: Date.now() - started,
+        version: loaded.entry.version,
+        threshold: loaded.entry.confidenceThreshold,
+      });
+    } else treadLog(`model already loaded (delegate ${loaded.delegate})`);
     return loaded;
   }
 
@@ -82,20 +115,37 @@ export class TreadWearDetector implements TreadWearScanner {
     frame: string,
   ): Promise<TreadWearFrameResult> {
     const spec = tensorSpecFromManifest(loaded.entry);
+    const t0 = Date.now();
     // Stretch to 320 × 320, RGB / 255, NHWC float32 (from the manifest); every image is disposed.
     const input = await imageFileToModelInput(
       localFramePath(frame, this.deps.pipeline),
       spec,
       this.deps.pipeline.decoder,
     );
+    const t1 = Date.now();
     // Outputs come back in the model's order: raw_boxes, then raw_scores (checked at load).
     const [boxes, scores] = await loaded.model.run([input.tensor]);
+    const t2 = Date.now();
     if (!boxes || !scores) throw new Error('The tread wear model returned too few outputs.');
     const { width: fw, height: fh } = input.source;
     const detections = parseTreadWearOutput(boxes, scores, loaded.entry).map(d => ({
       ...d,
       frameRect: frameRectOf(d.bbox, fw, fh),
     }));
+    if (isTreadDebugEnabled()) {
+      treadLog('frame inference', {
+        source: [fw, fh],
+        decodeMs: t1 - t0,
+        inferenceMs: t2 - t1,
+        rawMaxScore: rawClassMaxScores(scores, loaded.entry),
+        scoreKind: loaded.entry.scores,
+        detections: detections.map(d => ({
+          label: d.label,
+          confidence: r3(d.confidence),
+          bbox: d.bbox.map(r3),
+        })),
+      });
+    }
     return { frame, detections };
   }
 
@@ -106,14 +156,21 @@ export class TreadWearDetector implements TreadWearScanner {
    */
   async scan(frames: string[], isCancelled: () => boolean = () => false): Promise<TreadWearScanOutcome> {
     const real = frames.filter(isRealFrame);
-    if (real.length === 0) return { status: 'unavailable', reason: 'no_frames' };
+    treadLog('scan started', { savedFrames: frames.length, realFrames: real.length });
+    if (real.length === 0) {
+      treadLog('scan: no real tread frames (simulated or none)');
+      return { status: 'unavailable', reason: 'no_frames' };
+    }
     const loaded = await this.load();
     if (!loaded) return { status: 'unavailable', reason: 'model_missing' };
 
     const results: TreadWearFrameResult[] = [];
     let failed = 0;
     for (let i = 0; i < real.length; i++) {
-      if (isCancelled()) return { status: 'cancelled' };
+      if (isCancelled()) {
+        treadLog(`scan cancelled before frame ${i + 1}/${real.length}`);
+        return { status: 'cancelled' };
+      }
       try {
         const r = await this.detectFrame(loaded, real[i]);
         results.push(r);
@@ -125,7 +182,10 @@ export class TreadWearDetector implements TreadWearScanner {
         treadLog(`frame ${i + 1}/${real.length} failed`, { error: errorText(e) });
       }
     }
-    if (isCancelled()) return { status: 'cancelled' };
+    if (isCancelled()) {
+      treadLog('scan cancelled after the last frame');
+      return { status: 'cancelled' };
+    }
     if (results.length === 0) {
       treadLog('scan read no frames', { framesFailed: failed });
       return { status: 'unavailable', reason: 'unreadable' };
@@ -154,7 +214,7 @@ export function defaultTreadWearDetectorDeps(
   return {
     // Core ML (iOS) / GPU (Android), then CPU: the shared loader's order.
     loadModel: async () => {
-      const r = await loadModel('treadWear', manifest, loaderDeps());
+      const r = await loadModel('treadWear', manifest, { ...loaderDeps(), log: treadLog });
       if (!r.ok) treadLog('model load failed', r.failure);
       return r.ok ? r.model : null;
     },

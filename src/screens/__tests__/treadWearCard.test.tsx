@@ -15,6 +15,7 @@ import { buildTreadWearRecord } from '../../features/inspection/treadWear';
 import type { TreadWearState } from '../../hooks/useTyreInspection';
 import type { TreadWearClass } from '../../ml/config/treadWearConfig';
 import type { TreadWearScanOutcome } from '../../ml/services/TreadWearDetector';
+import { setTreadDebug } from '../../ml/services/treadDebug';
 
 const mockScan = jest.fn<Promise<TreadWearScanOutcome>, [string[], (() => boolean)?]>();
 jest.mock('../../ml/services/TreadWearDetector', () => ({
@@ -241,6 +242,77 @@ describe('Tyre result screen', () => {
     expect(screen.getByLabelText('Wear pattern: Center Wear')).toBeTruthy();
     expect(screen.getAllByText('Center Wear')).toHaveLength(2);
     expect(screen.queryByText('Even wear')).toBeNull();
+  });
+
+  test('"Checking…" stays until scanTreadWear resolves, however long the scan takes', async () => {
+    let finish!: (o: TreadWearScanOutcome) => void;
+    mockScan.mockImplementation(() => new Promise(r => (finish = r)));
+    const params = seed();
+    useInspectionStore.getState().setResult(params.tyreId, { ...result, wearPattern: 'Even' });
+    await show(params);
+    // Many ticks pass while the model runs: nothing settles early.
+    for (let i = 0; i < 5; i++) {
+      await act(async () => {
+        await new Promise<void>(r => setTimeout(r, 0));
+      });
+      expect(screen.getByLabelText(`Wear pattern: ${WEAR_ROW_PENDING}`)).toBeTruthy();
+      expect(screen.getByText('Checking tread wear on this phone…')).toBeTruthy();
+    }
+    expect(mockScan).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finish({ status: 'done', frames: [{ frame: 'frames/t1.jpg', detections: [] }], framesFailed: 0, delegate: 'core-ml', modelVersion: 'tread-test-1' });
+    });
+    expect(screen.getByLabelText('Wear pattern: Normal Wear Distribution')).toBeTruthy();
+  });
+
+  test('after capture: Tyre result scans the frames saved for this tyre', async () => {
+    mockScan.mockResolvedValue({ status: 'done', frames: [{ frame: 'a', detections: [] }], framesFailed: 0, delegate: 'cpu', modelVersion: 'tread-test-1' });
+    const store = useInspectionStore.getState();
+    store.replaceAll([], null);
+    const inspectionId = store.startInspection('tflite-test');
+    store.selectTyres(['Left front']);
+    const tyreId = useInspectionStore.getState().inspections[0].tyres[0].id;
+    // Same order as the app: tread frames saved by capture, then Analysing sets the result.
+    store.setTreadCaptured(tyreId, ['frames/a.jpg', 'frames/b.jpg', 'frames/c.jpg']);
+    store.setResult(tyreId, result);
+    await show({ inspectionId, tyreId });
+    await act(async () => {});
+    expect(mockScan).toHaveBeenCalledWith(['frames/a.jpg', 'frames/b.jpg', 'frames/c.jpg'], expect.any(Function));
+    expect(useInspectionStore.getState().inspections[0].tyres[0].result!.treadWear).toEqual(
+      expect.objectContaining({ severity: 'none' }),
+    );
+  });
+
+  test('[TreadWear] logs show the scan start, the consensus and when the card and row update', async () => {
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    setTreadDebug(true);
+    try {
+      let finish!: (o: TreadWearScanOutcome) => void;
+      mockScan.mockImplementation(() => new Promise(r => (finish = r)));
+      await show(seed());
+      await act(async () => {
+        finish({
+          status: 'done',
+          frames: [{ frame: 'frames/t1.jpg', detections: [{ label: 'center_wear', confidence: 0.72, bbox: [0, 0, 0.5, 0.5], frameRect: null }] }],
+          framesFailed: 0,
+          delegate: 'core-ml',
+          modelVersion: 'tread-test-1',
+        });
+      });
+      const lines = log.mock.calls.map(c => c.map(String).join(' '));
+      const at = (needle: string) => lines.findIndex(l => l.includes(needle));
+      expect(lines[at('scanTreadWear started')]).toContain('"savedTreadFrames":2');
+      expect(lines[at('consensus')]).toContain('"title":"Center Wear"');
+      expect(at('UI committed: card scanning, Wear pattern row "Checking…"')).toBeGreaterThan(-1);
+      const resolved = at('scanTreadWear resolved');
+      const committed = at('UI committed: card done, Wear pattern row "Center Wear"');
+      expect(resolved).toBeGreaterThan(at('consensus'));
+      expect(committed).toBeGreaterThan(resolved);
+      for (const l of lines) expect(l).toMatch(/^\[TreadWear\] \d\d:\d\d:\d\d\.\d{3} /);
+    } finally {
+      setTreadDebug(false);
+      log.mockRestore();
+    }
   });
 
   test('model missing: once settled, the Wear pattern row is left as it was', async () => {

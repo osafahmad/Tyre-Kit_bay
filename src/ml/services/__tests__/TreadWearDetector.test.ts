@@ -3,7 +3,7 @@ import { anchorIndex, ssdOutputs } from '../../inference/__fixtures__/ssdOutputs
 import type { InferenceModel, LoadedModel } from '../../inference/types';
 import { modelManifest, type SsdDetectorManifestEntry } from '../../manifest';
 import { setTreadDebug, TREAD_LOG_TAG } from '../treadDebug';
-import { TreadWearDetector, type TreadWearDetectorDeps } from '../TreadWearDetector';
+import { rawClassMaxScores, TreadWearDetector, type TreadWearDetectorDeps } from '../TreadWearDetector';
 
 const entry = modelManifest.treadWear!;
 const SIZE = 320;
@@ -113,4 +113,34 @@ describe('TreadWearDetector', () => {
     expect(log.mock.calls.some(c => String(c[0]).startsWith(TREAD_LOG_TAG))).toBe(true);
     log.mockRestore();
   });
+
+  test('debug logs cover scan start, model load, per-frame scores and boxes, with a timestamp and no frame paths', async () => {
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    setTreadDebug(true);
+    await setup().detector.scan(['frames/t1.jpg', 'demo://tread/1']);
+    const lines = log.mock.calls.map(c => c.map(String).join(' '));
+    log.mockRestore();
+    for (const line of lines) expect(line).toMatch(/^\[TreadWear\] \d\d:\d\d:\d\d\.\d{3} /);
+    expect(lines.find(l => l.includes('scan started'))).toContain('"savedFrames":2,"realFrames":1');
+    expect(lines.some(l => l.includes('model loaded (delegate android-gpu)'))).toBe(true);
+    const frame = lines.find(l => l.includes('frame inference'))!;
+    const data = JSON.parse(frame.slice(frame.indexOf('{')));
+    expect(data.detections).toEqual([
+      { label: 'center_wear', confidence: 0.8, bbox: expect.arrayContaining([expect.any(Number)]) },
+    ]);
+    expect(data.detections[0].bbox).toHaveLength(4);
+    expect(data.rawMaxScore.center_wear).toBeCloseTo(0.8, 3);
+    expect(typeof data.inferenceMs).toBe('number');
+    expect(lines.some(l => l.includes('scan done'))).toBe(true);
+    // Frames are referred to by index only.
+    expect(lines.join('\n')).not.toContain('t1.jpg');
+  });
+});
+
+test('rawClassMaxScores: highest raw score per class over all anchors', () => {
+  const [, scores] = oneBoxOutputs(0.7);
+  const max = rawClassMaxScores(scores, entry)!;
+  expect(Object.keys(max)).toEqual(entry.labels);
+  expect(max.center_wear).toBeCloseTo(0.7, 3);
+  expect(rawClassMaxScores(new ArrayBuffer(8), entry)).toBeNull();
 });

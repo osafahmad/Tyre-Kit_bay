@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
@@ -27,6 +27,7 @@ import { AUTOMATED_CHECK_NOTICE } from '../../features/report/reportHtml';
 import { colors, sizes } from '../../theme';
 import { useTyreInspection } from '../../hooks/useTyreInspection';
 import { TreadWearCard, isTreadWearBusy, wearPatternRowValue } from './TreadWearCard';
+import { treadLog } from '../../ml/services/treadDebug';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TyreResult'>;
 
@@ -43,6 +44,13 @@ export function TyreResultScreen({ navigation, route }: Props) {
   const { treadWear } = useTyreInspection(tyreId, { autoScan: true });
   const tyre = inspection?.tyres.find(t => t.id === tyreId);
   const result = tyre?.result;
+  // Diagnostics: when the card and the Wear pattern row actually change on screen.
+  const shownWear = result ? wearPatternRowValue(treadWear, result.wearPattern) : null;
+  useEffect(() => {
+    treadLog(`UI committed: card ${treadWear.status}, Wear pattern row "${shownWear ?? 'Not read'}"`, {
+      treadFrames: tyre?.treadFrames.length ?? 0,
+    });
+  }, [treadWear.status, shownWear, tyre?.treadFrames.length]);
   if (!inspection || !tyre || !result) return null;
 
   // Buttons only make sense while the inspection is in progress.
@@ -58,7 +66,7 @@ export function TyreResultScreen({ navigation, route }: Props) {
     ['Model', result.model],
     ['DOT/TIN', result.dotTin],
     ['Tyre age', formatAge(result)],
-    ['Wear pattern', wearPatternRowValue(treadWear, result.wearPattern)],
+    ['Wear pattern', shownWear],
     ['Cracks or damage', formatDamage(result.damageFound)],
   ];
 

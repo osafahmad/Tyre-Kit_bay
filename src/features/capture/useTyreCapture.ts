@@ -10,7 +10,9 @@ import { classifyFrame, measureLuma, thumbDifference, type FrameIssue } from './
 import type { Rect, Size } from './guideGeometry';
 import { cropFrameToGuide } from './frameCrop';
 import { deleteQuietly, isNoSpace, newTempFramePath, type CaptureStage } from './frameFiles';
-import { onFrameDropped } from './frameDrops';
+import { frameDropHandler } from './frameDrops';
+
+const onTyreFrameDropped = frameDropHandler('tyre-capture');
 
 type Geometry = { guide: Rect; view: Size } | null;
 
@@ -145,6 +147,9 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
   const onFrame = useCallback(
     (frame: Frame) => {
       'worklet';
+      // Planes are released as soon as they've been read, and again in `finally`
+      // if reading threw. The frame itself is always disposed in `finally`.
+      let planes: ReturnType<Frame['getPlanes']> | null = null;
       try {
         if (!sync.active.getBlocking()) return;
         const now = Date.now();
@@ -152,7 +157,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
         sync.lastAnalysis.setBlocking(now);
 
         // Luminance (Y) is plane 0 of the YUV frame.
-        const planes = frame.getPlanes();
+        planes = frame.getPlanes();
         if (planes.length === 0) return;
         const y = planes[0];
         const metrics = measureLuma(
@@ -164,6 +169,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
           step,
         );
         for (const p of planes) p.dispose();
+        planes = null;
 
         const motion = thumbDifference(sync.prevThumb.getBlocking(), metrics.thumb);
         sync.prevThumb.setBlocking(metrics.thumb);
@@ -194,8 +200,17 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
               PLATFORM,
               false,
             );
-            if (result.ok) scheduleOnRN(onFrameImage, result.image, metrics.sharpness);
-            else sync.busy.setBlocking(false);
+            if (result.ok) {
+              try {
+                scheduleOnRN(onFrameImage, result.image, metrics.sharpness);
+              } catch {
+                // Not handed over: dispose it here and free the pipeline.
+                result.image.dispose();
+                sync.busy.setBlocking(false);
+              }
+            } else {
+              sync.busy.setBlocking(false);
+            }
           }
         }
         // `ok` frames aren't counted, so only a change to `ok` is sent. Rejections
@@ -207,6 +222,15 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
       } catch {
         // A bad frame is skipped; the next one is analysed.
       } finally {
+        if (planes) {
+          for (const p of planes) {
+            try {
+              p.dispose();
+            } catch {
+              // Already released with the frame.
+            }
+          }
+        }
         frame.dispose();
       }
     },
@@ -229,7 +253,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
     pixelFormat: 'yuv',
     dropFramesWhileBusy: true,
     onFrame,
-    onFrameDropped,
+    onFrameDropped: onTyreFrameDropped,
   });
 
   const setGuide = useCallback(

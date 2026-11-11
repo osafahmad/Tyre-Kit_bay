@@ -48,6 +48,8 @@ export type ModelLoaderDeps = {
   createModel(url: string, delegates: ModelDelegate[]): Promise<InferenceModel>;
   /** Hardware delegates to try first, in order. CPU is always the last resort. */
   acceleration: ModelDelegate[];
+  /** Optional diagnostics: delegate attempts, load time and tensors. Never gets frame data. */
+  log?: (message: string, data?: unknown) => void;
 };
 
 /**
@@ -338,14 +340,24 @@ async function openWithFallback(
   url: string,
   deps: ModelLoaderDeps,
 ): Promise<{ model: InferenceModel; delegate: ModelDelegate | 'cpu' }> {
+  const log = deps.log;
   for (const delegate of deps.acceleration) {
+    const started = Date.now();
+    log?.(`opening model with ${delegate} delegate`);
     try {
-      return { model: await deps.createModel(url, [delegate]), delegate };
-    } catch {
+      const model = await deps.createModel(url, [delegate]);
+      log?.(`${delegate} delegate opened`, { ms: Date.now() - started });
+      return { model, delegate };
+    } catch (e) {
       // Delegate not supported on this phone or for this model: try the next one.
+      log?.(`${delegate} delegate failed, trying the next`, { ms: Date.now() - started, error: message(e) });
     }
   }
-  return { model: await deps.createModel(url, []), delegate: 'cpu' };
+  const started = Date.now();
+  log?.('opening model on CPU');
+  const model = await deps.createModel(url, []);
+  log?.('CPU opened', { ms: Date.now() - started });
+  return { model, delegate: 'cpu' };
 }
 
 export async function loadModel<K extends ModelKey>(
@@ -366,11 +378,23 @@ export async function loadModel<K extends ModelKey>(
   try {
     opened = await openWithFallback(located.url, deps);
   } catch (e) {
+    deps.log?.('model could not be opened on any delegate', { error: message(e) });
     return failure(key, 'load_failed', message(e));
   }
 
+  // fast-tflite allocates the tensors when the model opens; these are what it allocated.
+  const tensors = (t: InferenceModel['inputs']) => t.map(x => ({ name: x.name, shape: x.shape, type: x.dataType }));
+  deps.log?.('tensors allocated', {
+    delegate: opened.delegate,
+    inputs: tensors(opened.model.inputs),
+    outputs: tensors(opened.model.outputs),
+  });
+
   const mismatch = checkModelMatchesManifest(key, opened.model, entry);
-  if (mismatch.length > 0) return failure(key, 'manifest_mismatch', mismatch.join('; '));
+  if (mismatch.length > 0) {
+    deps.log?.('tensors do not match the manifest', { problems: mismatch });
+    return failure(key, 'manifest_mismatch', mismatch.join('; '));
+  }
 
   const loaded: LoadedModel<NonNullable<ModelManifest[K]>> = {
     key,
