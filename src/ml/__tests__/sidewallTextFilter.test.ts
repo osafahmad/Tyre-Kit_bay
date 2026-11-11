@@ -51,6 +51,8 @@ describe('standard clean sidewall', () => {
       size: '195/55 R15',
       dotTin: '1Y6 032MKT 0124',
       make: 'Continental',
+      model: 'ComfortContact CC7',
+      modelCode: { family: 'ComfortContact', code: 'CC7' },
       loadSpeed: '85V',
     });
   });
@@ -71,13 +73,21 @@ describe('standard clean sidewall', () => {
     }
   });
 
-  test('model is never part of the reading', () => {
+  test('model: only a listed family in its listed spelling; a bare number is never added (owner 2026-11-11)', () => {
     expect(read(mlKitResult([{ text: 'Primacy 4', y: 0, h: 80 }]))).toEqual({
       size: null,
       dotTin: null,
       make: null,
+      model: 'Primacy',
+      modelCode: null,
       loadSpeed: null,
     });
+    expect(read(mlKitResult([{ text: 'Comfort Contact', y: 0 }])).model).toBe('ComfortContact');
+    expect(read(mlKitResult([{ text: 'COMFORTCONTACT', y: 0 }, { text: 'CC7', y: 30 }])).model).toBe('ComfortContact CC7');
+    expect(read(mlKitResult([{ text: 'CC7', y: 0 }]))).toMatchObject({ model: null, modelCode: { family: 'ComfortContact', code: 'CC7' } });
+    for (const text of ['orContact', 'ComfortContacts', 'Contact', 'Primacy4', 'SOME OTHER MODEL']) {
+      expect(read(mlKitResult([{ text, y: 0 }])).model).toBeNull();
+    }
   });
 });
 
@@ -130,6 +140,8 @@ describe('dusty / noisy frames with rim and other text', () => {
       size: '195/65 R15',
       dotTin: 'EX 2H 4KR 3721',
       make: 'bridgestone',
+      model: null,
+      modelCode: null,
       loadSpeed: '91H',
     });
   });
@@ -147,7 +159,7 @@ describe('dusty / noisy frames with rim and other text', () => {
       [{ text: 'MAX PRESS 350 kPa (51 PSI)', y: 30 }],
       [{ text: 'TREADWEAR 400 TRACTION A TEMPERATURE A', y: 60 }],
     );
-    expect(read(result)).toEqual({ size: null, dotTin: null, make: null, loadSpeed: null });
+    expect(read(result)).toEqual({ size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null });
   });
 
   test('misread characters are never swapped into a size or brand', () => {
@@ -246,5 +258,5 @@ describe('iPhone 13 Continental 195/55 R15 85V (owner decision 2026-11-10)', () 
 });
 
 test('no text → nothing', () => {
-  expect(read({ text: '', blocks: [] })).toEqual({ size: null, dotTin: null, make: null, loadSpeed: null });
+  expect(read({ text: '', blocks: [] })).toEqual({ size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null });
 });

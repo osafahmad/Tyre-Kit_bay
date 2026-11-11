@@ -3,6 +3,9 @@ import {
   FULL_FRAME_SIZE_LIMITS,
   fullFrameDotCandidate,
   fullFrameMakeCandidate,
+  fullFrameModelCandidate,
+  fullFrameModelCode,
+  modelText,
   readingOrder,
   recoverSize,
   sizeWithinLimits,
@@ -28,9 +31,12 @@ import type { OcrLineLike } from './ocr/textCandidates';
  * - Load index / speed symbol (`91V`): read right after the size. Used to rank
  *   size reads; it isn't a sidewall field (spec §5), so it's never saved.
  *
- * Model is never read from a whole frame: picking which text is the model
- * would be a guess. Nothing is swapped, completed or corrected beyond the
- * CLAUDE.md exceptions inside the parsers it calls.
+ * - Model (owner decision 2026-11-11): only a family name listed in
+ *   `tyreModels.ts`, read whole (`fullFrameModelCandidate`), in its listed
+ *   spelling, plus a listed variant code read as a whole token (`CC7`). Free
+ *   text is never suggested as a model: picking which other text is the model
+ *   would be a guess. Nothing is swapped, completed or corrected beyond the
+ *   CLAUDE.md exceptions inside the parsers it calls.
  *
  * ML Kit on this package gives no per-line confidence, so "more trustworthy"
  * means a size followed by a load/speed index, then taller (more prominent) text.
@@ -39,6 +45,10 @@ export type SidewallTextReading = {
   size: string | null;
   dotTin: string | null;
   make: string | null;
+  /** A listed model family in its listed spelling, with a listed code when read in this frame (`ComfortContact CC7`). */
+  model: string | null;
+  /** A listed variant code read in this frame with its family, even without the family name (`CC7` alone). */
+  modelCode: { family: string; code: string } | null;
   /** Load index (or dual `121/119`) and speed symbol read after the size, e.g. `91V`. */
   loadSpeed: string | null;
 };
@@ -149,10 +159,13 @@ export const modelFamilyBrandCandidate = (lines: OcrLineLike[]) => rootCandidate
 /** Size, DOT/TIN, make and load/speed from one whole sidewall frame's ML Kit lines. */
 export function filterSidewallText(lines: OcrLineLike[], now: Date = new Date()): SidewallTextReading {
   const size = rankedSizeCandidate(lines);
+  const model = fullFrameModelCandidate(lines);
   return {
     size: size?.value ?? null,
     dotTin: fullFrameDotCandidate(lines, now),
     make: fullFrameMakeCandidate(lines) ?? brandRootCandidate(lines) ?? modelFamilyBrandCandidate(lines),
+    model: model ? modelText(model) : null,
+    modelCode: fullFrameModelCode(lines),
     loadSpeed: size?.loadSpeed ?? null,
   };
 }
@@ -169,10 +182,10 @@ const WIDTH_ASPECT_OUTSIDE_LIMITS = /(?:^|[^0-9])(0\d\d|[4-9]\d\d)\s*\/\s*(\d{2}
 export function explainRejections(
   lines: OcrLineLike[],
   reading: SidewallTextReading,
-): Partial<Record<'size' | 'dotTin' | 'make', string>> {
+): Partial<Record<'size' | 'dotTin' | 'make' | 'model', string>> {
   const texts = lines.map(l => l.text.toUpperCase());
-  const why: Partial<Record<'size' | 'dotTin' | 'make', string>> = {};
-  if (lines.length === 0) return { size: 'no text', dotTin: 'no text', make: 'no text' };
+  const why: Partial<Record<'size' | 'dotTin' | 'make' | 'model', string>> = {};
+  if (lines.length === 0) return { size: 'no text', dotTin: 'no text', make: 'no text', model: 'no text' };
   if (!reading.size) {
     const parsed = texts.map(t => parseTyreSize(t)).find(p => p !== null);
     const shaped = texts.find(t => WIDTH_ASPECT_SHAPE.test(t));
@@ -193,5 +206,6 @@ export function explainRejections(
       : 'no DOT marker read (DOT or a listed misread)';
   }
   if (!reading.make) why.make = 'no listed brand read as a whole word, no brand root, no model-family word';
+  if (!reading.model) why.model = 'no listed model family (tyreModels.ts) read as a whole word';
   return why;
 }

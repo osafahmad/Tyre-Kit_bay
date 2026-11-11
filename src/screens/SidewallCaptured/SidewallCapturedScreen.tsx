@@ -31,7 +31,7 @@ const fields: { key: keyof SidewallDetails; label: string; upper: boolean }[] = 
  * anything it couldn't read stays empty and shows `Not read`.
  *
  * On open, the sidewall frames are read on the phone (whole saved frame →
- * ML Kit → sidewall text filter; size, DOT/TIN and a known make, never model). Results only fill fields that are still empty and
+ * ML Kit → sidewall text filter; size, DOT/TIN, a known make, and a listed model family). Results only fill fields that are still empty and
  * that the user hasn't edited; they stay editable, so the user confirms or
  * corrects them. If nothing can be read, fields stay `Not read`.
  */

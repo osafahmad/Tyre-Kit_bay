@@ -25,9 +25,10 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * ML Kit text recognition, first its centre (`ocrConfig.sidewallCentreCropRatio`,
  * a stand-in for the old detector crop's zoom), then the whole frame if the
  * centre gave nothing new. Lines go through the semantic/spatial filter
- * (`sidewallTextFilter.ts`): size, DOT/TIN, and make only as a known brand
- * name. Model is never read. No TFLite model runs here (the AGPL-3.0 sidewall
- * text detector was removed, DECISIONS.md 2026-11-10).
+ * (`sidewallTextFilter.ts`): size, DOT/TIN, make only as a known brand name,
+ * and model only as a listed family name (`tyreModels.ts`, owner decision
+ * 2026-11-11). No TFLite model runs here (the AGPL-3.0 sidewall text detector
+ * was removed, DECISIONS.md 2026-11-10).
  *
  * The result is a set of suggestions for Sidewall captured; the user confirms
  * or corrects them. Any failure (no OCR, unreadable frame, no text) just means
@@ -66,8 +67,8 @@ export type SidewallReaderDeps = {
   maxOcrRuns: number;
 };
 
-/** Fields the whole-frame filter can suggest. Model is never read from OCR. */
-const READ_FIELDS = ['size', 'dotTin', 'make'] as const satisfies readonly SidewallField[];
+/** Fields the whole-frame filter can suggest. Model only as a listed family (owner decision 2026-11-11). */
+const READ_FIELDS = ['size', 'dotTin', 'make', 'model'] as const satisfies readonly SidewallField[];
 type ReadField = (typeof READ_FIELDS)[number];
 const FIELDS: SidewallField[] = ['size', 'dotTin', 'make', 'model'];
 
@@ -158,7 +159,9 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         centreCropRatio: deps.centreCropRatio,
       });
 
-      const reads: Record<ReadField, FieldRead[]> = { size: [], dotTin: [], make: [] };
+      const reads: Record<ReadField, FieldRead[]> = { size: [], dotTin: [], make: [], model: [] };
+      /** Listed model variant codes read in any frame (`CC7`), with their family. */
+      const modelCodes: { family: string; code: string }[] = [];
       const parts = { widthAspect: [] as string[], shortWidthAspect: [] as string[], rim: [] as number[] };
       const markerlessTins: FieldRead[] = [];
       const agreed = (field: ReadField) => agreedValue(reads[field], minAgreeing) !== null;
@@ -181,7 +184,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         const centreLines = await ocrCentre(path, label);
         const parsed: SidewallTextReading = centreLines
           ? filterSidewallText(centreLines, deps.now())
-          : { size: null, dotTin: null, make: null, loadSpeed: null };
+          : { size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null };
         let source = 'centre';
         let lines = centreLines ?? [];
         // The centre crop can cut text off: read the whole frame when it gave nothing still needed.
@@ -192,11 +195,13 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
             const full = filterSidewallText(fullLines, deps.now());
             if (!parsed.size && full.size) parsed.loadSpeed = full.loadSpeed;
             for (const f of READ_FIELDS) parsed[f] ??= full[f];
+            parsed.modelCode ??= full.modelCode;
             lines = [...lines, ...fullLines];
             source = centreLines ? 'centre + whole frame' : 'whole frame';
           }
         }
         sidewallLog(`${label}: parsed (${source})`, { parsed, rejected: explainRejections(lines, parsed) });
+        if (parsed.modelCode) modelCodes.push(parsed.modelCode);
         if (!parsed.dotTin) {
           const tin = markerlessTinCandidate(lines, deps.now());
           if (tin) {
@@ -224,16 +229,33 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         const value = agreedValue(reads[field], minAgreeing);
         if (value) suggestions[field] = value;
       }
-      for (const field of ['size', 'make'] as const) {
+      for (const field of ['size', 'make', 'model'] as const) {
         if (suggestions[field] || reads[field].length === 0) continue;
-        // Owner decisions 2026-11-10: a valid size or make read in one frame is
-        // enough when no other frame agrees (blur, missed characters).
+        // Owner decisions 2026-11-10 (size, make) and 2026-11-11 (model): a
+        // valid read in one frame is enough when no other frame agrees (blur,
+        // missed characters). A model read is always a listed family name.
+
         const value = bestSizeRead(reads[field]);
         if (value) {
           suggestions[field] = value;
           sidewallLog(`${field}: no ${minAgreeing}-frame agreement; suggesting the best single read`, {
             value,
             reads: reads[field].map(r => r.value),
+          });
+        }
+      }
+      if (suggestions.model && !/ /.test(suggestions.model)) {
+        // Owner decision 2026-11-11: the family came without its code (`ComfortContact`),
+        // but a listed code of that family was read in some frame (`CC7`),
+        // possibly one that didn't read the family name. The most-read code is
+        // attached; a tie between codes attaches nothing.
+        const family = suggestions.model;
+        const code = dominantValue(modelCodes.filter(c => c.family === family).map(c => c.code));
+        if (code) {
+          suggestions.model = `${family} ${code}`;
+          sidewallLog('model: family and variant code read in different frames; combined', {
+            value: suggestions.model,
+            codes: modelCodes,
           });
         }
       }

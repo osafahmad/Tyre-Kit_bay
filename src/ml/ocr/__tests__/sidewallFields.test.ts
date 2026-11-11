@@ -210,6 +210,50 @@ describe('make from a whole frame: known brand names only', () => {
   });
 });
 
+describe('model from a whole frame: listed families only (owner decision 2026-11-11)', () => {
+  const { fullFrameModelCandidate, fullFrameModelCode, modelText } = require('../sidewallFields') as typeof import('../sidewallFields');
+
+  test('family read whole, any case or spacing, gives the listed spelling', () => {
+    expect(fullFrameModelCandidate([line('ComfortContact CC7')])).toEqual({ brand: 'Continental', family: 'ComfortContact', code: 'CC7' });
+    expect(fullFrameModelCandidate([line('Comfort Contact', 0, 30), line('CC7', 40)])).toEqual({ brand: 'Continental', family: 'ComfortContact', code: 'CC7' });
+    expect(fullFrameModelCandidate([line('COMFORTCONTACT')])).toEqual({ brand: 'Continental', family: 'ComfortContact', code: null });
+    expect(fullFrameModelCandidate([line('Primacy 4')])).toEqual({ brand: 'Michelin', family: 'Primacy', code: null });
+    expect(fullFrameModelCandidate([line('TURANZA T005')])).toEqual({ brand: 'Bridgestone', family: 'Turanza', code: 'T005' });
+    expect(modelText({ family: 'ComfortContact', code: 'CC7' })).toBe('ComfortContact CC7');
+    expect(modelText({ family: 'ComfortContact', code: null })).toBe('ComfortContact');
+  });
+
+  test('fragments, glued letters and unlisted text never match', () => {
+    for (const text of ['orContact', 'ComfortContacts', 'XComfortContact', 'Contact', 'Continental', 'OUTSIDE', 'ECOCONTACTS']) {
+      expect(fullFrameModelCandidate([line(text)])).toBeNull();
+    }
+    // Spaces at a camel-case join are fine; the bare number after it is never added.
+    expect(fullFrameModelCandidate([line('ECO CONTACT 6 X')])).toEqual({ brand: 'Continental', family: 'EcoContact', code: null });
+  });
+
+  test('a code only counts as a whole token, and only for its own family', () => {
+    expect(fullFrameModelCandidate([line('ComfortContact'), line('CC70', 30)])?.code).toBeNull();
+    expect(fullFrameModelCandidate([line('ComfortContact'), line('UC6', 30)])?.code).toBeNull();
+    expect(fullFrameModelCode([line('CC7')])).toEqual({ family: 'ComfortContact', code: 'CC7' });
+    expect(fullFrameModelCode([line('CC70'), line('ACC7', 30)])).toBeNull();
+  });
+
+  test('the most prominent family line wins', () => {
+    expect(fullFrameModelCandidate([line('Primacy', 0, 10), line('ComfortContact', 30, 50)])?.family).toBe('ComfortContact');
+  });
+
+  test('listed codes are unique across families and never bare numbers or under 3 characters', () => {
+    const { KNOWN_TYRE_MODELS } = require('../../../config/tyreModels') as typeof import('../../../config/tyreModels');
+    const codes = KNOWN_TYRE_MODELS.flatMap(m => m.codes);
+    expect(new Set(codes).size).toBe(codes.length);
+    for (const code of codes) {
+      expect(code).toMatch(/^[A-Z0-9]{3,}$/);
+      expect(code).toMatch(/[A-Z]/);
+    }
+    expect(new Set(KNOWN_TYRE_MODELS.map(m => m.family.toUpperCase())).size).toBe(KNOWN_TYRE_MODELS.length);
+  });
+});
+
 describe('agreement keys', () => {
   const { readKey } = require('../sidewallFields') as typeof import('../sidewallFields');
 

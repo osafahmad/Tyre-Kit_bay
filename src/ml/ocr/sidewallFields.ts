@@ -1,5 +1,6 @@
 import type { SidewallDetails } from '../../features/inspection/types';
 import { KNOWN_TYRE_BRANDS } from '../../config/tyreBrands';
+import { KNOWN_TYRE_MODELS } from '../../config/tyreModels';
 import {
   COMPACT_SHORT_SIZE_PATTERN,
   COMPACT_SIZE_PATTERN,
@@ -12,10 +13,11 @@ import { sidewallLog } from './sidewallDebug';
 import type { OcrLineLike } from './textCandidates';
 
 // Turns ML Kit lines read from a whole saved sidewall frame into candidates
-// for size, DOT/TIN and make (sidewallTextFilter.ts combines them). Only text
-// that was actually read is returned. Characters are never swapped, completed
-// or matched to a look-alike, except the narrow CLAUDE.md exceptions marked
-// below. Model is never read. Candidates are suggestions: the user confirms
+// for size, DOT/TIN, make and model (sidewallTextFilter.ts combines them).
+// Only text that was actually read is returned. Characters are never swapped,
+// completed or matched to a look-alike, except the narrow CLAUDE.md exceptions
+// marked below. Model is read only as a listed family name in tyreModels.ts
+// (owner decision 2026-11-11). Candidates are suggestions: the user confirms
 // or corrects them.
 
 export type SidewallField = keyof SidewallDetails;
@@ -585,6 +587,76 @@ export function markerlessTinCandidate(lines: OcrLineLike[], now: Date = new Dat
         tin: joined,
       });
       return joined;
+    }
+  }
+  return null;
+}
+
+/** A listed name as a whole word, any case, any spacing between its words (`GENERAL  TIRE`, `Comfort Contact`). */
+const wholeNamePattern = (name: string) =>
+  new RegExp(`(?:^|[^A-Z0-9])(${name.toUpperCase().split(/\s+/).join('\\s*')})(?![A-Z0-9])`);
+
+/** A listed variant code as a whole token (`CC7`, `T005`). */
+const wholeTokenPattern = (code: string) => new RegExp(`(?:^|[^A-Z0-9])${code.toUpperCase()}(?![A-Z0-9])`);
+
+/**
+ * A family name may be read with spaces at its camel-case joins
+ * (`Comfort Contact` for `ComfortContact`, `Efficient Grip`), so those joins
+ * are split into words before `wholeNamePattern` makes the spacing optional.
+ */
+const familyWords = (family: string) => family.replace(/([a-z])([A-Z])/g, '$1 $2');
+
+const MODEL_PATTERNS = KNOWN_TYRE_MODELS.map(m => ({
+  model: m,
+  re: wholeNamePattern(familyWords(m.family)),
+  codes: m.codes.map(code => ({ code, re: wholeTokenPattern(code) })),
+}));
+
+export type ModelRead = {
+  brand: string;
+  /** Listed spelling of the family (`ComfortContact`), whatever the spacing or case read. */
+  family: string;
+  /** A listed code of that family read as a whole token in the same frame (`CC7`), or null. */
+  code: string | null;
+};
+
+/** `family` or `family code`: the model text suggested for a read. */
+export const modelText = (read: Pick<ModelRead, 'family' | 'code'>) =>
+  read.code ? `${read.family} ${read.code}` : read.family;
+
+/**
+ * Model from a whole frame (owner decision 2026-11-11): a line containing a
+ * family name from `tyreModels.ts` exactly, as a whole word, any case and
+ * spacing; the most prominent (tallest) line first. The value is the listed
+ * spelling, so `Comfort Contact` and `COMFORTCONTACT` both give
+ * `ComfortContact`. A listed code of that family read as a whole token
+ * anywhere in the frame is attached (`CC7`). Fragments (`orContact`),
+ * unlisted models and bare numbers (`Primacy 4` → `Primacy`) never add text.
+ */
+export function fullFrameModelCandidate(lines: OcrLineLike[]): ModelRead | null {
+  const uppers = lines.map(l => l.text.toUpperCase());
+  for (const line of [...lines].sort((a, b) => b.frame.height - a.frame.height)) {
+    const upper = line.text.toUpperCase();
+    for (const { model, re, codes } of MODEL_PATTERNS) {
+      if (!re.test(upper)) continue;
+      const code = codes.find(c => uppers.some(u => c.re.test(u)))?.code ?? null;
+      return { brand: model.brand, family: model.family, code };
+    }
+  }
+  return null;
+}
+
+/**
+ * A listed variant code read as a whole token in this frame, with its family,
+ * even when the family name itself wasn't read here (`CC7` alone). Used by
+ * `sidewallReader.ts` to combine `ComfortContact` from one frame with `CC7`
+ * from another; never suggested on its own.
+ */
+export function fullFrameModelCode(lines: OcrLineLike[]): { family: string; code: string } | null {
+  for (const upper of lines.map(l => l.text.toUpperCase())) {
+    for (const { model, codes } of MODEL_PATTERNS) {
+      const hit = codes.find(c => c.re.test(upper));
+      if (hit) return { family: model.family, code: hit.code };
     }
   }
   return null;

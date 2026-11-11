@@ -79,12 +79,12 @@ const perFrame =
     part === 'centre' ? results[(Number(frame.match(/\d+/)![0]) - 1) % results.length] : [];
 
 describe('centre crop → ML Kit → filter → suggestions', () => {
-  test('size, DOT and a known brand are suggested; model never is', async () => {
+  test('size, DOT, a known brand and a listed model family are suggested (model: owner 2026-11-11)', async () => {
     const { reader, deps } = setup();
     const outcome = await reader.read(FRAMES);
     expect(outcome).toEqual({
       status: 'done',
-      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
+      suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN', model: 'Primacy' },
       ocrRuns: 2, // agreed after two frames
     });
     // The centre of the saved frame, then the crop is deleted; no whole-frame read was needed.
@@ -98,6 +98,7 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
     expect(suggestionsOf(await reader.read(FRAMES))).toEqual({
       size: '205/55 R16',
       make: 'MICHELIN',
+      model: 'Primacy',
       dotTin: '4B7Y ABC 2319',
     });
   });
@@ -123,7 +124,7 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
     const device = ['iental', 'OUTSIDE', 'RADIAL', 'TUBELESS'].map((t, i) => line(t, i * 40, 30));
     expect(suggestionsOf(await setup({ ocr: () => device }).reader.read(FRAMES))).toEqual({});
     const withModel = [line('Comfortcontact', 200, 30), ...device];
-    expect(suggestionsOf(await setup({ ocr: () => withModel }).reader.read(FRAMES))).toEqual({ make: 'Continental' });
+    expect(suggestionsOf(await setup({ ocr: () => withModel }).reader.read(FRAMES))).toEqual({ make: 'Continental', model: 'ComfortContact' });
   });
 
   test('iPhone 13 round 2: 95/55 + 5B15 in frame 1, I95/35 R15 in frame 2', async () => {
@@ -231,6 +232,46 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
     });
   });
 
+  describe('model from a listed family (owner decision 2026-11-11, Redmi 13 logs)', () => {
+    test('ComfortContact in some frames and CC7 in others combine to ComfortContact CC7', async () => {
+      const family = [line('Continental', 0, 40), line('ComfortContact', 50, 30)];
+      const spaced = [line('Comfort Contact', 50, 30)];
+      const code = [line('CC7', 0, 30), line('195/55 R15 85V', 40)];
+      const { reader } = setup({ ocr: perFrame(family, spaced, code) });
+      expect(suggestionsOf(await reader.read(FRAMES))).toEqual({
+        make: 'Continental',
+        size: '195/55 R15',
+        model: 'ComfortContact CC7',
+      });
+    });
+
+    test('family and code in one frame; family alone in one frame; code alone never', async () => {
+      const both = setup({ ocr: perFrame([line('ComfortContact CC7')], [], []) });
+      expect(suggestionsOf(await both.reader.read(FRAMES))).toEqual({ make: 'Continental', model: 'ComfortContact CC7' });
+      const alone = setup({ ocr: perFrame([line('ComfortContact')], [], []) });
+      expect(suggestionsOf(await alone.reader.read(FRAMES))).toEqual({ make: 'Continental', model: 'ComfortContact' });
+      const codeOnly = setup({ ocr: perFrame([line('CC7')], [line('CC7')], [line('CC7')]) });
+      expect(suggestionsOf(await codeOnly.reader.read(FRAMES))).toEqual({});
+    });
+
+    test('a code of another family, or two codes tying, attach nothing', async () => {
+      const other = setup({ ocr: perFrame([line('ComfortContact')], [line('UC6')], []) });
+      expect(suggestionsOf(await other.reader.read(FRAMES))).toEqual({ make: 'Continental', model: 'ComfortContact' });
+      const tie = setup({ ocr: perFrame([line('ComfortContact')], [line('CC6')], [line('CC7')]) });
+      expect(suggestionsOf(await tie.reader.read(FRAMES))).toEqual({ make: 'Continental', model: 'ComfortContact' });
+    });
+
+    test('free text and fragments are never a model', async () => {
+      const text = [line('orContact', 0, 30), line('TUBELESS RADIAL', 40), line('Primacy4', 80)];
+      expect(suggestionsOf(await setup({ ocr: () => text }).reader.read(FRAMES))).toEqual({ make: 'Continental' });
+    });
+
+    test('disagreeing families: the majority wins, never a mix', async () => {
+      const { reader } = setup({ ocr: perFrame([line('ComfortContact')], [line('UltraContact')], [line('ComfortContact')]) });
+      expect(suggestionsOf(await reader.read(FRAMES)).model).toBe('ComfortContact');
+    });
+  });
+
   test('dominantValue: a tie gives nothing', () => {
     const { dominantValue } = require('../sidewallReader') as typeof import('../sidewallReader');
     expect(dominantValue(['a', 'b', 'a'])).toBe('a');
@@ -278,6 +319,7 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
       size: '205/55 R16',
       dotTin: '4B7Y ABC 2319',
       make: 'MICHELIN',
+      model: 'Primacy',
     });
   });
 
