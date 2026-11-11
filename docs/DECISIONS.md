@@ -732,8 +732,30 @@ Make now works on the device. These rules cover the size reads that were still m
   - Not used: a stray `R15`, a bare `15`, or a two-digit width (`95/55`).
   - Risk: a width/aspect from one frame and a rim from another are taken to come from the same size marking. That's true when the whole scan is one tyre's sidewall. The user confirms the value.
 
+#### iPhone 13 logs: round 9 DOT/TIN rules (owner decision 2026-11-10)
+
+- **More marker misreads** (`DOT_MARKER` in `parsers.ts`): `TELDT` and `T1DT` anywhere, glued on. As whole tokens only: `D` + `0/O/Q` + `T/I/L`, or one or two of `0/O/Q` + `T/I/L` (`OT`, `0T`, `OOI`). The owner's regex used `\b` word boundaries, which matched none of the device samples (`oTELDT`, `OT1DT` are glued to letters and digits), so the glued forms are listed separately. Words like `TOTAL` or `POT` don't count. The TIN after the marker is kept as read (`OT1DT IOES 2421` → `IOES 2421`; the user corrects `IOES`). `otS1OUUSs` and `100ULSS` have no date code, so they give nothing.
+- **Single-frame DOT/TIN:** a valid marked read with no competing read in any other frame is now suggested whole, not just its date code. If frames read different TINs, the earlier rules still apply: an agreed date code only, or nothing.
+- **TIN with no marker** (`markerlessTinCandidate`): accepted only with a strict shape:
+  - 2 or more tokens, with a valid date code as the last token.
+  - 8–13 letters and digits in all, with at least one letter before the date.
+  - No load, pressure or grading word (MAX, LOAD, KG, LBS, PSI, kPa, TREADWEAR…).
+  - It also needs **2 agreeing frames, never one**, and is used only when no frame read a marker.
+  - This is stricter than asked, because sidewalls carry other 4-digit numbers that pass as dates (`600 KG (1323 LBS)` is week 13 of 2023). A wrong date code gives a wrong tyre age.
+
 #### iPhone 13 verification and release logging (owner, 2026-11-10)
 
 - **Device result (owner-verified, iPhone 13):** the SSDLite tread wear model runs on the device, and ML Kit sidewall OCR suggests Make `Continental` and Size `195/55 R15` on the test tyre (Continental ComfortContact, 195/55 R15 85V). The size came from the cross-frame parts join (round 8). Not covered: DOT/TIN, Android, and other tyres. These are still open on the release checklist.
 - **Logging:** `diagnosticsConfig.sidewallOcrLogs` changed from `true` to `__DEV__`. Release builds no longer log any `[SidewallOCR]` line, including raw ML Kit text, parsed values and rejection reasons. Development builds keep them all for calibrating on new tyres. No separate timing or count metrics were kept for release: the per-read summary (`read done`, OCR run count) is a `sidewallLog` line too, so it's dev-only as well. `releaseGuards.test.ts` checks that a release build logs nothing.
 - **Caution:** rounds 2–8 were tuned on one tyre. Before a store release, test sidewall OCR on other brands and sizes to check that the looser rules don't suggest wrong values.
+
+#### Tyre result: Wear pattern row pending state (owner decision 2026-11-11)
+
+- **Problem:** on Tyre result, the Wear pattern row showed the value saved with the result (`result.wearPattern`, possibly an initial or demo value) while the tread wear check was still running. It then switched to the model's title a few seconds later, so the row showed one reading and then flipped to another.
+- **Decision (owner-approved):** while the check is idle or scanning, the row shows `Checking…` in the muted colour (`textSecondary`, the same colour as `Not read`). This matches the Tread Pattern & Wear card's busy state, and both come from one helper, `isTreadWearBusy`. Card and row show the final title in the same render, once the scan across all frames has finished (`wearPatternRowValue` in `TreadWearCard.tsx`).
+  - The wording isn't in the spec or the screen images. It was added so the row never shows a value that is about to change, and so a placeholder isn't mistaken for a result. The muted colour marks it as a placeholder; status colours aren't used.
+  - If the model can't run (`unavailable`), the row is left as it was, as before. The card says `Not checked`.
+- **Frame drops (owner-approved):** `useFrameOutput` in VisionCamera v5 calls `console.warn` for every dropped frame when no `onFrameDropped` handler is given. With `dropFramesWhileBusy: true`, `frame-was-late` drops are expected, so they flooded LogBox during capture.
+  - Both frame outputs now use `onFrameDropped` from `src/features/capture/frameDrops.ts`. It only counts drops, and `frameDropCounts()` reads the counts for diagnostics. It warns once in development builds for `out-of-buffers`, which usually means a frame wasn't disposed, and never warns in release builds.
+  - `useTyreCapture` no longer calls JS for every passing frame. A run of `ok` frames is sent once. Every rejected frame is still sent, because the session counts rejections.
+- **Device check:** still needed. Check that LogBox stays quiet during sidewall and tread capture, and that capture speed hasn't changed.
