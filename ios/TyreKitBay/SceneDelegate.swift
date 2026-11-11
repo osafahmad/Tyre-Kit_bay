@@ -52,11 +52,18 @@ class SceneDelegate: RCTDefaultReactNativeFactoryDelegate, UIWindowSceneDelegate
   // The failed lookup calls RCTLogError, and that shows a native RedBox before JS
   // can filter it. Resolving that one name to an empty stub stops the RedBox.
   // Every other name still goes through React Native's normal lookup.
-  override func getModuleClass(fromName name: UnsafePointer<CChar>!) -> AnyClass! {
+  //
+  // Not `override`: the superclass implements this only in its .mm, and the
+  // protocol is in a C++ header Swift can't import. RCTReactNativeFactory finds
+  // it through the ObjC runtime (respondsToSelector:). Returning nil matches the
+  // superclass, which returns nullptr, so the factory falls back to
+  // RCTCoreModulesClassProvider.
+  @objc(getModuleClassFromName:)
+  func moduleClass(fromName name: UnsafePointer<CChar>?) -> AnyClass? {
     if let name, String(cString: name) == SampleTurboModuleStub.moduleName() {
       return SampleTurboModuleStub.self
     }
-    return super.getModuleClass(fromName: name)
+    return nil
   }
   #endif
 
