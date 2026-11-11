@@ -239,7 +239,18 @@ describe('model from a whole frame: listed families only (owner decision 2026-11
     expect(fullFrameModelCandidate([line('ComfortContact'), line('CC70', 30)])?.code).toBeNull();
     expect(fullFrameModelCandidate([line('ComfortContact'), line('UC6', 30)])?.code).toBeNull();
     expect(fullFrameModelCode([line('CC7')])).toEqual({ family: 'ComfortContact', code: 'CC7' });
-    expect(fullFrameModelCode([line('CC70'), line('ACC7', 30)])).toBeNull();
+    for (const text of ['CC70', '1CC7', 'CC7X', 'CC 7']) expect(fullFrameModelCode([line(text)])).toBeNull();
+  });
+
+  test('a code glued to the end of a family fragment (Redmi 13 frame 6, owner 2026-11-11)', () => {
+    expect(fullFrameModelCode([line('OntactCC7')])).toEqual({ family: 'ComfortContact', code: 'CC7' });
+    expect(fullFrameModelCode([line('ComfortContactCC7')])).toEqual({ family: 'ComfortContact', code: 'CC7' });
+    expect(fullFrameModelCode([line('UltraContactUC6')])).toEqual({ family: 'UltraContact', code: 'UC6' });
+    expect(fullFrameModelCandidate([line('ComfortContactCC7')])).toEqual({ brand: 'Continental', family: 'ComfortContact', code: 'CC7' });
+    expect(fullFrameModelCandidate([line('Comfortontact', 0, 30), line('OntactCC7', 40)])).toEqual({ brand: 'Continental', family: 'ComfortContact', code: 'CC7' });
+    expect(fullFrameModelCode([line('OntactCC7X')])).toBeNull(); // letters after the code
+    expect(fullFrameModelCode([line('Ontact1CC7')])).toBeNull(); // digit before the code
+    expect(fullFrameModelCode([line('OntactCC7'), line('UC6', 30)])).toEqual({ family: 'ComfortContact', code: 'CC7' }); // first in reading order
   });
 
   test('the most prominent family line wins', () => {

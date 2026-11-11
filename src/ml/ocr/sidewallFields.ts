@@ -596,8 +596,13 @@ export function markerlessTinCandidate(lines: OcrLineLike[], now: Date = new Dat
 const wholeNamePattern = (name: string) =>
   new RegExp(`(?:^|[^A-Z0-9])(${name.toUpperCase().split(/\s+/).join('\\s*')})(?![A-Z0-9])`);
 
-/** A listed variant code as a whole token (`CC7`, `T005`). */
-const wholeTokenPattern = (code: string) => new RegExp(`(?:^|[^A-Z0-9])${code.toUpperCase()}(?![A-Z0-9])`);
+/**
+ * A listed variant code as a whole token (`CC7`, `T005`), or glued to the end
+ * of a letters-only fragment of the family name (`OntactCC7`, Redmi 13 frame 6,
+ * owner decision 2026-11-11). Nothing may follow it, and no digit may precede
+ * it (`1CC7`, `CC70` and `CC7X` are not the code).
+ */
+const wholeTokenPattern = (code: string) => new RegExp(`(?:^|[^0-9])${code.toUpperCase()}(?![A-Z0-9])`);
 
 /**
  * A family name may be read with spaces at its camel-case joins
@@ -735,8 +740,9 @@ function nearestModelFamily(text: string, frameUppers: string[]): { model: Model
 }
 
 /**
- * A listed variant code read as a whole token in this frame, with its family,
- * even when the family name itself wasn't read here (`CC7` alone). Used by
+ * A listed variant code read as a whole token in this frame (or glued to the
+ * end of a family fragment, `OntactCC7`), with its family, even when the
+ * family name itself wasn't read here (`CC7` alone). Used by
  * `sidewallReader.ts` to combine `ComfortContact` from one frame with `CC7`
  * from another; never suggested on its own.
  */

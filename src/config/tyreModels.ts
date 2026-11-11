@@ -8,7 +8,8 @@
  * name exactly, as a whole word. Case doesn't matter, and the spacing between
  * the words of a name doesn't either (`Comfort Contact` and `ComfortContact`
  * both give the listed spelling `ComfortContact`). A variant code is added
- * only when one of the family's listed codes was read as a whole token
+ * only when one of the family's listed codes was read as a whole token, or
+ * glued to the end of a fragment of the family name (`OntactCC7`)
  * (`CC7` → `ComfortContact CC7`), in the same frame or in another frame of
  * the same scan. Codes are letters and digits, never a bare number, because
  * numbers are everywhere on a sidewall (`Primacy 4` is suggested as

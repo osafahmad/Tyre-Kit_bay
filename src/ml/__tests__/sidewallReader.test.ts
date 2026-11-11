@@ -258,6 +258,16 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
       });
     });
 
+    test('Redmi 13 frame 6: the code glued to a family fragment (OntactCC7) attaches across frames', async () => {
+      const f1 = [line('Comfortontact', 0, 30), line('195/55 R15 85V', 40)];
+      const f2 = [line('Comforto Contact', 0, 30)];
+      const f6 = [line('OntactCC7', 0, 30)];
+      const { reader } = setup({ ocr: perFrame(f1, f2, f6) });
+      expect(suggestionsOf(await reader.read(FRAMES))).toEqual({ make: 'Continental', size: '195/55 R15', model: 'ComfortContact CC7' });
+      const onlyGlued = setup({ ocr: perFrame(f6, f6, f6) });
+      expect(suggestionsOf(await onlyGlued.reader.read(FRAMES))).toEqual({}); // a code never stands alone
+    });
+
     test('family and code in one frame; family alone in one frame; code alone never', async () => {
       const both = setup({ ocr: perFrame([line('ComfortContact CC7')], [], []) });
       expect(suggestionsOf(await both.reader.read(FRAMES))).toEqual({ make: 'Continental', model: 'ComfortContact CC7' });

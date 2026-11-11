@@ -797,6 +797,12 @@ The owner asked for three things from the screen-capture and device logs. Each w
 - **Threshold values** are owner values, not calibrated on other tyres. The release checklist note from round 9 stands: test other brands before a store build, since a 2-edit match on a 10-letter name is loose.
 - Tests: `sidewallFields.test.ts` (logged reads, limits per length, code-gated 3 edits, non-matches, `editDistance`), `sidewallTextFilter.test.ts`, `sidewallReader.test.ts` (three noisy frames + `CC7` → `ComfortContact CC7` with make, size and DOT). Not yet verified on a phone.
 
+#### Model code glued to a family fragment (owner decision 2026-11-11, Redmi 13 frame 6)
+
+- **Log:** `OntactCC7`: the end of `ComfortContact` and the code `CC7` read as one token, so the whole-token code pattern missed it and `model` stayed `ComfortContact`.
+- **Rule** (`wholeTokenPattern` in `sidewallFields.ts`): a listed code may be preceded by letters (a fragment of the family name), but not by a digit, and nothing may follow it. `OntactCC7`, `ComfortContactCC7` and `CC7` give `CC7`; `CC70`, `1CC7`, `CC7X` and `Ontact1CC7` don't. The fragment itself is never used as the family: the family still comes from an exact or noise-tolerant family match in the same or another frame, and the code attaches to it there (`ComfortContact CC7`). A code with no family in any frame still gives nothing. The owner's `/[a-zA-Z]*(CC7|UC6|PC6)/i` was generalised to every listed code and given the no-digit-before and nothing-after limits.
+- Tests: `sidewallFields.test.ts` (glued forms and the non-matches), `sidewallReader.test.ts` (noisy family in frames 1–2 plus `OntactCC7` in frame 6 → `ComfortContact CC7`; glued code alone in every frame → nothing). Not yet verified on a phone.
+
 #### iPhone 13 verification and release logging (owner, 2026-11-10)
 
 - **Device result (owner-verified, iPhone 13):** the SSDLite tread wear model runs on the device, and ML Kit sidewall OCR suggests Make `Continental` and Size `195/55 R15` on the test tyre (Continental ComfortContact, 195/55 R15 85V). The size came from the cross-frame parts join (round 8). Not covered: DOT/TIN, Android, and other tyres. These are still open on the release checklist.
