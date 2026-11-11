@@ -46,6 +46,20 @@ class SceneDelegate: RCTDefaultReactNativeFactoryDelegate, UIWindowSceneDelegate
     RCTLinkingManager.scene(scene, continue: userActivity)
   }
 
+  #if DEBUG
+  // Something in the debug runtime asks the TurboModule manager for
+  // "SampleTurboModule" (React Native's own sample spec, which no app ships).
+  // The failed lookup calls RCTLogError, and that shows a native RedBox before JS
+  // can filter it. Resolving that one name to an empty stub stops the RedBox.
+  // Every other name still goes through React Native's normal lookup.
+  override func getModuleClass(fromName name: UnsafePointer<CChar>!) -> AnyClass! {
+    if let name, String(cString: name) == SampleTurboModuleStub.moduleName() {
+      return SampleTurboModuleStub.self
+    }
+    return super.getModuleClass(fromName: name)
+  }
+  #endif
+
   override func bundleURL() -> URL? {
     #if DEBUG
     RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")
@@ -54,3 +68,14 @@ class SceneDelegate: RCTDefaultReactNativeFactoryDelegate, UIWindowSceneDelegate
     #endif
   }
 }
+
+#if DEBUG
+/// Empty, method-less legacy module returned only for the debug-only
+/// "SampleTurboModule" lookup in `SceneDelegate.getModuleClass(fromName:)`.
+/// It exports nothing, so JS can't call into it.
+@objc(TKBSampleTurboModuleStub)
+final class SampleTurboModuleStub: NSObject, RCTBridgeModule {
+  static func moduleName() -> String! { "SampleTurboModule" }
+  static func requiresMainQueueSetup() -> Bool { false }
+}
+#endif
