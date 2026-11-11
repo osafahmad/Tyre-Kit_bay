@@ -77,7 +77,7 @@ describe('standard clean sidewall', () => {
     expect(read(mlKitResult([{ text: 'Primacy 4', y: 0, h: 80 }]))).toEqual({
       size: null,
       dotTin: null,
-      make: null,
+      make: 'Michelin', // a matched family names its brand (owner 2026-11-11)
       model: 'Primacy',
       modelCode: null,
       loadSpeed: null,
@@ -85,9 +85,12 @@ describe('standard clean sidewall', () => {
     expect(read(mlKitResult([{ text: 'Comfort Contact', y: 0 }])).model).toBe('ComfortContact');
     expect(read(mlKitResult([{ text: 'COMFORTCONTACT', y: 0 }, { text: 'CC7', y: 30 }])).model).toBe('ComfortContact CC7');
     expect(read(mlKitResult([{ text: 'CC7', y: 0 }]))).toMatchObject({ model: null, modelCode: { family: 'ComfortContact', code: 'CC7' } });
-    for (const text of ['orContact', 'ComfortContacts', 'Contact', 'Primacy4', 'SOME OTHER MODEL']) {
+    for (const text of ['orContact', 'Contact', 'Primacy4', 'SOME OTHER MODEL']) {
       expect(read(mlKitResult([{ text, y: 0 }])).model).toBeNull();
     }
+    // Within the noise rule (owner 2026-11-11): one stray letter still gives the listed spelling, and its brand.
+    expect(read(mlKitResult([{ text: 'ComfortContacts', y: 0 }]))).toMatchObject({ model: 'ComfortContact', make: 'Continental' });
+    expect(read(mlKitResult([{ text: 'Comfortontact', y: 0 }]))).toMatchObject({ model: 'ComfortContact', make: 'Continental' });
   });
 });
 

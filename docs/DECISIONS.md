@@ -788,6 +788,15 @@ The owner asked for three things from the screen-capture and device logs. Each w
 - **Diagnostics:** `explainRejections` now gives a `model` reason, and the filter reading carries `model` and `modelCode`.
 - Tests: `sidewallFields.test.ts` (matcher, list invariants), `sidewallTextFilter.test.ts` (reading shape), `sidewallReader.test.ts` (cross-frame combine, code alone gives nothing, other-family code, tie, majority). Not yet verified on a phone.
 
+#### Model family with OCR noise (owner decision 2026-11-11, Redmi 13 logs, round 2)
+
+- **Logs:** `CC7` is read whole in most frames (`modelCode`), but the family comes out as `Comfortontact`, `ComiortContae`, `Comforto Contact`, `ComioriContac`, so the exact match failed and the code had nothing to attach to.
+- **Rule** (`nearestModelFamily` in `sidewallFields.ts`, used by `fullFrameModelCandidate` after the exact match): on each line, every run of 1–3 consecutive letter tokens with the spaces removed is compared (Levenshtein) with each listed family's letters. Allowed distance by family length: 2 edits for 10+ letters, 1 for 6–9, exact only under 6; 3 edits for 12+ letters when one of that family's listed codes was read as a whole token in the same frame (`ComiortContae` + `CC7`). The closest family must be unique; a tie gives nothing. The value is always the listed spelling.
+- **What this means in practice:** `Comfortontact` (1), `Comforto Contact` (1, compared as `COMFORTOCONTACT`), `ComfortContacts` (1) and `ComioriContac` (3, with `CC7`) give `ComfortContact`; `ComiortContae` alone (3, no code) gives nothing; `Comfort`, `Contact`, `orContact`, brand names and load/grading words are far from every family. The owner's suggested character-swap tables (`f`↔`i`, `rn`↔`m`) were not added: plain edit distance already covers those and keeps the rule a single number.
+- **Make:** a matched model family (exact or noisy) names its brand, after the brand-name, root and `CONTACT` rules. This extends the 2026-11-10 "model-family word gives the brand" decision to every listed family.
+- **Threshold values** are owner values, not calibrated on other tyres. The release checklist note from round 9 stands: test other brands before a store build, since a 2-edit match on a 10-letter name is loose.
+- Tests: `sidewallFields.test.ts` (logged reads, limits per length, code-gated 3 edits, non-matches, `editDistance`), `sidewallTextFilter.test.ts`, `sidewallReader.test.ts` (three noisy frames + `CC7` → `ComfortContact CC7` with make, size and DOT). Not yet verified on a phone.
+
 #### iPhone 13 verification and release logging (owner, 2026-11-10)
 
 - **Device result (owner-verified, iPhone 13):** the SSDLite tread wear model runs on the device, and ML Kit sidewall OCR suggests Make `Continental` and Size `195/55 R15` on the test tyre (Continental ComfortContact, 195/55 R15 85V). The size came from the cross-frame parts join (round 8). Not covered: DOT/TIN, Android, and other tyres. These are still open on the release checklist.

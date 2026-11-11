@@ -245,6 +245,19 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
       });
     });
 
+    test('Redmi 13 reads: noisy family names in every frame, CC7 read whole (owner 2026-11-11)', async () => {
+      const f1 = [line('Comfortontact', 0, 30), line('CC7', 40, 30), line('195/55 R15 85V', 80)];
+      const f2 = [line('ComiortContae', 0, 30), line('CC7', 40, 30)];
+      const f3 = [line('Comforto Contact', 0, 30), line('DOT 16092UT 0124', 60, 14)];
+      const { reader } = setup({ ocr: perFrame(f1, f2, f3) });
+      expect(suggestionsOf(await reader.read(FRAMES))).toEqual({
+        make: 'Continental',
+        size: '195/55 R15',
+        dotTin: '16092UT 0124',
+        model: 'ComfortContact CC7',
+      });
+    });
+
     test('family and code in one frame; family alone in one frame; code alone never', async () => {
       const both = setup({ ocr: perFrame([line('ComfortContact CC7')], [], []) });
       expect(suggestionsOf(await both.reader.read(FRAMES))).toEqual({ make: 'Continental', model: 'ComfortContact CC7' });

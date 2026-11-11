@@ -224,8 +224,12 @@ describe('model from a whole frame: listed families only (owner decision 2026-11
   });
 
   test('fragments, glued letters and unlisted text never match', () => {
-    for (const text of ['orContact', 'ComfortContacts', 'XComfortContact', 'Contact', 'Continental', 'OUTSIDE', 'ECOCONTACTS']) {
+    for (const text of ['orContact', 'Contact', 'Continental', 'OUTSIDE', 'ECOCON']) {
       expect(fullFrameModelCandidate([line(text)])).toBeNull();
+    }
+    // One stray letter is within the noise rule (next describe), so these match there, not here.
+    for (const text of ['ComfortContacts', 'XComfortContact', 'ECOCONTACTS']) {
+      expect(fullFrameModelCandidate([line(text)])).not.toBeNull();
     }
     // Spaces at a camel-case join are fine; the bare number after it is never added.
     expect(fullFrameModelCandidate([line('ECO CONTACT 6 X')])).toEqual({ brand: 'Continental', family: 'EcoContact', code: null });
@@ -251,6 +255,53 @@ describe('model from a whole frame: listed families only (owner decision 2026-11
       expect(code).toMatch(/[A-Z]/);
     }
     expect(new Set(KNOWN_TYRE_MODELS.map(m => m.family.toUpperCase())).size).toBe(KNOWN_TYRE_MODELS.length);
+  });
+});
+
+describe('model family with OCR noise (owner decision 2026-11-11, Redmi 13 logs)', () => {
+  const { fullFrameModelCandidate, editDistance, modelText } = require('../sidewallFields') as typeof import('../sidewallFields');
+  const family = (lines: OcrLineLike[]) => {
+    const m = fullFrameModelCandidate(lines);
+    return m ? modelText(m) : null;
+  };
+
+  test('the logged reads give the listed spelling', () => {
+    expect(family([line('Comfortontact')])).toBe('ComfortContact');
+    expect(family([line('Comforto Contact')])).toBe('ComfortContact');
+    expect(family([line('ComiortContae'), line('CC7', 30)])).toBe('ComfortContact CC7');
+    expect(family([line('ComioriContac'), line('CC7', 30)])).toBe('ComfortContact CC7');
+    expect(family([line('Comfortontact CC7')])).toBe('ComfortContact CC7');
+    expect(family([line('Contimental'), line('ComfortContact 195/55', 30)])).toBe('ComfortContact'); // exact first
+  });
+
+  test('three edits need the family code in the same frame; otherwise two is the limit', () => {
+    expect(family([line('ComiortContae')])).toBeNull(); // 3 edits, no code
+    expect(family([line('ComiortContae'), line('UC6', 30)])).toBeNull(); // another family's code
+    expect(family([line('ComiortContae')])).toBeNull();
+    expect(family([line('Comfortontac')])).toBe('ComfortContact'); // 2 edits
+    expect(family([line('Primacv')])).toBe('Primacy'); // 7 letters: 1 edit
+    expect(family([line('Primcv')])).toBeNull(); // 7 letters: 2 edits
+    expect(family([line('P Zer0')])).toBeNull(); // 5 letters: exact only
+  });
+
+  test('fragments, brand names and other sidewall words never match', () => {
+    for (const text of ['orContact', 'Contact', 'Comfort', 'Continental', 'CONTINENTAL TUBELESS', 'OUTSIDE', 'TREADWEAR 400', 'MAX LOAD 615 KG', 'RADIAL', 'COMFORTABLE CONTACTS']) {
+      expect(family([line(text), line('CC7', 30)])).toBeNull();
+    }
+  });
+
+  test('a tie between two families gives nothing', () => {
+    // EcoContact vs MaxContact are far apart; build a tie with two listed names at the same distance.
+    const { KNOWN_TYRE_MODELS } = require('../../../config/tyreModels') as typeof import('../../../config/tyreModels');
+    expect(KNOWN_TYRE_MODELS.some(m => m.family === 'ContiEcoContact')).toBe(true);
+    expect(family([line('ContiEcoContac')])).toBe('ContiEcoContact'); // one deletion, unique
+  });
+
+  test('editDistance', () => {
+    expect(editDistance('COMFORTONTACT', 'COMFORTCONTACT')).toBe(1);
+    expect(editDistance('COMIORTCONTAE', 'COMFORTCONTACT')).toBe(3);
+    expect(editDistance('ABC', 'ABC')).toBe(0);
+    expect(editDistance('ABC', 'XYZ', 1)).toBe(2); // capped
   });
 });
 

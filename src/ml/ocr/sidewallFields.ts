@@ -632,18 +632,106 @@ export const modelText = (read: Pick<ModelRead, 'family' | 'code'>) =>
  * `ComfortContact`. A listed code of that family read as a whole token
  * anywhere in the frame is attached (`CC7`). Fragments (`orContact`),
  * unlisted models and bare numbers (`Primacy 4` → `Primacy`) never add text.
+ * With no exact match, a read within `MODEL_FAMILY_FUZZY` edits of one listed
+ * family (`Comfortontact`, `Comforto Contact`) gives that family
+ * (`nearestModelFamily`, owner decision 2026-11-11).
  */
 export function fullFrameModelCandidate(lines: OcrLineLike[]): ModelRead | null {
   const uppers = lines.map(l => l.text.toUpperCase());
-  for (const line of [...lines].sort((a, b) => b.frame.height - a.frame.height)) {
+  const codeOf = (codes: (typeof MODEL_PATTERNS)[number]['codes']) =>
+    codes.find(c => uppers.some(u => c.re.test(u)))?.code ?? null;
+  const byHeight = [...lines].sort((a, b) => b.frame.height - a.frame.height);
+  for (const line of byHeight) {
     const upper = line.text.toUpperCase();
     for (const { model, re, codes } of MODEL_PATTERNS) {
       if (!re.test(upper)) continue;
-      const code = codes.find(c => uppers.some(u => c.re.test(u)))?.code ?? null;
-      return { brand: model.brand, family: model.family, code };
+      return { brand: model.brand, family: model.family, code: codeOf(codes) };
+    }
+  }
+  // No family read exactly: the noise-tolerant match (owner decision 2026-11-11, round 2).
+  for (const line of byHeight) {
+    const hit = nearestModelFamily(line.text, uppers);
+    if (hit) {
+      sidewallLog('model: family matched with OCR noise (owner decision 2026-11-11)', {
+        read: line.text,
+        family: hit.model.family,
+        distance: hit.distance,
+      });
+      return { brand: hit.model.brand, family: hit.model.family, code: codeOf(hit.codes) };
     }
   }
   return null;
+}
+
+/** Levenshtein edit distance (insert, delete, substitute), capped: returns `max + 1` once the distance exceeds `max`. */
+export function editDistance(a: string, b: string, max = Infinity): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      rowMin = Math.min(rowMin, cur[j]);
+    }
+    if (rowMin > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * Owner decision 2026-11-11 (Redmi 13 logs: `Comfortontact`, `ComiortContae`,
+ * `Comforto Contact`, `ComioriContac` with `CC7` read in the same frames): how
+ * far a read may be from a listed family's letters and still count.
+ * - Families of 10+ letters: 2 edits; 6–9 letters: 1 edit; shorter: exact only.
+ * - 3 edits for a family of 12+ letters when one of that family's listed codes
+ *   was read as a whole token in the same frame (the code confirms the family).
+ * - The read must be the unique closest family: any other family at the same
+ *   or a smaller distance means no match.
+ * The read is a run of 1–3 consecutive letter tokens on one line with the
+ * spaces removed, so `Comforto Contact` compares as `COMFORTOCONTACT`.
+ * Digits and punctuation split tokens. The result is always the listed
+ * spelling; the read text is never shown.
+ */
+export const MODEL_FAMILY_FUZZY = { twoEditsFrom: 10, oneEditFrom: 6, threeEditsWithCodeFrom: 12 } as const;
+
+type ModelPattern = (typeof MODEL_PATTERNS)[number];
+const FAMILY_LETTERS = MODEL_PATTERNS.map(p => ({ pattern: p, letters: p.model.family.toUpperCase().replace(/[^A-Z]/g, '') }));
+
+function nearestModelFamily(text: string, frameUppers: string[]): { model: ModelPattern['model']; codes: ModelPattern['codes']; distance: number } | null {
+  const tokens = text.toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  const reads: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    for (let n = 1; n <= 3 && i + n <= tokens.length; n++) reads.push(tokens.slice(i, i + n).join(''));
+  }
+  let best: { pattern: ModelPattern; distance: number } | null = null;
+  let tie = false;
+  for (const read of reads) {
+    for (const { pattern, letters } of FAMILY_LETTERS) {
+      const codeRead = pattern.codes.some(c => frameUppers.some(u => c.re.test(u)));
+      const allowed =
+        codeRead && letters.length >= MODEL_FAMILY_FUZZY.threeEditsWithCodeFrom
+          ? 3
+          : letters.length >= MODEL_FAMILY_FUZZY.twoEditsFrom
+            ? 2
+            : letters.length >= MODEL_FAMILY_FUZZY.oneEditFrom
+              ? 1
+              : 0;
+      if (allowed === 0 || read === letters) continue;
+      const d = editDistance(read, letters, allowed);
+      if (d > allowed) continue;
+      if (!best || d < best.distance) {
+        best = { pattern, distance: d };
+        tie = false;
+      } else if (d === best.distance && best.pattern !== pattern) {
+        tie = true;
+      }
+    }
+  }
+  if (!best || tie) return null;
+  return { model: best.pattern.model, codes: best.pattern.codes, distance: best.distance };
 }
 
 /**

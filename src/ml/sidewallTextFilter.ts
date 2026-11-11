@@ -163,7 +163,8 @@ export function filterSidewallText(lines: OcrLineLike[], now: Date = new Date())
   return {
     size: size?.value ?? null,
     dotTin: fullFrameDotCandidate(lines, now),
-    make: fullFrameMakeCandidate(lines) ?? brandRootCandidate(lines) ?? modelFamilyBrandCandidate(lines),
+    // A matched model family names its brand too (owner decision 2026-11-11), after the earlier make rules.
+    make: fullFrameMakeCandidate(lines) ?? brandRootCandidate(lines) ?? modelFamilyBrandCandidate(lines) ?? model?.brand ?? null,
     model: model ? modelText(model) : null,
     modelCode: fullFrameModelCode(lines),
     loadSpeed: size?.loadSpeed ?? null,
