@@ -617,10 +617,41 @@ Crop margin 0.2 · min crop 36 px · Size crop +30% along the text · 2-frame ag
 - The 0.35 / 0.45 / 0.50 values on real tyres, and false Replace-now rates for exposed cords and bulges (they now change the status).
 - Time, memory and heat for 10 frames at 320 × 320 on a low-end Android phone.
 
+## M7 Phase 3c: tread wear model retrained on Adtronics Tire Crack Detection v19 (2026-11-12)
+
+**Status: unit-tested against the real file's tensors. Not run on a phone.**
+
+### What changed
+- The owner replaced `assets/models/tread_wear.tflite` with a new checkpoint of the same architecture (torchvision `ssdlite320_mobilenet_v3_large`, BSD-3-Clause), trained on the Adtronics Tire Crack Detection v19 dataset (6,359 images). Manifest version `ssdlite320-mobilenetv3-large-adtronics-crack-v19-2026-11-12`; file SHA-256 `23422e7dcdc5e064e4fbafe0f9567786b125b0fbb7e9fbb795e758418d4a9871` (recorded in the manifest comment; no hash is checked at runtime).
+- **Read from the file:** input `input` `[1, 320, 320, 3]` NHWC float32; outputs `raw_boxes` `[1, 3234, 4]` and `raw_scores` `[1, 3234, 16]` float32. Same as Phase 3b, so every manifest value (preprocessing, anchors, box coder, 0.35 / 0.45 / 300) is unchanged and `manifest.test.ts` passes on the new file.
+
+### Class mapping (owner, 2026-11-12)
+The dataset's classes were mapped onto the existing 16-class layout at training time. Index 0 is still `background`.
+
+| Dataset class | Index | App class | Effect (existing `TREAD_WEAR_STATUS_RULES`) |
+|---|---|---|---|
+| `Bulge` | 11 | `sidewall_bulge` | at least **Replace now** |
+| `Crack`, `Fine Crack` | 13 | `cracking_dry_rot` | at least **Replace soon** |
+| `Nail` | 14 | `puncture_object` | at least **Replace soon** |
+
+The status is raised only after `TREAD_WEAR_CONSENSUS`: the class must be found at ≥ 0.70 in at least 3 frames of one scan (2026-11-11). That gate sits in front of the rule table's own values (0.50 for bulges, any detection ≥ 0.35 for cracks and nails). Below it, the finding is shown as `Wear pattern found` with the `Beta / Model Unverified` note and the status is not changed.
+
+- The other 11 non-background indices (`center_wear` … `diagonal_wear`, `exposed_cords`, `normal_even_wear`) are **untrained in this checkpoint** and should not fire. They stay in the labels, because the score tensor still has 16 columns, until the owner merges more datasets.
+- **No code change:** the mapping matches the existing labels and status rules. `treadWearLabels.test.ts` pins the three indices.
+- **Severity wording:** the owner described cracks as "moderate/warning". The app has no such level. Severity is `none` / `detected` / `critical` (≥ 0.60, and only after the `TREAD_WEAR_CONSENSUS` agreement across frames). The tyre status (Replace soon) is what carries the warning. No new level was added.
+- **No-finding title (owner decision 2026-11-12):** `NORMAL_WEAR_TITLE` is now `No Surface Defects Detected` (was `No Abnormal Wear Pattern Detected`). This checkpoint finds surface defects (cracks, bulges, nails), not alignment wear patterns, so the old wording claimed a check the model doesn't do. It is used on the tread wear card badge, the Wear pattern row, and the report and PDF wear line. Records saved earlier keep their saved title. Revisit when wear-pattern classes are trained again.
+
+### Licence
+- Dataset attribution replaced in `docs/LICENSES.md` and `src/config/licenses.ts` (title, creator `Adtronics (adtronics-pmfgf)`, source URL, CC BY 4.0, owner notice). The smart-inspection Tire Tread Wear notice was removed, since that dataset no longer trained the shipped file. **Owner to confirm** that this checkpoint was trained from torchvision's weights, not fine-tuned from the 2026-11-10 smart-inspection checkpoint. If it was fine-tuned, the smart-inspection attribution must come back.
+
+### Needs a real phone
+- Detections on real cracked, bulged and punctured tyres, and false Replace-now rates for bulges on normal sidewalls.
+- The iOS CPU-only setting (`acceleration: { ios: [] }`) and its timing, measured again for this file.
+
 ## Third-Party Licenses overlay (owner decision 2026-11-10)
 - **No new screen.** The app keeps the spec's 21 screens. There's no Settings or About screen or modal to add to, so the notices open in a bottom-sheet `Modal` (`src/components/LicensesModal.tsx`), an overlay, not a navigation route.
 - **Entry point:** a small `Third-Party Licenses` text link (caption, secondary text, 48 pt touch target) at the bottom of Home, below Recent inspections. **This differs from `06-home.png`**, which has no such link.
-- **Content:** `LICENSE_NOTICES` (`src/config/licenses.ts`): the tread wear dataset (CC BY 4.0, creator, source URL, the owner's notice), torchvision (BSD-3) and Inter (OFL 1.1). Same list as `docs/LICENSES.md`.
+- **Content:** `LICENSE_NOTICES` (`src/config/licenses.ts`): the tread wear model's dataset (CC BY 4.0, creator, source URL, the owner's notice; Adtronics Tire Crack Detection v19 since 2026-11-12), torchvision (BSD-3) and Inter (OFL 1.1). Same list as `docs/LICENSES.md`.
 - **No network:** URLs are selectable text, not links. The app opens nothing and fetches nothing.
 - Theme tokens only. The backdrop is the black token at 50% alpha.
 - **Needs a real phone:** sheet height and scrolling with large text, VoiceOver focus staying inside the sheet, and swipe or back-gesture dismissal on Android.
@@ -862,7 +893,7 @@ The owner asked for three things from the screen-capture and device logs. Each w
 - **What happened (Redmi 13, 2404ARN45A, Android GPU delegate):** two scans of images shown on a screen. A tread close-up gave no detections (`Normal Wear Distribution`). A *sidewall* image in the tread step gave `camber_wear` on frames 1–6 (0.62–0.98) and at most 0.01 on frames 7–10, shown as `Camber Wear` / `Maintenance needed`.
 - **Checked:** the 10 saved frames run on a Mac CPU with the same file gave the same scores (0.641, 0.858, 0.984, 0.922, 0.740, 0.981; background on 7–10), so decoding, the stretch and the GPU delegate are right. The false positive is the model's. Feeding −1…1 instead of 0–1 gave the same pattern on these frames and on 11 public tyre photos, so the normalisation question (torchvision's SSDLite transform rescales to −1…1; the owner said 0–1) is **still open** and the manifest is unchanged.
 - **Staging note:** every wear finding (`detected` or `critical`) carries `Beta / Model Unverified`: next to the card badge, in the Wear pattern row (`Camber Wear (Beta / Model Unverified)`), and in the report and PDF wear line. One helper, `wearUnverifiedNote`, switched by `diagnosticsConfig.treadWearModelUnverified` (on). A result with no finding carries no note.
-- **No finding:** the title is now `No Abnormal Wear Pattern Detected` (was `Normal Wear Distribution`), with the existing neutral check badge. It never escalates: severity `none`, no advice, status untouched. Records saved earlier keep the old title in the Wear pattern row.
+- **No finding:** the title is now `No Abnormal Wear Pattern Detected` (was `Normal Wear Distribution`; changed to `No Surface Defects Detected` 2026-11-12, see "M7 Phase 3c"), with the existing neutral check badge. It never escalates: severity `none`, no advice, status untouched. Records saved earlier keep the old title in the Wear pattern row.
 - **Consensus (`TREAD_WEAR_CONSENSUS`, owner values, uncalibrated):** a class becomes `critical` (`Maintenance needed`), or raises the tyre status, only when it was detected at **≥ 0.70 in at least 3 frames** of one scan (`consensusFrames`, counted once per frame in `summariseTreadWear`). Without that it is still shown, as `Wear pattern found`, with no urgent advice and no status change.
   - This applies to every class, including the status rules of 2026-11-10. In effect `exposed_cords`/`sidewall_bulge` now need 3 × 0.70 instead of one detection at 0.50, and `cracking_dry_rot`/`puncture_object` need 3 × 0.70 instead of any detection at 0.35. The rule table itself is unchanged.
   - Records saved before this change keep their saved severity and status.

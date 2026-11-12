@@ -12,8 +12,8 @@ import type { TreadWearRecord, TreadWearSeverity, TyreResult, TyreStatus } from 
 // Builds the saved tread wear record, and the wording shown for it on Tyre
 // result, the report screen and the PDF. One place, so they can't disagree.
 
-/** Shown when no defect class passed the threshold (owner wording 2026-11-11; was `Normal Wear Distribution`). */
-export const NORMAL_WEAR_TITLE = 'No Abnormal Wear Pattern Detected';
+/** Shown when no defect class passed the threshold (owner wording 2026-11-12, for the Adtronics crack checkpoint; was `No Abnormal Wear Pattern Detected`, before that `Normal Wear Distribution`). */
+export const NORMAL_WEAR_TITLE = 'No Surface Defects Detected';
 
 /** Staging guard: shown with every wear finding while the model is unverified. */
 export const WEAR_UNVERIFIED_NOTE = 'Beta / Model Unverified';

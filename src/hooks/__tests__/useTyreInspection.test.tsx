@@ -159,14 +159,14 @@ describe('useTyreInspection', () => {
     );
   });
 
-  test('no wear found: saved as No Abnormal Wear Pattern Detected, status untouched', async () => {
+  test('no wear found: saved as No Surface Defects Detected, status untouched', async () => {
     const [a] = seed();
     await render(<Harness tyreId={a} s={scanner(done([{ frame: 't1.jpg', detections: [] }]))} />);
     await scan();
     expect(tyre(a).result).toEqual(
       expect.objectContaining({
         status: 'good',
-        wearPattern: 'No Abnormal Wear Pattern Detected',
+        wearPattern: 'No Surface Defects Detected',
         treadWear: expect.objectContaining({ severity: 'none', label: null, recommendation: null, confidence: null }),
       }),
     );

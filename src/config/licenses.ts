@@ -18,15 +18,15 @@ export type LicenseNotice = {
 
 export const LICENSE_NOTICES: readonly LicenseNotice[] = [
   {
-    // Owner-supplied creator, URL and notice, 2026-11-10.
+    // Owner-supplied title, creator, URL and notice, 2026-11-12 (the dataset
+    // behind tread_wear.tflite ssdlite320-mobilenetv3-large-adtronics-crack-v19-2026-11-12).
     id: 'tread-wear-dataset',
-    title: 'Tire Tread Wear Computer Vision Project',
-    creator: 'smart-inspection (Roboflow Community Contributor)',
-    sourceUrl: 'https://universe.roboflow.com/smart-inspection/tire-tread-wear',
+    title: 'Tire Crack Detection Computer Vision Dataset (Version 19)',
+    creator: 'Adtronics (Roboflow workspace adtronics-pmfgf)',
+    sourceUrl: 'https://universe.roboflow.com/adtronics-pmfgf/tire-crack-detection-4z5ei/dataset/19',
     license: 'Creative Commons Attribution 4.0 International (CC BY 4.0)',
     licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
-    notice:
-      'Tire Tread Wear Computer Vision Project by smart-inspection, available at https://universe.roboflow.com/smart-inspection/tire-tread-wear, used under CC BY 4.0. Model adaptations and exports were produced for mobile on-device tread wear classification.',
+    notice: 'Trained SSDLite320-MobileNetV3-Large (Torchvision BSD-3-Clause) on Adtronics Tire Crack Detection v19 (6,359 images).',
   },
   {
     id: 'torchvision',

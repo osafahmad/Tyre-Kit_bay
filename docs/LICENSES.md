@@ -4,13 +4,16 @@ The in-app copy is `src/config/licenses.ts` (`LICENSE_NOTICES`), shown in the Th
 
 ## Models and training data
 
-### Tire Tread Wear Computer Vision Project — CC BY 4.0
-- **Used for:** training `assets/models/tread_wear.tflite` (SSDLite tread wear detector).
-- **Creator:** smart-inspection (Roboflow Community Contributor).
-- **Source:** <https://universe.roboflow.com/smart-inspection/tire-tread-wear> (Roboflow Universe).
+### Tire Crack Detection Computer Vision Dataset (Version 19) — CC BY 4.0
+- **Used for:** training `assets/models/tread_wear.tflite` (SSDLite detector, version `ssdlite320-mobilenetv3-large-adtronics-crack-v19-2026-11-12`).
+- **Creator:** Adtronics (Roboflow workspace `adtronics-pmfgf`).
+- **Source:** <https://universe.roboflow.com/adtronics-pmfgf/tire-crack-detection-4z5ei/dataset/19> (Roboflow Universe).
 - **Licence:** [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/).
-- **Notice shown in the app** (owner wording, 2026-11-10):
-  > Tire Tread Wear Computer Vision Project by smart-inspection, available at https://universe.roboflow.com/smart-inspection/tire-tread-wear, used under CC BY 4.0. Model adaptations and exports were produced for mobile on-device tread wear classification.
+- **Notice shown in the app** (owner wording, 2026-11-12):
+  > Trained SSDLite320-MobileNetV3-Large (Torchvision BSD-3-Clause) on Adtronics Tire Crack Detection v19 (6,359 images).
+
+### Removed: Tire Tread Wear Computer Vision Project (smart-inspection, CC BY 4.0)
+- Trained the previous `tread_wear.tflite` (`ssdlite320-mobilenetv3-large-torchvision-2026-11-10`). That checkpoint was replaced on 2026-11-12 by the Adtronics-trained one, so the notice was removed from the app. See DECISIONS.md, "M7 Phase 3c".
 
 ### torchvision — BSD 3-Clause
 - **Used for:** the SSDLite MobileNetV3 architecture and training code behind `tread_wear.tflite`.

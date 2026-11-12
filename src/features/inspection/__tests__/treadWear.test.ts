@@ -28,12 +28,12 @@ const result = (over: Partial<TyreResult> = {}): TyreResult => ({
 });
 
 describe('buildTreadWearRecord', () => {
-  test('nothing found: No Abnormal Wear Pattern Detected, nothing to recommend', () => {
+  test('nothing found: No Surface Defects Detected, nothing to recommend', () => {
     expect(buildTreadWearRecord([], 'v1', NOW)).toEqual({
       severity: 'none',
       minimumStatus: null,
       label: null,
-      title: 'No Abnormal Wear Pattern Detected',
+      title: 'No Surface Defects Detected',
       cause: null,
       recommendation: null,
       confidence: null,
@@ -197,7 +197,7 @@ describe('wearReportLines', () => {
 
   test('normal, detected and critical', () => {
     // Nothing found: no escalation and no note.
-    expect(lines([])).toEqual({ pattern: 'Wear: No Abnormal Wear Pattern Detected', recommendation: null });
+    expect(lines([])).toEqual({ pattern: 'Wear: No Surface Defects Detected', recommendation: null });
     expect(lines([{ label: 'center_wear', maxConfidence: 0.4 }])).toEqual({
       pattern: `Wear: Center Wear · Wear pattern found${NOTE}`,
       recommendation: null,
@@ -306,7 +306,7 @@ describe('report and PDF', () => {
   test('report rows carry the wear pattern and recommendation', () => {
     expect(reportTyreRows(inspection).map(r => [r.position, r.status, r.wear, r.wearRecommendation])).toEqual([
       ['Left front', 'good', `Wear: Center Wear · Maintenance needed${NOTE}`, 'Get this checked as soon as possible.'],
-      ['Right front', 'good', 'Wear: No Abnormal Wear Pattern Detected', null],
+      ['Right front', 'good', 'Wear: No Surface Defects Detected', null],
       ['Left rear', 'good', null, null],
       ['Right rear', null, null, null],
     ]);
@@ -316,7 +316,7 @@ describe('report and PDF', () => {
     const html = reportHtml(inspection, { demo: false });
     expect(html).toContain(`<div class="wear">Wear: Center Wear · Maintenance needed${NOTE}</div>`);
     expect(html).toContain('<div class="advice">Get this checked as soon as possible.</div>');
-    expect(html).toContain('<div class="wear">Wear: No Abnormal Wear Pattern Detected</div>');
+    expect(html).toContain('<div class="wear">Wear: No Surface Defects Detected</div>');
     expect(html.match(/class="advice"/g)).toHaveLength(1);
     expect(html.match(/>Good</g)).toHaveLength(3);
     expect(html).toContain('All scanned tyres are in good condition');

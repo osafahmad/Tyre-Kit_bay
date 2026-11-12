@@ -53,6 +53,16 @@ describe('tread wear label map (SSDLite, owner labels.json 2026-11-10)', () => {
     });
   });
 
+  test('Adtronics crack v19 checkpoint: dataset classes land on the owner-confirmed indices (2026-11-12)', () => {
+    const labels = modelManifest.treadWear!.labels;
+    expect(labels[11]).toBe('sidewall_bulge'); // Bulge
+    expect(labels[13]).toBe('cracking_dry_rot'); // Crack, Fine Crack
+    expect(labels[14]).toBe('puncture_object'); // Nail
+    expect(TREAD_WEAR_STATUS_RULES.sidewall_bulge).toEqual({ minStatus: 'replace_now', minConfidence: 0.5 });
+    expect(TREAD_WEAR_STATUS_RULES.cracking_dry_rot?.minStatus).toBe('replace_soon');
+    expect(TREAD_WEAR_STATUS_RULES.puncture_object?.minStatus).toBe('replace_soon');
+  });
+
   test('labels the model does not have still get a clean title', () => {
     expect(describeTreadWear('  odd__label  of-THE wear ')).toEqual({
       title: 'Odd Label of-the Wear',

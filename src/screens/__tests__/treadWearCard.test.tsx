@@ -60,9 +60,9 @@ describe('treadWearCardContent', () => {
     );
   });
 
-  test('nothing found: No Abnormal Wear Pattern Detected, not escalated, no note', () => {
+  test('nothing found: No Surface Defects Detected, not escalated, no note', () => {
     expect(treadWearCardContent(done([], 'none'))).toEqual(
-      expect.objectContaining({ tone: 'normal', badge: 'No Abnormal Wear Pattern Detected', title: null, note: null }),
+      expect.objectContaining({ tone: 'normal', badge: 'No Surface Defects Detected', title: null, note: null }),
     );
   });
 
@@ -126,7 +126,7 @@ describe('wearPatternRowValue', () => {
     if (d.status !== 'done') throw new Error('unreachable');
     expect(wearPatternRowValue({ status: 'saved', record: d.record }, 'Center Wear')).toBe(`Center Wear (${NOTE})`);
     const none = done([], 'none');
-    expect(wearPatternRowValue(none, 'No Abnormal Wear Pattern Detected')).toBe('No Abnormal Wear Pattern Detected');
+    expect(wearPatternRowValue(none, 'No Surface Defects Detected')).toBe('No Surface Defects Detected');
   });
 
   test('model unavailable: the row is left as it was', () => {
@@ -309,7 +309,7 @@ describe('Tyre result screen', () => {
     await act(async () => {
       finish({ status: 'done', frames: [{ frame: 'frames/t1.jpg', detections: [] }], framesFailed: 0, delegate: 'core-ml', modelVersion: 'tread-test-1' });
     });
-    expect(screen.getByLabelText('Wear pattern: No Abnormal Wear Pattern Detected')).toBeTruthy();
+    expect(screen.getByLabelText('Wear pattern: No Surface Defects Detected')).toBeTruthy();
   });
 
   test('after capture: Tyre result scans the frames saved for this tyre', async () => {
@@ -407,7 +407,7 @@ describe('Tyre result screen', () => {
     await show(seed());
     await act(async () => {});
     expect(screen.getByText('Not checked')).toBeTruthy();
-    expect(screen.queryByText('No Abnormal Wear Pattern Detected')).toBeNull();
+    expect(screen.queryByText('No Surface Defects Detected')).toBeNull();
   });
 
   test('reopening the tyre shows the saved check instead of running the model again', async () => {
@@ -415,13 +415,13 @@ describe('Tyre result screen', () => {
     const params = seed();
     await show(params);
     await act(async () => {});
-    expect(screen.getByLabelText('Tread wear: No Abnormal Wear Pattern Detected')).toBeTruthy();
-    expect(screen.getByLabelText('Wear pattern: No Abnormal Wear Pattern Detected')).toBeTruthy();
+    expect(screen.getByLabelText('Tread wear: No Surface Defects Detected')).toBeTruthy();
+    expect(screen.getByLabelText('Wear pattern: No Surface Defects Detected')).toBeTruthy();
     await screen.unmount();
     await show(params);
     await act(async () => {});
-    expect(screen.getByLabelText('Tread wear: No Abnormal Wear Pattern Detected')).toBeTruthy();
-    expect(screen.getByLabelText('Wear pattern: No Abnormal Wear Pattern Detected')).toBeTruthy();
+    expect(screen.getByLabelText('Tread wear: No Surface Defects Detected')).toBeTruthy();
+    expect(screen.getByLabelText('Wear pattern: No Surface Defects Detected')).toBeTruthy();
     expect(mockScan).toHaveBeenCalledTimes(1);
   });
 });

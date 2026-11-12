@@ -170,11 +170,15 @@ export const modelManifest: ModelManifest = {
    *   max_ratio=0.95)` on 20², 10², 5², 3², 2², 1² feature maps, 6 per cell
    *   = 3234 (torchvision `ssdlite.py` defaults, confirmed by the owner).
    * - Labels: owner's labels.json 2026-11-10, index 0 = background.
+   * - Retrained by the owner 2026-11-12 (same architecture and tensors) on the
+   *   Adtronics Tire Crack Detection v19 dataset, mapped onto the same 16-class
+   *   layout. File SHA-256 23422e7dcdc5e064e4fbafe0f9567786b125b0fbb7e9fbb795e758418d4a9871.
+   *   Every value above is unchanged; the file's tensors still match.
    * Normalisation and box decoding still need a check on a real tread frame.
    */
   treadWear: {
     file: require('../../assets/models/tread_wear.tflite'),
-    version: 'ssdlite320-mobilenetv3-large-torchvision-2026-11-10',
+    version: 'ssdlite320-mobilenetv3-large-adtronics-crack-v19-2026-11-12',
     inputShape: [1, 320, 320, 3],
     inputLayout: 'NHWC',
     inputType: 'float32',

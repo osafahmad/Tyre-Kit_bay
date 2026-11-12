@@ -14,16 +14,20 @@ describe('licence notices', () => {
     const d = LICENSE_NOTICES.find(n => n.id === 'tread-wear-dataset')!;
     expect(d).toEqual(
       expect.objectContaining({
-        title: 'Tire Tread Wear Computer Vision Project',
-        creator: 'smart-inspection (Roboflow Community Contributor)',
-        sourceUrl: 'https://universe.roboflow.com/smart-inspection/tire-tread-wear',
+        title: 'Tire Crack Detection Computer Vision Dataset (Version 19)',
+        creator: 'Adtronics (Roboflow workspace adtronics-pmfgf)',
+        sourceUrl: 'https://universe.roboflow.com/adtronics-pmfgf/tire-crack-detection-4z5ei/dataset/19',
         license: 'Creative Commons Attribution 4.0 International (CC BY 4.0)',
         licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
       }),
     );
     expect(d.notice).toBe(
-      'Tire Tread Wear Computer Vision Project by smart-inspection, available at https://universe.roboflow.com/smart-inspection/tire-tread-wear, used under CC BY 4.0. Model adaptations and exports were produced for mobile on-device tread wear classification.',
+      'Trained SSDLite320-MobileNetV3-Large (Torchvision BSD-3-Clause) on Adtronics Tire Crack Detection v19 (6,359 images).',
     );
+  });
+
+  test('the old smart-inspection tread wear dataset is no longer credited', () => {
+    expect(JSON.stringify(LICENSE_NOTICES)).not.toMatch(/smart-inspection|tire-tread-wear/);
   });
 
   test('every notice has its creator and source', () => {

@@ -38,7 +38,7 @@ export type TreadWearRecord = {
   minimumStatus?: TyreStatus | null;
   /** Strongest raw model class, or null when none was found. */
   label: string | null;
-  /** User-facing title, e.g. `Center Tread Wear` or `No Abnormal Wear Pattern Detected`. */
+  /** User-facing title, e.g. `Center Tread Wear` or `No Surface Defects Detected`. */
   title: string;
   /** Likely cause, or null when there's no owner-supplied wording for the class. */
   cause: string | null;
