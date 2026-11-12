@@ -121,19 +121,34 @@ export function TreadPatternArt({ width, height }: { width: number; height: numb
 }
 
 /** Tread.dc.html: direction arrows inside the tread guide. */
-export function TreadArrowsArt({ width = 240 }: { width?: number }) {
+/**
+ * Tread guide chevrons. `fill` (0..1) fills them left to right with sweep
+ * travel (owner request 2026-11-12): each chevron goes from faint to solid in
+ * its quarter. Without `fill` all four are solid (the static design).
+ */
+export function TreadArrowsArt({ width = 240, fill }: { width?: number; fill?: number }) {
+  const xs = [20, 70, 120, 170];
   return (
     <Svg width={width} height={(width * 60) / 240} viewBox="0 0 240 60" fill="none">
-      <Path
-        d="M20 8l24 22-24 22M70 8l24 22-24 22M120 8l24 22-24 22M170 8l24 22-24 22"
-        stroke={colors.cameraBlue}
-        strokeWidth={9}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      {xs.map((x, i) => {
+        const part = fill === undefined ? 1 : Math.max(0, Math.min(1, fill * xs.length - i));
+        return (
+          <Path
+            key={x}
+            d={`M${x} 8l24 22-24 22`}
+            stroke={colors.cameraBlue}
+            strokeOpacity={CHEVRON_EMPTY_OPACITY + (1 - CHEVRON_EMPTY_OPACITY) * part}
+            strokeWidth={9}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        );
+      })}
     </Svg>
   );
 }
+
+const CHEVRON_EMPTY_OPACITY = 0.3;
 
 /** Analysing.dc.html: progress ring. `progress` is 0..1. */
 export function AnalysisRing({ progress }: { progress: number }) {

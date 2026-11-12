@@ -40,6 +40,21 @@ export const captureConfig = {
   sidewallAcceptIntervalMs: 150,
   /** estimate. Minimum time between accepted tread frames. */
   treadAcceptIntervalMs: 250,
+  /**
+   * Tread sweep direction (owner request 2026-11-12; `sweepMotion.ts`).
+   * estimate. Luminance profile bins across the analysed square.
+   */
+  sweepProfileBins: 48,
+  /** estimate. Largest shift searched between analysed frames, in bins (±). */
+  sweepMaxShiftBins: 10,
+  /** estimate. Mean absolute deviation 0–255 of a profile below which it's too flat to track. */
+  sweepMinTexture: 2,
+  /** estimate. Best match cost must be at most this fraction of the worst, or the shift is unknown. */
+  sweepMaxMatchRatio: 0.8,
+  /** estimate. Per-frame travel, in analysed-square widths, below which the camera counts as still. */
+  sweepDeadBand: 0.015,
+  /** estimate. Rightward travel, in analysed-square widths, that fills all 4 chevrons. */
+  treadSweepTravel: 2,
   /** estimate. Sidewall: extra candidates gathered before keeping the sharpest `sidewallTargetFrames`. */
   sidewallExtraCandidates: 4,
   /** estimate. Sidewall: after `sidewallTargetFrames` are in, wait this long for sharper ones. */

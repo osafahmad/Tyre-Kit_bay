@@ -31,6 +31,7 @@ import { useCaptureBlock } from '../../features/capture/captureBlock';
 import { captureStatusText } from '../../features/capture/statusText';
 import { SaveProblemOverlay } from '../../features/capture/CaptureOverlays';
 import { feedback } from '../../features/feedback/feedback';
+import { sweepFill } from '../../features/capture/sweepMotion';
 import { colors, radius } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TreadCapture'>;
@@ -40,6 +41,9 @@ export const TREAD_HINT = 'Move slowly across the tread, from edge to edge';
 
 /**
  * 15 Tread capture (Tread.dc.html). Progress = accepted frames / target.
+ * The sweep is one-way, left to right (owner request 2026-11-12): the chevrons
+ * fill with measured rightward camera travel, and moving left freezes them and
+ * frame capture (`Move right`) until the camera moves right again.
  * Finishes at the target; `Finish sweep` works from the minimum; Capture
  * problem opens with the real reason if the target isn't reached in time.
  * No tread or damage model runs here: they run after capture (spec §4.15).
@@ -131,23 +135,32 @@ function Chrome({
   );
 }
 
+/**
+ * Tread guide. The chevrons fill left to right with rightward sweep travel
+ * (`fill` 0..1, owner request 2026-11-12); they never empty.
+ */
 function GuideBox({
   onLayout,
   width,
   live,
+  fill,
 }: {
   onLayout?: (e: LayoutChangeEvent) => void;
   width: number;
   live: boolean;
+  fill: number;
 }) {
+  const percent = Math.round(fill * 100);
   return (
     <View
       style={[styles.guide, live ? styles.guideLive : styles.guideStatic]}
       onLayout={onLayout}
       accessible
-      accessibilityLabel="Tread guide. Move from edge to edge."
+      accessibilityLabel="Tread guide. Move right, from edge to edge."
+      accessibilityValue={{ min: 0, max: 100, now: percent }}
+      testID="tread-sweep-guide"
     >
-      <TreadArrowsArt width={Math.min(240, Math.max(0, width - 80))} />
+      <TreadArrowsArt width={Math.min(240, Math.max(0, width - 80))} fill={fill} />
     </View>
   );
 }
@@ -225,7 +238,7 @@ function LiveTread(props: Props) {
         onIssueChange={setIssue}
       >
         <CameraStatusPill label={status.label} showCheck={status.ok} style={styles.pill} />
-        <GuideBox onLayout={layout.onGuideLayout} width={width} live />
+        <GuideBox onLayout={layout.onGuideLayout} width={width} live fill={sweepFill(capture.sweep.travel)} />
         <AppText variant="rowLabel" color="white" align="center" style={styles.hint}>
           {TREAD_HINT}
         </AppText>
@@ -308,7 +321,7 @@ function SimulatedTread(props: Props) {
       <View style={styles.demo}>
         <DemoDataLabel tone="dark" />
       </View>
-      <GuideBox width={size.width} live={false} />
+      <GuideBox width={size.width} live={false} fill={accepted / treadTargetFrames} />
       <AppText variant="rowLabel" color="white" align="center" style={styles.hint}>
         {TREAD_HINT}
       </AppText>

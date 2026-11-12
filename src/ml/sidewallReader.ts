@@ -6,7 +6,9 @@ import { isOcrAvailable, recognizeLines } from './ocr/ocr';
 import {
   agreedValue,
   completeShortWidthAspect,
+  fullFrameModelCandidate,
   markerlessTinCandidate,
+  modelText,
   readKey,
   sizeParts,
   type FieldRead,
@@ -162,6 +164,12 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       const reads: Record<ReadField, FieldRead[]> = { size: [], dotTin: [], make: [], model: [] };
       /** Listed model variant codes read in any frame (`CC7`), with their family. */
       const modelCodes: { family: string; code: string }[] = [];
+      /** Listed model variant code read in each frame, by frame index. */
+      const codeAt = new Map<number, { family: string; code: string }>();
+      /** Each model read pushed to `reads.model`, with its frame and the lines it came from. */
+      const modelReads: { read: FieldRead; index: number; lines: OcrLineLike[] }[] = [];
+      /** Lines of frames that gave no model read, by frame index, for the code lock below. */
+      const noModelLines = new Map<number, { lines: OcrLineLike[]; make: boolean }>();
       const parts = { widthAspect: [] as string[], shortWidthAspect: [] as string[], rim: [] as number[] };
       const markerlessTins: FieldRead[] = [];
       const agreed = (field: ReadField) => agreedValue(reads[field], minAgreeing) !== null;
@@ -187,12 +195,14 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           : { size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null };
         let source = 'centre';
         let lines = centreLines ?? [];
+        let modelLines = parsed.model ? lines : null;
         // The centre crop can cut text off: read the whole frame when it gave nothing still needed.
         if (!open().some(f => parsed[f]) && !stop()) {
           ocrRuns += 1;
           const fullLines = await ocr(path, `${label}, whole frame`);
           if (fullLines) {
             const full = filterSidewallText(fullLines, deps.now());
+            if (!modelLines && full.model) modelLines = fullLines;
             if (!parsed.size && full.size) parsed.loadSpeed = full.loadSpeed;
             for (const f of READ_FIELDS) parsed[f] ??= full[f];
             parsed.modelCode ??= full.modelCode;
@@ -201,7 +211,11 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           }
         }
         sidewallLog(`${label}: parsed (${source})`, { parsed, rejected: explainRejections(lines, parsed) });
-        if (parsed.modelCode) modelCodes.push(parsed.modelCode);
+        if (!parsed.model && lines.length > 0) noModelLines.set(index, { lines, make: !!parsed.make });
+        if (parsed.modelCode) {
+          modelCodes.push(parsed.modelCode);
+          codeAt.set(index, parsed.modelCode);
+        }
         if (!parsed.dotTin) {
           const tin = markerlessTinCandidate(lines, deps.now());
           if (tin) {
@@ -220,8 +234,45 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         for (const field of open()) {
           const value = parsed[field];
           if (!value) continue;
-          reads[field].push({ value, score: field === 'size' && parsed.loadSpeed ? 1 : 0 });
+          const read = { value, score: field === 'size' && parsed.loadSpeed ? 1 : 0 };
+          reads[field].push(read);
+          if (field === 'model' && modelLines) modelReads.push({ read, index, lines: modelLines });
         }
+      }
+
+      // Owner decision 2026-11-12 (iPhone 13): a listed code read in the same
+      // or an adjacent frame (`CC7`) locks a noisy family read to the code's
+      // family (`SportContact` → `ComfortContact CC7`). Exact family reads
+      // keep their family. A frame whose noisy read matched no family on its
+      // own (`ortContact`) is read again with the nearby code.
+      const nearbyCodes = (index: number) => [index - 1, index, index + 1].flatMap(i => codeAt.get(i) ?? []);
+      for (const [index, { lines, make }] of noModelLines) {
+        const nearby = nearbyCodes(index);
+        if (nearby.length === 0) continue;
+        const locked = fullFrameModelCandidate(lines, nearby);
+        if (!locked) continue;
+        const read = { value: modelText(locked), score: 0 };
+        reads.model.push(read);
+        sidewallLog('model: noisy read locked to a variant code read in the same or an adjacent frame', {
+          frame: index + 1,
+          value: read.value,
+          codes: nearby,
+        });
+        // A matched family gives its brand as make when that frame read no make (owner 2026-11-11).
+        if (!make) reads.make.push({ value: locked.brand, score: 0 });
+      }
+      for (const m of modelReads) {
+        const nearby = nearbyCodes(m.index);
+        if (nearby.length === 0) continue;
+        const relocked = fullFrameModelCandidate(m.lines, nearby);
+        if (!relocked || modelText(relocked) === m.read.value) continue;
+        sidewallLog('model: locked to a variant code read in the same or an adjacent frame', {
+          frame: m.index + 1,
+          read: m.read.value,
+          value: modelText(relocked),
+          codes: nearby,
+        });
+        m.read.value = modelText(relocked);
       }
 
       const suggestions: SidewallSuggestions = {};

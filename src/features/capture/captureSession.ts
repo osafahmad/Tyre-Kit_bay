@@ -1,5 +1,5 @@
 import type { CaptureErrorReason } from '../inspection/types';
-import { emptyIssueCounts, problemReason, type FrameIssue, type IssueCounts } from './quality';
+import { emptyIssueCounts, problemReason, type IssueCounts, type SampleIssue } from './quality';
 import type { CaptureStage } from './frameFiles';
 
 export type Candidate = { path: string; score: number };
@@ -10,7 +10,7 @@ export type CaptureOutcome =
 
 export type SessionSnapshot = {
   /** Latest frame check, or `starting` before any frame was analysed. */
-  status: FrameIssue | 'repeat' | 'starting';
+  status: SampleIssue | 'starting';
   collecting: boolean;
   accepted: number;
   outcome: CaptureOutcome | null;
@@ -83,7 +83,7 @@ export class CaptureSession {
   }
 
   /** One analysed frame. Rejections only count while collecting. */
-  sample(issue: FrameIssue | 'repeat') {
+  sample(issue: SampleIssue) {
     if (this.snapshot.outcome) return;
     if (this.snapshot.collecting && issue !== 'ok') this.counts[issue] += 1;
     if (issue !== this.snapshot.status) this.update({ status: issue });

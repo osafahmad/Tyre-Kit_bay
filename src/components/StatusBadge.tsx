@@ -1,7 +1,7 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Check, TriangleAlert } from 'lucide-react-native';
-import { radius, statusColors } from '../theme';
+import { colors, radius, statusColors } from '../theme';
 import type { TyreStatus } from '../features/inspection/types';
 import { AppText } from './AppText';
 
@@ -46,7 +46,33 @@ export function StatusBadge({ status, size = 'small', showIcon = false }: Props)
   );
 }
 
+/** Shown instead of a status while the tread check that can change it is still running. */
+export const STATUS_PENDING_LABEL = 'Analysing…';
+
+/**
+ * Neutral badge for a status that isn't final yet (owner request 2026-11-12):
+ * no status colour and no tick, so `Good` is never shown before the tread
+ * check has finished. For dark headers.
+ */
+export function PendingStatusBadge({ size = 'small' }: Pick<Props, 'size'>) {
+  const medium = size === 'medium';
+  return (
+    <View
+      style={[styles.base, medium ? styles.medium : styles.small, styles.pending]}
+      accessible
+      accessibilityLabel={`Status: ${STATUS_PENDING_LABEL}`}
+      testID="status-pending"
+    >
+      <ActivityIndicator size="small" color={colors.white} />
+      <AppText variant={medium ? 'caption' : 'badge'} weight="semibold" color="white" numberOfLines={1}>
+        {STATUS_PENDING_LABEL}
+      </AppText>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  pending: { backgroundColor: colors.darkLine, borderWidth: 1, borderColor: colors.darkLineStrong },
   base: {
     flexDirection: 'row',
     alignItems: 'center',

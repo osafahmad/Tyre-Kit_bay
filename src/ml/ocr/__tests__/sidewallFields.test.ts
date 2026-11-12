@@ -308,6 +308,29 @@ describe('model family with OCR noise (owner decision 2026-11-11, Redmi 13 logs)
     expect(family([line('ContiEcoContac')])).toBe('ContiEcoContact'); // one deletion, unique
   });
 
+  test('iPhone 13: a curved ComfortContact fragment is not SportContact (owner 2026-11-12)', () => {
+    // ORT is 2 edits from SPORT: the distinct prefix is too far, so no family.
+    expect(family([line('ortContact')])).toBeNull();
+    expect(family([line('ort Contact')])).toBeNull();
+    // With CC7 in the same frame, the family is locked to ComfortContact.
+    expect(family([line('ortContact'), line('CC7', 30)])).toBe('ComfortContact CC7');
+    expect(family([line('PortContact'), line('CC7', 30)])).toBe('ComfortContact CC7');
+    // With CC7 in an adjacent frame (passed in by the reader), the same.
+    expect(family([line('ortContact')])).toBeNull();
+    expect(fullFrameModelCandidate([line('ortContact')], [{ family: 'ComfortContact', code: 'CC7' }])).toEqual({
+      brand: 'Continental',
+      family: 'ComfortContact',
+      code: 'CC7',
+    });
+    // A real SportContact read with one edit in its prefix still matches.
+    expect(family([line('SportContac')])).toBe('SportContact');
+    expect(family([line('PortContact')])).toBe('SportContact');
+    // An exact family read is never relocked by another family's code.
+    expect(family([line('SportContact'), line('CC7', 30)])).toBe('SportContact');
+    // Fragments with a code still never match.
+    expect(family([line('orContact'), line('CC7', 30)])).toBeNull();
+  });
+
   test('editDistance', () => {
     expect(editDistance('COMFORTONTACT', 'COMFORTCONTACT')).toBe(1);
     expect(editDistance('COMIORTCONTAE', 'COMFORTCONTACT')).toBe(3);

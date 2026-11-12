@@ -1,7 +1,7 @@
 export { AppText } from './AppText';
 export { Button } from './Button';
 export { IconButton } from './IconButton';
-export { StatusBadge, statusLabels } from './StatusBadge';
+export { PendingStatusBadge, STATUS_PENDING_LABEL, StatusBadge, statusLabels } from './StatusBadge';
 export { ProgressSegments } from './ProgressSegments';
 export { ResultRow, NOT_READ } from './ResultRow';
 export { LogoMark } from './LogoMark';

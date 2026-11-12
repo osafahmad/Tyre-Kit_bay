@@ -26,6 +26,9 @@ export function captureStatusText(
       return { label: 'Hold steady', ok: false };
     case 'repeat':
       return { label: 'Keep moving', ok: false };
+    case 'reverse':
+      // Owner request 2026-11-12: the tread sweep is one-way, left to right.
+      return { label: 'Move right', ok: false };
     case 'ok':
     default:
       if (stage === 'tread') return { label: 'Image is clear', ok: true };

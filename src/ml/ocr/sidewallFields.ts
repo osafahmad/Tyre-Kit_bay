@@ -641,28 +641,36 @@ export const modelText = (read: Pick<ModelRead, 'family' | 'code'>) =>
  * family (`Comfortontact`, `Comforto Contact`) gives that family
  * (`nearestModelFamily`, owner decision 2026-11-11).
  */
-export function fullFrameModelCandidate(lines: OcrLineLike[]): ModelRead | null {
+export function fullFrameModelCandidate(
+  lines: OcrLineLike[],
+  nearbyCodes: readonly { family: string; code: string }[] = [],
+): ModelRead | null {
   const uppers = lines.map(l => l.text.toUpperCase());
-  const codeOf = (codes: (typeof MODEL_PATTERNS)[number]['codes']) =>
-    codes.find(c => uppers.some(u => c.re.test(u)))?.code ?? null;
+  const frameCodes = MODEL_PATTERNS.flatMap(({ model, codes }) =>
+    codes.filter(c => uppers.some(u => c.re.test(u))).map(c => ({ family: model.family, code: c.code })),
+  );
+  const codesRead = [...frameCodes, ...nearbyCodes];
+  const codeOf = (family: string, codes: readonly { family: string; code: string }[]) =>
+    codes.find(c => c.family === family)?.code ?? null;
   const byHeight = [...lines].sort((a, b) => b.frame.height - a.frame.height);
   for (const line of byHeight) {
     const upper = line.text.toUpperCase();
-    for (const { model, re, codes } of MODEL_PATTERNS) {
+    for (const { model, re } of MODEL_PATTERNS) {
       if (!re.test(upper)) continue;
-      return { brand: model.brand, family: model.family, code: codeOf(codes) };
+      return { brand: model.brand, family: model.family, code: codeOf(model.family, frameCodes) };
     }
   }
-  // No family read exactly: the noise-tolerant match (owner decision 2026-11-11, round 2).
+  // No family read exactly: the noise-tolerant match (owner decisions 2026-11-11 and 2026-11-12).
   for (const line of byHeight) {
-    const hit = nearestModelFamily(line.text, uppers);
+    const hit = nearestModelFamily(line.text, codesRead);
     if (hit) {
       sidewallLog('model: family matched with OCR noise (owner decision 2026-11-11)', {
         read: line.text,
         family: hit.model.family,
         distance: hit.distance,
+        ...(hit.lockedFrom ? { lockedFrom: hit.lockedFrom } : {}),
       });
-      return { brand: hit.model.brand, family: hit.model.family, code: codeOf(hit.codes) };
+      return { brand: hit.model.brand, family: hit.model.family, code: codeOf(hit.model.family, codesRead) };
     }
   }
   return null;
@@ -703,19 +711,74 @@ export function editDistance(a: string, b: string, max = Infinity): number {
 export const MODEL_FAMILY_FUZZY = { twoEditsFrom: 10, oneEditFrom: 6, threeEditsWithCodeFrom: 12 } as const;
 
 type ModelPattern = (typeof MODEL_PATTERNS)[number];
-const FAMILY_LETTERS = MODEL_PATTERNS.map(p => ({ pattern: p, letters: p.model.family.toUpperCase().replace(/[^A-Z]/g, '') }));
 
-function nearestModelFamily(text: string, frameUppers: string[]): { model: ModelPattern['model']; codes: ModelPattern['codes']; distance: number } | null {
+/**
+ * The last word of a family when at least two listed families share it
+ * (`CONTACT` for `ComfortContact` and `SportContact`), else ''. The letters
+ * before it are the family's distinct prefix (`COMFORT`, `SPORT`).
+ */
+const lastWord = (family: string) => {
+  const words = familyWords(family).toUpperCase().split(/\s+/);
+  return words.length >= 2 ? words[words.length - 1].replace(/[^A-Z]/g, '') : '';
+};
+const SHARED_LAST_WORDS = new Set(
+  KNOWN_TYRE_MODELS.map(m => lastWord(m.family)).filter((w, i, all) => w && all.indexOf(w) !== i),
+);
+const FAMILY_LETTERS = MODEL_PATTERNS.map(p => {
+  const letters = p.model.family.toUpperCase().replace(/[^A-Z]/g, '');
+  const word = lastWord(p.model.family);
+  const suffix = SHARED_LAST_WORDS.has(word) && letters.endsWith(word) ? word : '';
+  return { pattern: p, letters, suffix, prefix: letters.slice(0, letters.length - suffix.length) };
+});
+type FamilyLetters = (typeof FAMILY_LETTERS)[number];
+
+/** Same brand and same shared last word: families OCR noise can confuse (`ComfortContact` / `SportContact`). */
+const isSibling = (a: FamilyLetters, b: FamilyLetters) =>
+  a !== b && a.suffix !== '' && a.suffix === b.suffix && a.pattern.model.brand === b.pattern.model.brand;
+
+/**
+ * Owner decision 2026-11-12 (iPhone 13: a ComfortContact CC7 read as
+ * `SportContact`, from curved fragments such as `ortContact`): when a family
+ * shares its last word with other listed families, the read's prefix (split
+ * where prefix + last-word edits are fewest) must be within a third of the
+ * distinct prefix's length (`SPORT` 1 edit, `COMFORT` 2) and strictly closer
+ * to it than to every sibling's prefix. `ortContact` (`ORT` is 2 from `SPORT`)
+ * no longer gives SportContact.
+ */
+export const MODEL_PREFIX_FUZZY = { prefixEditsPerLetter: 1 / 3 } as const;
+
+function prefixMatches(read: string, fam: FamilyLetters): boolean {
+  if (!fam.suffix) return true;
+  let best: { total: number; prefixEdits: number; readPrefix: string } | null = null;
+  for (let k = 0; k <= read.length; k++) {
+    const readPrefix = read.slice(0, k);
+    const prefixEdits = editDistance(readPrefix, fam.prefix);
+    const total = prefixEdits + editDistance(read.slice(k), fam.suffix);
+    if (!best || total < best.total || (total === best.total && prefixEdits < best.prefixEdits)) {
+      best = { total, prefixEdits, readPrefix };
+    }
+  }
+  if (!best) return false;
+  if (best.prefixEdits > Math.floor(fam.prefix.length * MODEL_PREFIX_FUZZY.prefixEditsPerLetter)) return false;
+  const readPrefix = best.readPrefix;
+  return FAMILY_LETTERS.every(other => !isSibling(fam, other) || editDistance(readPrefix, other.prefix) > best!.prefixEdits);
+}
+
+function nearestModelFamily(
+  text: string,
+  codesRead: readonly { family: string; code: string }[],
+): { model: ModelPattern['model']; distance: number; lockedFrom?: string } | null {
   const tokens = text.toUpperCase().split(/[^A-Z]+/).filter(Boolean);
   const reads: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
     for (let n = 1; n <= 3 && i + n <= tokens.length; n++) reads.push(tokens.slice(i, i + n).join(''));
   }
-  let best: { pattern: ModelPattern; distance: number } | null = null;
-  let tie = false;
+  const codeFamilies = new Set(codesRead.map(c => c.family));
+  const candidates: { fam: FamilyLetters; read: string; distance: number }[] = [];
   for (const read of reads) {
-    for (const { pattern, letters } of FAMILY_LETTERS) {
-      const codeRead = pattern.codes.some(c => frameUppers.some(u => c.re.test(u)));
+    for (const fam of FAMILY_LETTERS) {
+      const { letters } = fam;
+      const codeRead = codeFamilies.has(fam.pattern.model.family);
       const allowed =
         codeRead && letters.length >= MODEL_FAMILY_FUZZY.threeEditsWithCodeFrom
           ? 3
@@ -726,17 +789,39 @@ function nearestModelFamily(text: string, frameUppers: string[]): { model: Model
               : 0;
       if (allowed === 0 || read === letters) continue;
       const d = editDistance(read, letters, allowed);
-      if (d > allowed) continue;
-      if (!best || d < best.distance) {
-        best = { pattern, distance: d };
-        tie = false;
-      } else if (d === best.distance && best.pattern !== pattern) {
-        tie = true;
-      }
+      if (d <= allowed) candidates.push({ fam, read, distance: d });
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  // Owner decision 2026-11-12: a listed code read in this or an adjacent frame
+  // (`CC7`) locks the family. A noisy read matching that family or one of its
+  // siblings (`SportContact`) gives the code's family (`ComfortContact`).
+  const locks = FAMILY_LETTERS.filter(
+    fam => codeFamilies.has(fam.pattern.model.family) && candidates.some(c => c.fam === fam || isSibling(c.fam, fam)),
+  );
+  if (locks.length === 1) {
+    const lock = locks[0];
+    const matched = candidates.filter(c => c.fam === lock || isSibling(c.fam, lock));
+    const distance = Math.min(...matched.map(c => c.distance));
+    const sibling = matched.find(c => c.fam !== lock && c.distance === distance) ?? matched.find(c => c.fam !== lock);
+    const own = matched.some(c => c.fam === lock);
+    return { model: lock.pattern.model, distance, ...(!own && sibling ? { lockedFrom: sibling.fam.pattern.model.family } : {}) };
+  }
+
+  let best: { fam: FamilyLetters; distance: number } | null = null;
+  let tie = false;
+  for (const c of candidates) {
+    if (!prefixMatches(c.read, c.fam)) continue;
+    if (!best || c.distance < best.distance) {
+      best = { fam: c.fam, distance: c.distance };
+      tie = false;
+    } else if (c.distance === best.distance && best.fam !== c.fam) {
+      tie = true;
     }
   }
   if (!best || tie) return null;
-  return { model: best.pattern.model, codes: best.pattern.codes, distance: best.distance };
+  return { model: best.fam.pattern.model, distance: best.distance };
 }
 
 /**

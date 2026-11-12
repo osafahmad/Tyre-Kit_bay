@@ -8,7 +8,9 @@ import {
   Button,
   DemoDataLabel,
   IconButton,
+  PendingStatusBadge,
   ResultRow,
+  STATUS_PENDING_LABEL,
   StatusBadge,
   statusLabels,
 } from '../../components';
@@ -80,11 +82,20 @@ export function TyreResultScreen({ navigation, route }: Props) {
           </AppText>
           <View style={styles.mainRow}>
             <AppText variant="resultNumber" color="white" accessibilityRole="header" style={styles.main}>
-              {hasDepth ? formatDepth(result.treadDepthMm!) : statusLabels[result.status]}
+              {hasDepth
+                ? formatDepth(result.treadDepthMm!)
+                : wearBusy
+                  ? STATUS_PENDING_LABEL
+                  : statusLabels[result.status]}
             </AppText>
             {hasDepth ? (
               <View style={styles.badge}>
-                <StatusBadge status={result.status} size="medium" showIcon />
+                {/* The tread check can still raise the status: no `Good` until it has finished (owner 2026-11-12). */}
+                {wearBusy ? (
+                  <PendingStatusBadge size="medium" />
+                ) : (
+                  <StatusBadge status={result.status} size="medium" showIcon />
+                )}
               </View>
             ) : null}
           </View>

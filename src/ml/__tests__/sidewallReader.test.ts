@@ -289,6 +289,16 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
       expect(suggestionsOf(await setup({ ocr: () => text }).reader.read(FRAMES))).toEqual({ make: 'Continental' });
     });
 
+    test('iPhone 13: SportContact-like fragments lock to ComfortContact CC7 when CC7 is read in an adjacent frame (owner 2026-11-12)', async () => {
+      const f1 = [line('ortContact', 0, 30), line('195/55 R15 85V', 40)];
+      const f2 = [line('CC7', 0, 30)];
+      const f3 = [line('ortContact', 0, 30)];
+      const { reader } = setup({ ocr: perFrame(f1, f2, f3) });
+      expect(suggestionsOf(await reader.read(FRAMES))).toEqual({ make: 'Continental', size: '195/55 R15', model: 'ComfortContact CC7' });
+      const noCode = setup({ ocr: perFrame(f1, f3, f3) });
+      expect(suggestionsOf(await noCode.reader.read(FRAMES))).not.toHaveProperty('model');
+    });
+
     test('disagreeing families: the majority wins, never a mix', async () => {
       const { reader } = setup({ ocr: perFrame([line('ComfortContact')], [line('UltraContact')], [line('ComfortContact')]) });
       expect(suggestionsOf(await reader.read(FRAMES)).model).toBe('ComfortContact');

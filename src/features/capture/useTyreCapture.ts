@@ -6,7 +6,8 @@ import { createSynchronizable, scheduleOnRN } from 'react-native-worklets';
 import { captureConfig } from '../../config/capture';
 import { inspectionConfig } from '../../config/inspection';
 import { CaptureSession, type SessionSnapshot } from './captureSession';
-import { classifyFrame, measureLuma, thumbDifference, type FrameIssue } from './quality';
+import { classifyFrame, measureLuma, thumbDifference, type SampleIssue } from './quality';
+import { advanceSweep, initialSweep, measureProfiles, rightwardTravel, type SweepState } from './sweepMotion';
 import type { Rect, Size } from './guideGeometry';
 import { cropFrameToGuide } from './frameCrop';
 import { deleteQuietly, isNoSpace, newTempFramePath, type CaptureStage } from './frameFiles';
@@ -19,6 +20,9 @@ type Geometry = { guide: Rect; view: Size } | null;
 const PLATFORM = Platform.OS;
 
 const TICK_MS = 250;
+
+/** Sweep travel is sent to JS in steps of this many analysed-square widths. */
+const SWEEP_SEND_STEP = 0.02;
 
 const THRESHOLDS = {
   minBrightness: captureConfig.minBrightness,
@@ -33,6 +37,7 @@ const THRESHOLDS = {
  *
  * Camera thread (worklet), about `analysisFps` times a second:
  *   luminance plane → brightness, sharpness (Laplacian variance), motion →
+ *   (tread) rightward sweep travel; moving left freezes the sweep →
  *   if the frame passes and the stage is collecting, convert → upright → crop
  *   to the guide → hand the image to JS. The frame, its planes and every
  *   intermediate image are disposed on every path.
@@ -81,15 +86,23 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
       lastAccept: createSynchronizable(0),
       prevThumb: createSynchronizable<number[] | null>(null),
       /** Last result sent to JS, so a run of passing frames doesn't call JS 10 times a second. */
-      lastSentIssue: createSynchronizable<FrameIssue | 'repeat' | null>(null),
+      lastSentIssue: createSynchronizable<SampleIssue | null>(null),
+      /** Tread: luminance profiles of the previous analysed frame, for sweep travel. */
+      prevProfiles: createSynchronizable<{ cols: number[]; rows: number[] } | null>(null),
+      sweep: createSynchronizable<SweepState>(initialSweep()),
+      /** Last sweep sent to JS (travel rounded to `SWEEP_SEND_STEP`). */
+      lastSentSweep: createSynchronizable<{ step: number; reversed: boolean }>({ step: 0, reversed: false }),
       lastAcceptedThumb: createSynchronizable<number[] | null>(null),
       geometry: createSynchronizable<Geometry>(null),
     }),
     [],
   );
 
+  const [sweep, setSweep] = useState<SweepState>(initialSweep);
   const running = active && !lowStorage && snapshot.outcome === null;
   useEffect(() => {
+    // Motion across a pause isn't sweep travel.
+    sync.prevProfiles.setBlocking(null);
     sync.active.setBlocking(running);
     sync.collecting.setBlocking(running && snapshot.collecting);
   }, [sync, running, snapshot.collecting]);
@@ -110,7 +123,8 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
     [],
   );
 
-  const onSample = useCallback((issue: FrameIssue | 'repeat') => session.sample(issue), [session]);
+  const onSample = useCallback((issue: SampleIssue) => session.sample(issue), [session]);
+  const onSweep = useCallback((travel: number, reversed: boolean) => setSweep({ travel, reversed }), []);
 
   const onFrameImage = useCallback(
     async (image: Image, score: number) => {
@@ -160,20 +174,41 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
         planes = frame.getPlanes();
         if (planes.length === 0) return;
         const y = planes[0];
+        const luma = new Uint8Array(y.getPixelBuffer());
         const metrics = measureLuma(
-          new Uint8Array(y.getPixelBuffer()),
+          luma,
           y.width,
           y.height,
           y.bytesPerRow,
           region,
           step,
         );
+        const profiles = requireSteady
+          ? null
+          : measureProfiles(luma, y.width, y.height, y.bytesPerRow, region, step);
         for (const p of planes) p.dispose();
         planes = null;
 
         const motion = thumbDifference(sync.prevThumb.getBlocking(), metrics.thumb);
         sync.prevThumb.setBlocking(metrics.thumb);
-        let issue: FrameIssue | 'repeat' = classifyFrame(metrics, motion, THRESHOLDS, requireSteady);
+        let issue: SampleIssue = classifyFrame(metrics, motion, THRESHOLDS, requireSteady);
+
+        // Tread: one-way sweep (owner request 2026-11-12). Rightward travel fills
+        // the chevrons; moving left freezes them and frame capture until the
+        // camera moves right again.
+        if (profiles) {
+          const travel = rightwardTravel(sync.prevProfiles.getBlocking(), profiles, String(frame.orientation), frame.isMirrored);
+          sync.prevProfiles.setBlocking(profiles);
+          const next = advanceSweep(sync.sweep.getBlocking(), travel);
+          sync.sweep.setBlocking(next);
+          const sent = sync.lastSentSweep.getBlocking();
+          const stepNow = Math.floor(next.travel / SWEEP_SEND_STEP);
+          if (stepNow !== sent.step || next.reversed !== sent.reversed) {
+            sync.lastSentSweep.setBlocking({ step: stepNow, reversed: next.reversed });
+            scheduleOnRN(onSweep, next.travel, next.reversed);
+          }
+          if (next.reversed && issue === 'ok') issue = 'reverse';
+        }
 
         if (
           issue === 'ok' &&
@@ -238,6 +273,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
       sync,
       onFrameImage,
       onSample,
+      onSweep,
       requireSteady,
       acceptIntervalMs,
       minNovelty,
@@ -267,6 +303,8 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
     snapshot,
     lowStorage,
     session,
+    /** Tread: rightward travel so far and whether the one-way sweep is frozen. */
+    sweep,
     /** Sidewall Capture button. */
     start: () => session.start(),
     /** Tread `Finish sweep`; false when more frames are needed. */

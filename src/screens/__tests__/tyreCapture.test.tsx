@@ -15,6 +15,7 @@ const mockCapture = {
   start: jest.fn(),
   finish: jest.fn(() => false),
   giveUp: jest.fn(),
+  sweep: { travel: 0, reversed: false },
   rerender: null as null | (() => void),
 };
 jest.mock('../../features/capture/useTyreCapture', () => {
@@ -29,6 +30,7 @@ jest.mock('../../features/capture/useTyreCapture', () => {
         setGuide: () => {},
         snapshot: mockCapture.snapshot,
         lowStorage: false,
+        sweep: mockCapture.sweep,
         start: mockCapture.start,
         finish: mockCapture.finish,
         giveUp: mockCapture.giveUp,
@@ -58,6 +60,7 @@ beforeEach(() => {
   useCaptureBlock.getState().setBlocked(false);
   mockCapture.snapshot = { status: 'starting', collecting: false, accepted: 0, outcome: null };
   mockCapture.active = [];
+  mockCapture.sweep = { travel: 0, reversed: false };
   jest.clearAllMocks();
   (fs.getFSInfo as jest.Mock).mockResolvedValue({ freeSpace: 10e9 });
 });
@@ -156,6 +159,25 @@ describe('tread capture', () => {
     expect(screen.getByText('8 clear frames')).toBeTruthy();
     expect(screen.getByText('10 clear frames')).toBeTruthy();
     expect(current().tyres[0].state).toBe('captured');
+  });
+
+  test('chevrons fill with rightward sweep travel; moving left freezes them with Move right (owner 2026-11-12)', async () => {
+    await toTread();
+    const guide = () => screen.getByTestId('tread-sweep-guide').props.accessibilityValue.now;
+    expect(guide()).toBe(0);
+    await act(async () => {
+      mockCapture.sweep = { travel: 1, reversed: false };
+      mockCapture.rerender?.();
+    });
+    expect(guide()).toBe(50);
+    await act(async () => {
+      mockCapture.sweep = { travel: 1, reversed: true };
+      mockCapture.rerender?.();
+    });
+    await setSnapshot({ status: 'reverse', accepted: 3 });
+    expect(guide()).toBe(50);
+    expect(screen.getByText('Move right')).toBeTruthy();
+    expect(screen.getByText('30%')).toBeTruthy();
   });
 
   test('Having trouble gives up with the session reason', async () => {

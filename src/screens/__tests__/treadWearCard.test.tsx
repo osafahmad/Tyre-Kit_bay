@@ -195,6 +195,9 @@ describe('Tyre result screen', () => {
     expect(screen.getByText(TREAD_WEAR_CARD_TITLE)).toBeTruthy();
     expect(screen.getByText('Checking tread wear on this phone…')).toBeTruthy();
     expect(mockScan).toHaveBeenCalledWith(['frames/t1.jpg', 'frames/t2.jpg'], expect.any(Function));
+    // No depth: while the check runs the header says Analysing…, never `Good` (owner 2026-11-12).
+    expect(screen.getByText('Analysing…')).toBeTruthy();
+    expect(screen.queryByText('Good')).toBeNull();
 
     await act(async () => {
       finish({
@@ -212,8 +215,9 @@ describe('Tyre result screen', () => {
     expect(screen.getByLabelText(`Wear pattern: Center Wear (${NOTE})`)).toBeTruthy();
     expect(screen.getByTestId('tread-wear-unverified')).toBeTruthy();
     expect(screen.queryByText(/Likely cause/)).toBeNull();
-    // Status and sidewall rows unchanged.
+    // Status and sidewall rows unchanged; the pending badge is gone.
     expect(screen.getByText('Good')).toBeTruthy();
+    expect(screen.queryByText('Analysing…')).toBeNull();
     for (const v of ['215/65 R15', 'Bridgestone', 'Ecopia EP150', '4B7K 2JX 2623']) {
       expect(screen.getByText(v)).toBeTruthy();
     }
@@ -223,6 +227,23 @@ describe('Tyre result screen', () => {
       wearPattern: 'Center Wear',
       treadWear: expect.objectContaining({ severity: 'critical', label: 'center_wear', confidence: 0.72 }),
     });
+  });
+
+  test('with a depth: a neutral Analysing… badge until the check finishes, then the final status (owner 2026-11-12)', async () => {
+    let finish!: (o: TreadWearScanOutcome) => void;
+    mockScan.mockImplementation(() => new Promise(r => (finish = r)));
+    const params = seed();
+    useInspectionStore.getState().setResult(params.tyreId, { ...result, treadDepthMm: 6.2 });
+    await show(params);
+    expect(screen.getByText('6.2 mm')).toBeTruthy();
+    expect(screen.getByTestId('status-pending')).toBeTruthy();
+    expect(screen.getByLabelText('Status: Analysing…')).toBeTruthy();
+    expect(screen.queryByLabelText('Status: Good')).toBeNull();
+    await act(async () => {
+      finish({ status: 'done', frames: [{ frame: 'frames/t1.jpg', detections: [] }], framesFailed: 0, delegate: 'cpu', modelVersion: 'tread-test-1' });
+    });
+    expect(screen.queryByTestId('status-pending')).toBeNull();
+    expect(screen.getByLabelText('Status: Good')).toBeTruthy();
   });
 
   test('the Wear pattern row waits for the active scan to settle before showing the final title', async () => {

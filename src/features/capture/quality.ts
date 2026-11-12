@@ -112,7 +112,14 @@ export function classifyFrame(
   return 'ok';
 }
 
-export type IssueCounts = Record<Exclude<FrameIssue, 'ok'> | 'repeat', number>;
+/**
+ * One analysed frame as the session sees it: a quality issue, `repeat` (tread:
+ * the sweep hasn't moved on) or `reverse` (tread: moving left, the one-way
+ * sweep is frozen until it moves right again; owner request 2026-11-12).
+ */
+export type SampleIssue = FrameIssue | 'repeat' | 'reverse';
+
+export type IssueCounts = Record<Exclude<SampleIssue, 'ok'>, number>;
 
 export const emptyIssueCounts = (): IssueCounts => ({
   too_dark: 0,
@@ -120,6 +127,7 @@ export const emptyIssueCounts = (): IssueCounts => ({
   moving: 0,
   blurry: 0,
   repeat: 0,
+  reverse: 0,
 });
 
 /**
