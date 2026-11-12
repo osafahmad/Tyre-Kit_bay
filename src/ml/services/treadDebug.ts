@@ -18,6 +18,12 @@
 // Every line starts with a wall-clock timestamp. No frame paths, plates,
 // chassis numbers or OCR text are logged; frames are referred to by index.
 // Logs go to the device log only; nothing is sent anywhere.
+//
+// Staging builds (`diagnosticsConfig.enableStagingLogs`, owner request
+// 2026-11-12) also keep each line in the in-memory buffer of
+// `src/utils/debugLogBuffer.ts` for "Copy logs".
+
+import { isDebugLogBufferEnabled, logTime, recordDebugLog } from '../../utils/debugLogBuffer';
 
 export const TREAD_LOG_TAG = '[TreadWear]';
 
@@ -27,21 +33,24 @@ export function setTreadDebug(on: boolean): void {
   enabled = on;
 }
 
+/** Whether `treadLog` goes anywhere: the console, or the staging buffer. */
 export function isTreadDebugEnabled(): boolean {
-  return enabled;
+  return enabled || isDebugLogBufferEnabled();
 }
 
 /** `HH:MM:SS.mmm`, local time. */
-export function treadLogTime(date: Date = new Date()): string {
-  const p = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}.${p(date.getMilliseconds(), 3)}`;
-}
+export const treadLogTime = logTime;
 
 export function treadLog(message: string, data?: unknown): void {
-  if (!enabled) return;
+  const buffer = isDebugLogBufferEnabled();
+  if (!enabled && !buffer) return;
   const line = `${TREAD_LOG_TAG} ${treadLogTime()} ${message}`;
-  if (data === undefined) console.log(line);
-  else console.log(line, JSON.stringify(data));
+  const json = data === undefined ? undefined : JSON.stringify(data);
+  if (enabled) {
+    if (json === undefined) console.log(line);
+    else console.log(line, json);
+  }
+  if (buffer) recordDebugLog(json === undefined ? line : `${line} ${json}`);
 }
 
 /** Rounds to 3 decimals for logs. */

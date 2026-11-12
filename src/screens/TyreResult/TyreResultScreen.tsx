@@ -9,6 +9,7 @@ import {
   DemoDataLabel,
   IconButton,
   PendingStatusBadge,
+  CopyLogsButton,
   ResultRow,
   STATUS_PENDING_LABEL,
   StatusBadge,
@@ -125,6 +126,8 @@ export function TyreResultScreen({ navigation, route }: Props) {
         <AppText variant="caption" color="textSecondary" style={styles.notice}>
           {AUTOMATED_CHECK_NOTICE}
         </AppText>
+        {/* Staging only (diagnosticsConfig.enableStagingLogs). */}
+        <CopyLogsButton />
       </ScrollView>
       {inProgress ? (
         <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}>

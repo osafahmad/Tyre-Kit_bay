@@ -37,4 +37,15 @@ export const diagnosticsConfig = {
    * model on real tyres (docs/RELEASE_CHECKLIST.md).
    */
   treadWearModelUnverified: true,
+  /**
+   * STAGING ONLY (owner request 2026-11-12: testing on a car in an underground
+   * car park with a Release build and no console). Keeps the last 300
+   * `[SidewallOCR]` and `[TreadWear]` lines in memory, in every build, and
+   * shows "Copy logs" on Tyre result and Sidewall captured
+   * (`src/utils/debugLogBuffer.ts`). The lines include raw sidewall OCR text.
+   * Nothing is written to disk or sent; they leave the phone only when copied.
+   * Console logging still follows the two flags above.
+   * MUST be false for any store build (docs/RELEASE_CHECKLIST.md).
+   */
+  enableStagingLogs: true,
 } as const;

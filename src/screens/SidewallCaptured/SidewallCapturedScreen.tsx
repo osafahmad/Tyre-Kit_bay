@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppText, Button, SidewallDoneArt } from '../../components';
+import { AppText, Button, CopyLogsButton, SidewallDoneArt } from '../../components';
 import type { RootStackParamList } from '../../app/routes';
 import { useInspectionStore, useTyre } from '../../features/inspection/store';
 import { emptyToNull } from '../../features/inspection/validation';
@@ -149,6 +149,8 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
             height={44}
             onPress={() => navigation.replace('SidewallCapture', { tyreId })}
           />
+          {/* Staging only (diagnosticsConfig.enableStagingLogs). */}
+          <CopyLogsButton />
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
