@@ -59,7 +59,7 @@ const SPEED = '[A-HJ-NP-WYZ]';
 const LOAD_SPEED = `(\\d{2,3}(?:\\/\\d{2,3})?)\\s?\\(?(${SPEED})\\)?(?![A-Z0-9])`;
 const LOAD_SPEED_AT_START = new RegExp(`^\\s*${LOAD_SPEED}`);
 /** A rim token followed by a load/speed index, on a line of its own (`R16 91V`). */
-const RIM_THEN_LOAD_SPEED = new RegExp(`(?:^|[^A-Z])Z?[RB]\\s?(\\d{2})\\s*${LOAD_SPEED}`);
+const RIM_THEN_LOAD_SPEED = new RegExp(`(?:^|[^A-Z])Z?[RB]\\s*(\\d{2})\\s*${LOAD_SPEED}`);
 
 /** ISO load index table: 0–279. */
 const LOAD_INDEX_MAX = 279;

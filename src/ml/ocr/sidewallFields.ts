@@ -173,14 +173,14 @@ export const SIZE_WIDTH_INFERENCE = {
 } as const;
 
 /**
- * `R15`, `R 15`, `ZR15`; `R154` (a stray digit after the rim); and, from the
+ * `R15`, `R 15`, `R  15` (any spacing, owner request 2026-11-12), `ZR15`; `R154` (a stray digit after the rim); and, from the
  * iPhone 13 logs (owner decision 2026-11-10), a rim with the load/speed index
  * glued on (`R1585V`, `3R1525V`) or a digit glued before it. A letter directly
  * before the `R` still rules it out (`STR15` is not a rim).
  * `B` is taken as the rim marker too (owner decision 2026-11-10, iPhone 13
  * read `5B15 85VE C`), and the joined size is always written with `R`.
  */
-const RIM_TOKEN = /(?:^|[^A-Z])Z?[RB]\s?(\d{2})(?:\d{2,3}(?:\/\d{2,3})?\s?[A-Z]|\d)?(?!\d)/;
+const RIM_TOKEN = /(?:^|[^A-Z])Z?[RB]\s*(\d{2})(?:\d{2,3}(?:\/\d{2,3})?\s?[A-Z]|\d)?(?!\d)/;
 /**
  * `8` read for `R` (owner decision 2026-11-10, iPhone 13: `815W5V`,
  * `815 85V`). Only rims 13–22, nothing glued before the `8` except a symbol
@@ -196,7 +196,7 @@ const RIM_TOKEN_8 = /(?:^|[^A-Z0-9])3?8(1[3-9]|2[0-2])(?=[A-Z]|\s?\d{2,3}[A-Z])/
  * by a load/speed index (`65V`), a lone speed symbol (`Rl5 V`, round 8), or
  * the end of the token (`Rl5`, round 8). Never with more letters glued on.
  */
-const RIM_TOKEN_L1 = /(?:^|[^A-Z])Z?R\s?[LI]([3-9])(?=\s?\d{2,3}(?:\/\d{2,3})?\s?[A-Z]|\s?[A-HJ-NP-WYZ](?![A-Z])|(?![A-Z0-9]))/;
+const RIM_TOKEN_L1 = /(?:^|[^A-Z])Z?R\s*[LI]([3-9])(?=\s?\d{2,3}(?:\/\d{2,3})?\s?[A-Z]|\s?[A-HJ-NP-WYZ](?![A-Z])|(?![A-Z0-9]))/;
 const rimIn = (text: string): number | null => {
   const m = RIM_TOKEN.exec(text) ?? RIM_TOKEN_8.exec(text);
   if (m) return Number(m[1]);
@@ -594,7 +594,7 @@ export function markerlessTinCandidate(lines: OcrLineLike[], now: Date = new Dat
 
 /** A listed name as a whole word, any case, any spacing between its words (`GENERAL  TIRE`, `Comfort Contact`). */
 const wholeNamePattern = (name: string) =>
-  new RegExp(`(?:^|[^A-Z0-9])(${name.toUpperCase().split(/\s+/).join('\\s*')})(?![A-Z0-9])`);
+  new RegExp(`(?:^|[^A-Z0-9])(${name.toUpperCase().split(/[\s-]+/).join('[\\s-]*')})(?![A-Z0-9])`);
 
 /**
  * A listed variant code as a whole token (`CC7`, `T005`), or glued to the end

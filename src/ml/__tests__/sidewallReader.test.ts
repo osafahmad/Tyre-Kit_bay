@@ -516,3 +516,68 @@ describe('helpers', () => {
   });
 });
 
+
+describe('vertical sidewall text: rotated passes (owner request 2026-11-12, iPhone 13 Purfect KB-27)', () => {
+  const PURFECT: OcrLineLike[] = [
+    { text: 'PURFECT', frame: { x: 0, y: 0, width: 200, height: 60 } },
+    { text: 'KB-27', frame: { x: 0, y: 80, width: 120, height: 30 } },
+    { text: '185/65 R 15 88H', frame: { x: 0, y: 130, width: 150, height: 20 } },
+  ];
+
+  function rotatedSetup(readsAt: number | null, maxOcrRuns = 24) {
+    const calls: string[] = [];
+    const deps: SidewallReaderDeps = {
+      ocrAvailable: () => true,
+      resolveFramePath: p => `/docs/${p}`,
+      cropCentreToTempFile: jest.fn(async (path: string) => ({ path: `${path}#centre`, sourceWidth: 640, sourceHeight: 360 })),
+      rotateToTempFile: jest.fn(async (path: string, degrees: number) => `${path}#turn${degrees}`),
+      deleteFile: jest.fn(async () => {}),
+      recognizeLines: jest.fn(async (path: string) => {
+        calls.push(path.replace('/docs/', ''));
+        return readsAt !== null && path.endsWith(`#turn${readsAt}`) ? PURFECT : [];
+      }),
+      now: () => new Date(Date.UTC(2026, 10, 12)),
+      centreCropRatio: 0.6,
+      minAgreeingReads: 2,
+      maxOcrRuns,
+    };
+    return { reader: createSidewallReader(deps), deps, calls };
+  }
+
+  test('text turned 90° CCW on screen is read by the clockwise pass', async () => {
+    const { reader, deps, calls } = rotatedSetup(90);
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(suggestionsOf(outcome)).toEqual({ size: '185/65 R15', make: 'PURFECT', model: 'KB-27' });
+    expect(calls.slice(0, 3)).toEqual(['f1.jpg#centre', 'f1.jpg', 'f1.jpg#turn90']);
+    expect(deps.deleteFile).toHaveBeenCalledWith('/docs/f1.jpg#turn90');
+  });
+
+  test('the other way round: CW tried first, then CCW; the working turn goes first on the next frame', async () => {
+    const { reader, calls } = rotatedSetup(-90);
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(suggestionsOf(outcome)).toEqual({ size: '185/65 R15', make: 'PURFECT', model: 'KB-27' });
+    expect(calls).toEqual([
+      'f1.jpg#centre',
+      'f1.jpg',
+      'f1.jpg#turn90',
+      'f1.jpg#turn-90',
+      'f2.jpg#centre',
+      'f2.jpg',
+      'f2.jpg#turn-90',
+    ]);
+  });
+
+  test('rotated passes count toward the OCR budget, and nothing is made up', async () => {
+    const { reader, calls } = rotatedSetup(null, 6);
+    const outcome = await reader.read(['f1.jpg', 'f2.jpg', 'f3.jpg']);
+    expect(outcome).toEqual({ status: 'done', suggestions: {}, ocrRuns: 6 });
+    expect(calls).toHaveLength(6);
+  });
+
+  test('no rotated pass when the upright read already gave size, make or model', async () => {
+    const { reader, deps } = rotatedSetup(90);
+    (deps.recognizeLines as jest.Mock).mockImplementation(async () => PURFECT);
+    await reader.read(['f1.jpg', 'f2.jpg']);
+    expect(deps.rotateToTempFile).not.toHaveBeenCalled();
+  });
+});

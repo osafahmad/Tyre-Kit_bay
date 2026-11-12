@@ -263,3 +263,47 @@ describe('iPhone 13 Continental 195/55 R15 85V (owner decision 2026-11-10)', () 
 test('no text → nothing', () => {
   expect(read({ text: '', blocks: [] })).toEqual({ size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null });
 });
+
+describe('Purfect KB-27, size with a space after R (owner request 2026-11-12, iPhone 13)', () => {
+  test('`185/65 R 15 88H`, `PURFECT` and `KB-27` are all read', () => {
+    const lines = ocrResultLines(
+      mlKitResult([
+        { text: 'PURFECT', y: 0, h: 60 },
+        { text: 'KB-27', y: 80, h: 30 },
+        { text: '185/65 R 15 88H', y: 130 },
+      ]),
+    );
+    const r = filterSidewallText(lines, NOW);
+    expect(r.size).toBe('185/65 R15');
+    expect(r.loadSpeed).toBe('88H');
+    expect(r.make).toBe('PURFECT');
+    expect(r.model).toBe('KB-27');
+  });
+
+  test('more than one space, and a rim split from its load/speed line', () => {
+    expect(rankedSizeCandidate(ocrResultLines(mlKitResult([{ text: '185/65 R  15 88H', y: 0 }])))).toEqual({
+      value: '185/65 R15',
+      loadSpeed: '88H',
+    });
+    const split = ocrResultLines(mlKitResult([{ text: '185/65', y: 0 }, { text: 'R 15 88H', y: 30 }]));
+    expect(rankedSizeCandidate(split)).toEqual({ value: '185/65 R15', loadSpeed: '88H' });
+  });
+
+  test('KB27 and KB 27 give the listed spelling; the model gives Purfect as make', () => {
+    for (const text of ['KB27', 'kb 27']) {
+      const r = filterSidewallText(ocrResultLines(mlKitResult([{ text, y: 0 }])), NOW);
+      expect(r.model).toBe('KB-27');
+      expect(r.make).toBe('Purfect');
+    }
+    // Digits glued on are not the model.
+    expect(filterSidewallText(ocrResultLines(mlKitResult([{ text: 'KB270', y: 0 }])), NOW).model).toBeNull();
+  });
+
+  test('regional brands asked for are listed', () => {
+    for (const brand of ['Servis', 'Panther', 'Sailun', 'Triangle', 'Linglong', 'Goodride', 'Chaoyang', 'Kumho', 'Nexen', 'Giti', 'Maxxis', 'Toyo', 'Falken', 'Nankang', 'General Tire']) {
+      expect(filterSidewallText(ocrResultLines(mlKitResult([{ text: brand.toUpperCase(), y: 0 }])), NOW).make).toBe(
+        brand.toUpperCase(),
+      );
+    }
+  });
+});

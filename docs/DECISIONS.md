@@ -869,3 +869,8 @@ The owner asked for three things from the screen-capture and device logs. Each w
   - **Limit:** the sidewall scan above had 5 frames at ≥ 0.70, so this rule alone would still call it critical. It stops single-frame and weak flickers, not a consistent false positive. Only the note covers that until the model is validated.
 - **Not done:** nothing checks that a tread frame shows tread (the tyre detector is still missing from the manifest).
 - **Needs a real phone:** the longer Wear pattern row text on a small screen; real tyres in daylight.
+
+### Device findings, Purfect KB-27 on a mounted tyre (2026-11-12)
+- **Rotated OCR passes:** on the left and right arcs of a tyre on the car, the sidewall text runs vertically and the upright ML Kit passes read nothing. When the centre and whole-frame passes give no size, make or model, the whole frame is read again turned 90° clockwise, then 90° counter-clockwise (`SIDEWALL_ROTATIONS`, `sidewallReader.ts`), using nitro-image `rotateAsync` (physical rotation, no new library). Every pass counts toward `sidewallMaxOcrRuns`. The turn that worked is tried first on later frames. Rotated reads go through the same filter, so no OCR rule changes.
+- **Rim spacing:** `185/65 R 15 88H`. The main size pattern already allowed it. The rim-token, rim + load/speed and slash-less patterns now allow any whitespace after `R`/`ZR`/`B` too.
+- **Brands and models:** Purfect, Panther and Chaoyang added. GT Radial is still left out (see round 4). Model `KB-27` (Purfect) added, read as `KB-27`, `KB27` or `KB 27`. A hyphen in a listed family name is now optional, like a space.

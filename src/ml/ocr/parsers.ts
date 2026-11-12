@@ -9,7 +9,11 @@ export type ParsedTyreSize = {
   rimInches: number;
 };
 
-/** Spec §5 tyre size, on uppercased text: `205/55R16`, `195/65 R15`, `225/45ZR17`, `LT265/70 R17`. */
+/**
+ * Spec §5 tyre size, on uppercased text: `205/55R16`, `195/65 R15`,
+ * `225/45ZR17`, `LT265/70 R17`, and with a space after the marker
+ * (`185/65 R 15`, Purfect KB-27, owner request 2026-11-12).
+ */
 export const TYRE_SIZE_PATTERN = /\b(P|LT|ST|T)?\s*(\d{3})\s*\/\s*(\d{2})\s*(ZR|R|D|B)?\s*(\d{2}(?:\.\d)?)\b/;
 
 export function parseTyreSize(text: string): ParsedTyreSize | null {
@@ -33,14 +37,14 @@ export function parseTyreSize(text: string): ParsedTyreSize | null {
  * to the digits (`19555815`) is not split. Groups: width, aspect, rim.
  */
 export const COMPACT_SIZE_PATTERN =
-  /(?:^|[^0-9A-Z])(1[6-9][05]|2\d[05])([3-7][05])(?:\s?[RB]|\s8)\s?(1[3-9]|2[0-2])(?![0-9])/;
+  /(?:^|[^0-9A-Z])(1[6-9][05]|2\d[05])([3-7][05])(?:\s*[RB]\s*|\s8\s?)(1[3-9]|2[0-2])(?![0-9])/;
 
 /**
  * The same with only the last two width digits (`9555 R15`). Groups: the two
  * width digits, aspect, rim. Only completed through `SIZE_WIDTH_INFERENCE`.
  */
 export const COMPACT_SHORT_SIZE_PATTERN =
-  /(?:^|[^0-9])(\d{2})([3-7][05])(?:\s?[RB]|\s8)\s?(1[3-9]|2[0-2])(?![0-9])/;
+  /(?:^|[^0-9])(\d{2})([3-7][05])(?:\s*[RB]\s*|\s8\s?)(1[3-9]|2[0-2])(?![0-9])/;
 
 /**
  * DOT marker as ML Kit reads it on worn / glary sidewalls (owner decision

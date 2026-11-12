@@ -61,6 +61,12 @@ export type SidewallReaderDeps = {
   resolveFramePath: PipelineDeps['resolveFramePath'];
   /** Writes the centre `ratio` (of width and height) of a local image to a temporary JPEG. */
   cropCentreToTempFile(path: string, ratio: number): Promise<CentreCrop>;
+  /**
+   * Writes a local image rotated by `degrees` (90 = clockwise, -90 =
+   * counter-clockwise) to a temporary JPEG (owner request 2026-11-12, see
+   * `SIDEWALL_ROTATIONS`). Without it, no rotated pass runs.
+   */
+  rotateToTempFile?(path: string, degrees: number): Promise<string>;
   deleteFile(path: string): Promise<void>;
   recognizeLines(path: string): Promise<OcrLineLike[]>;
   now(): Date;
@@ -77,6 +83,19 @@ const FIELDS: SidewallField[] = ['size', 'dotTin', 'make', 'model'];
 /** The 4-digit date code at the end of a validated DOT read. */
 const dateCode = (dot: string) => dot.replace(/ /g, '').slice(-4);
 const isRealFrame = (f: string) => !f.startsWith('demo://');
+
+/**
+ * Owner request 2026-11-12 (iPhone 13, mounted Purfect KB-27): on the left and
+ * right arcs of a tyre on the car, the sidewall text runs vertically, and an
+ * upright ML Kit pass reads nothing. When the upright passes (centre, then
+ * whole frame) give no size, make or model, the whole frame is read again
+ * turned 90° clockwise, then 90° counter-clockwise. Each pass counts toward
+ * `maxOcrRuns`. Once a turn reads something, it is tried first on later
+ * frames (the text runs the same way across one scan). Only the image is
+ * turned; what is read is filtered exactly like an upright read.
+ */
+export const SIDEWALL_ROTATIONS = [90, -90] as const;
+const ROTATED_FIELDS = ['size', 'make', 'model'] as const;
 
 /**
  * Size and make without 2-frame agreement (owner decisions 2026-11-10): the read seen in
@@ -146,6 +165,23 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
     }
   }
 
+  /** The whole frame turned by `degrees`, read and deleted. Null if any step fails. */
+  async function ocrRotated(framePath: string, degrees: number, label: string): Promise<OcrLineLike[] | null> {
+    if (!deps.rotateToTempFile) return null;
+    let rotated: string;
+    try {
+      rotated = await deps.rotateToTempFile(framePath, degrees);
+    } catch (e) {
+      sidewallLog(`rotate failed (${label})`, { path: framePath, degrees, error: errorText(e) });
+      return null;
+    }
+    try {
+      return await ocr(rotated, `${label}, whole frame turned ${degrees > 0 ? `${degrees}° CW` : `${-degrees}° CCW`}`);
+    } finally {
+      await deps.deleteFile(rotated).catch(() => {});
+    }
+  }
+
   return {
     canRead: frames => deps.ocrAvailable() && frames.some(isRealFrame),
 
@@ -176,6 +212,8 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       const open = () => READ_FIELDS.filter(f => !agreed(f));
       let ocrRuns = 0;
       const stop = () => isCancelled() || ocrRuns >= deps.maxOcrRuns;
+      /** The turn that last read something (`SIDEWALL_ROTATIONS`), tried first on later frames. */
+      let preferredRotation: number | null = null;
 
       for (const [index, frame] of real.entries()) {
         if (stop() || open().length === 0) break;
@@ -208,6 +246,29 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
             parsed.modelCode ??= full.modelCode;
             lines = [...lines, ...fullLines];
             source = centreLines ? 'centre + whole frame' : 'whole frame';
+          }
+        }
+        // Vertical text on a mounted tyre's side arcs (owner request 2026-11-12).
+        if (deps.rotateToTempFile && !ROTATED_FIELDS.some(f => parsed[f]) && open().some(f => (ROTATED_FIELDS as readonly string[]).includes(f))) {
+          const turns = [...SIDEWALL_ROTATIONS].sort(
+            (a, b) => Number(b === preferredRotation) - Number(a === preferredRotation),
+          );
+          for (const degrees of turns) {
+            if (stop()) break;
+            ocrRuns += 1;
+            const turnedLines = await ocrRotated(path, degrees, label);
+            if (!turnedLines) continue;
+            const turned = filterSidewallText(turnedLines, deps.now());
+            if (!parsed.size && turned.size) parsed.loadSpeed = turned.loadSpeed;
+            for (const f of READ_FIELDS) parsed[f] ??= turned[f];
+            parsed.modelCode ??= turned.modelCode;
+            if (!modelLines && turned.model) modelLines = turnedLines;
+            lines = [...lines, ...turnedLines];
+            if (ROTATED_FIELDS.some(f => turned[f])) {
+              source = `${source} + turned ${degrees}°`;
+              preferredRotation = degrees;
+              break;
+            }
           }
         }
         sidewallLog(`${label}: parsed (${source})`, { parsed, rejected: explainRejections(lines, parsed) });
@@ -416,6 +477,7 @@ type NitroImage = {
   readonly width: number;
   readonly height: number;
   cropAsync(x1: number, y1: number, x2: number, y2: number): Promise<NitroImage>;
+  rotateAsync(degrees: number, allowFastFlagRotation?: boolean): Promise<NitroImage>;
   saveToTemporaryFileAsync(format: 'jpg', quality?: number): Promise<string>;
   dispose(): void;
 };
@@ -449,6 +511,25 @@ export function defaultSidewallReaderDeps(): SidewallReaderDeps {
         images.push(crop);
         const out = await crop.saveToTemporaryFileAsync('jpg', ocrConfig.jpegQualityPercent);
         return { path: out, sourceWidth: frame.width, sourceHeight: frame.height };
+      } finally {
+        for (const img of images) {
+          try {
+            img.dispose();
+          } catch {
+            // Already released.
+          }
+        }
+      }
+    },
+    async rotateToTempFile(path, degrees) {
+      const images: NitroImage[] = [];
+      try {
+        const frame = await nitroImages().loadFromFileAsync(path);
+        images.push(frame);
+        // Physically turned (not just an orientation flag), so ML Kit sees upright text.
+        const turned = await frame.rotateAsync(degrees, false);
+        images.push(turned);
+        return await turned.saveToTemporaryFileAsync('jpg', ocrConfig.jpegQualityPercent);
       } finally {
         for (const img of images) {
           try {

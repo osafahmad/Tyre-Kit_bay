@@ -14,6 +14,13 @@
  *
  * Left out on purpose: brand names that are everyday words likely to appear
  * elsewhere on a sidewall (e.g. Federal, Atlas, Torque, General on its own).
+ *
+ * Owner request 2026-11-12 (iPhone 13, Purfect KB-27 on a street car): added
+ * Purfect, Panther and Chaoyang; the other regional brands asked for
+ * (Servis, Sailun, Triangle, Linglong, Goodride, Kumho, Nexen, Giti, Maxxis,
+ * Toyo, Falken, Nankang, General Tire) were already listed. GT Radial stays
+ * out: `RADIAL`, on almost every tyre, matched it as a fragment (DECISIONS.md,
+ * round 4).
  */
 export const KNOWN_TYRE_BRANDS: readonly string[] = [
   'Achilles',
@@ -25,6 +32,7 @@ export const KNOWN_TYRE_BRANDS: readonly string[] = [
   'BFGoodrich',
   'Bridgestone',
   'Ceat',
+  'Chaoyang',
   'Continental',
   'Cooper',
   'Davanti',
@@ -58,8 +66,10 @@ export const KNOWN_TYRE_BRANDS: readonly string[] = [
   'Nexen',
   'Nitto',
   'Nokian',
+  'Panther',
   'Petlas',
   'Pirelli',
+  'Purfect',
   'Riken',
   'Roadstone',
   'Sailun',

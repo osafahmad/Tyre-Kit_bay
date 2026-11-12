@@ -7,7 +7,8 @@
  * An OCR line gives a Model suggestion only when it contains a listed family
  * name exactly, as a whole word. Case doesn't matter, and the spacing between
  * the words of a name doesn't either (`Comfort Contact` and `ComfortContact`
- * both give the listed spelling `ComfortContact`). A variant code is added
+ * both give the listed spelling `ComfortContact`), and so does a hyphen
+ * (`KB-27`, `KB27` and `KB 27` all give `KB-27`). A variant code is added
  * only when one of the family's listed codes was read as a whole token, or
  * glued to the end of a fragment of the family name (`OntactCC7`)
  * (`CC7` → `ComfortContact CC7`), in the same frame or in another frame of
@@ -73,4 +74,7 @@ export const KNOWN_TYRE_MODELS: readonly TyreModelFamily[] = [
   { brand: 'Pirelli', family: 'Scorpion', codes: [] },
   { brand: 'Pirelli', family: 'Sottozero', codes: [] },
   { brand: 'Pirelli', family: 'Powergy', codes: [] },
+  // Purfect (owner request 2026-11-12, iPhone 13 street car). Read as `KB-27`,
+  // `KB27` or `KB 27`; always suggested as `KB-27`.
+  { brand: 'Purfect', family: 'KB-27', codes: [] },
 ];
