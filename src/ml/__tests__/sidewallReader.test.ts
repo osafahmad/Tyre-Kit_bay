@@ -299,6 +299,16 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
       expect(suggestionsOf(await noCode.reader.read(FRAMES))).not.toHaveProperty('model');
     });
 
+    test('iPhone 13 round 2: the family split over two lines is read, with CC7 from another frame (owner 2026-11-12)', async () => {
+      const f1 = [line('Comfori', 0, 30), line('Contact', 36, 30), line('195/55 R15 85V', 80)];
+      const f2 = [line('Comtortco', 0, 30), line('ioricontac', 36, 30)];
+      const f3 = [line('CC7', 0, 30)];
+      const { reader } = setup({ ocr: perFrame(f1, f2, f3) });
+      expect(suggestionsOf(await reader.read(FRAMES))).toEqual({ make: 'Continental', size: '195/55 R15', model: 'ComfortContact CC7' });
+      const bare = setup({ ocr: perFrame([line('TUBELESS', 0, 30), line('Contact', 36, 30)], [], []) });
+      expect(suggestionsOf(await bare.reader.read(FRAMES))).not.toHaveProperty('model');
+    });
+
     test('disagreeing families: the majority wins, never a mix', async () => {
       const { reader } = setup({ ocr: perFrame([line('ComfortContact')], [line('UltraContact')], [line('ComfortContact')]) });
       expect(suggestionsOf(await reader.read(FRAMES)).model).toBe('ComfortContact');

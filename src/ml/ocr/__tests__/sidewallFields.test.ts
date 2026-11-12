@@ -331,6 +331,33 @@ describe('model family with OCR noise (owner decision 2026-11-11, Redmi 13 logs)
     expect(family([line('orContact'), line('CC7', 30)])).toBeNull();
   });
 
+  test('iPhone 13 round 2: ComfortContact split over two adjacent lines (owner 2026-11-12)', () => {
+    const two = (a: string, b: string) => family([line(a, 0, 30), line(b, 36, 30)]);
+    for (const a of ['Comtortco', 'Comfori', 'Comfo', 'Comfort']) {
+      for (const b of ['Contact', 'ioricontac', 'Contac']) {
+        expect(two(a, b)).toBe('ComfortContact');
+      }
+    }
+    // Either order, and with the code in the frame.
+    expect(two('Contact', 'Comfori')).toBe('ComfortContact');
+    expect(family([line('Comfori', 0, 30), line('Contact', 36, 30), line('CC7', 72, 30)])).toBe('ComfortContact CC7');
+    // Lines that aren't next to each other in reading order don't combine.
+    expect(family([line('Comfori', 0, 30), line('TUBELESS', 36, 30), line('Contact', 72, 30)])).toBeNull();
+  });
+
+  test('split lines: a bare Contact line is never SportContact or another family', () => {
+    for (const other of ['', 'TUBELESS', 'OUTSIDE', 'RADIAL', 'MAX LOAD 615 KG', 'ECO', 'Continental', 'ort', 'Comf']) {
+      const lines = other ? [line(other, 0, 30), line('Contact', 36, 30)] : [line('Contact', 0, 30)];
+      expect(family(lines)).toBeNull();
+    }
+    // SportContact split over two lines still works when the prefix is clearly Sport.
+    expect(family([line('Sport', 0, 30), line('Contact', 36, 30)])).toBe('SportContact');
+    // Too far from either prefix: nothing.
+    expect(family([line('Comxyz', 0, 30), line('Contact', 36, 30)])).toBeNull();
+    // The suffix needs CONTACT within 2 edits.
+    expect(family([line('Comfori', 0, 30), line('Contxyz', 36, 30)])).toBeNull();
+  });
+
   test('editDistance', () => {
     expect(editDistance('COMFORTONTACT', 'COMFORTCONTACT')).toBe(1);
     expect(editDistance('COMIORTCONTAE', 'COMFORTCONTACT')).toBe(3);

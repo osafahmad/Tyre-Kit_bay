@@ -6,6 +6,7 @@ import { useInspectionStore } from '../../features/inspection/store';
 import { settings } from '../../features/inspection/settings';
 import { MemoryInspectionRepository } from '../../features/inspection/repository';
 import { useCaptureBlock } from '../../features/capture/captureBlock';
+import { captureConfig } from '../../config/capture';
 import type { CaptureOutcome, SessionSnapshot } from '../../features/capture/captureSession';
 
 // Hand-driven capture: tests set the snapshot the screens see.
@@ -166,12 +167,12 @@ describe('tread capture', () => {
     const guide = () => screen.getByTestId('tread-sweep-guide').props.accessibilityValue.now;
     expect(guide()).toBe(0);
     await act(async () => {
-      mockCapture.sweep = { travel: 1, reversed: false };
+      mockCapture.sweep = { travel: captureConfig.treadSweepTravel / 2, reversed: false };
       mockCapture.rerender?.();
     });
     expect(guide()).toBe(50);
     await act(async () => {
-      mockCapture.sweep = { travel: 1, reversed: true };
+      mockCapture.sweep = { travel: captureConfig.treadSweepTravel / 2, reversed: true };
       mockCapture.rerender?.();
     });
     await setSnapshot({ status: 'reverse', accepted: 3 });

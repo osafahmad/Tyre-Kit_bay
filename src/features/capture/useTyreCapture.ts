@@ -7,7 +7,16 @@ import { captureConfig } from '../../config/capture';
 import { inspectionConfig } from '../../config/inspection';
 import { CaptureSession, type SessionSnapshot } from './captureSession';
 import { classifyFrame, measureLuma, thumbDifference, type SampleIssue } from './quality';
-import { advanceSweep, initialSweep, measureProfiles, rightwardTravel, type SweepState } from './sweepMotion';
+import {
+  advanceSweep,
+  initialSweep,
+  measureSweepProfile,
+  rightwardTravel,
+  screenXAxis,
+  sweepAllowsFrame,
+  type SweepState,
+} from './sweepMotion';
+import { isTreadDebugEnabled, treadLog } from '../../ml/services/treadDebug';
 import type { Rect, Size } from './guideGeometry';
 import { cropFrameToGuide } from './frameCrop';
 import { deleteQuietly, isNoSpace, newTempFramePath, type CaptureStage } from './frameFiles';
@@ -88,7 +97,13 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
       /** Last result sent to JS, so a run of passing frames doesn't call JS 10 times a second. */
       lastSentIssue: createSynchronizable<SampleIssue | null>(null),
       /** Tread: luminance profiles of the previous analysed frame, for sweep travel. */
-      prevProfiles: createSynchronizable<{ cols: number[]; rows: number[] } | null>(null),
+      prevProfile: createSynchronizable<number[] | null>(null),
+      /** Tread: the previous analysed frame's travel, to tell repeating tread apart (`profileShift`). */
+      lastTravel: createSynchronizable(0),
+      /** Tread frames handed to JS for saving (less any that failed), for the sweep frame gate. */
+      treadTaken: createSynchronizable(0),
+      /** `[TreadWear] sweep:` diagnostics, one line per analysed tread frame. */
+      logSweep: createSynchronizable(false),
       sweep: createSynchronizable<SweepState>(initialSweep()),
       /** Last sweep sent to JS (travel rounded to `SWEEP_SEND_STEP`). */
       lastSentSweep: createSynchronizable<{ step: number; reversed: boolean }>({ step: 0, reversed: false }),
@@ -102,7 +117,9 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
   const running = active && !lowStorage && snapshot.outcome === null;
   useEffect(() => {
     // Motion across a pause isn't sweep travel.
-    sync.prevProfiles.setBlocking(null);
+    sync.prevProfile.setBlocking(null);
+    sync.lastTravel.setBlocking(0);
+    sync.logSweep.setBlocking(isTreadDebugEnabled());
     sync.active.setBlocking(running);
     sync.collecting.setBlocking(running && snapshot.collecting);
   }, [sync, running, snapshot.collecting]);
@@ -124,7 +141,8 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
   );
 
   const onSample = useCallback((issue: SampleIssue) => session.sample(issue), [session]);
-  const onSweep = useCallback((travel: number, reversed: boolean) => setSweep({ travel, reversed }), []);
+  const onSweep = useCallback((travel: number, reversed: boolean) => setSweep({ travel, reversed, back: 0 }), []);
+  const onSweepLog = useCallback((data: Record<string, unknown>) => treadLog('sweep:', data), []);
 
   const onFrameImage = useCallback(
     async (image: Image, score: number) => {
@@ -140,13 +158,14 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
         }
       } catch (e) {
         if (path) await deleteQuietly([path]);
+        if (stage === 'tread') sync.treadTaken.setBlocking(Math.max(0, sync.treadTaken.getBlocking() - 1));
         if (isNoSpace(e)) setLowStorage(true);
       } finally {
         image.dispose();
         sync.busy.setBlocking(false);
       }
     },
-    [session, sync],
+    [session, sync, stage],
   );
 
   const requireSteady = stage === 'sidewall';
@@ -157,6 +176,8 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
   const step = captureConfig.sampleStep;
   const guideMargin = captureConfig.guideMargin;
   const analysisIntervalMs = 1000 / captureConfig.analysisFps;
+  const sweepBand = captureConfig.sweepProfileBand;
+  const treadTarget = c.treadTargetFrames;
 
   const onFrame = useCallback(
     (frame: Frame) => {
@@ -175,6 +196,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
         if (planes.length === 0) return;
         const y = planes[0];
         const luma = new Uint8Array(y.getPixelBuffer());
+        const bufferSize = `${y.width}x${y.height}`;
         const metrics = measureLuma(
           luma,
           y.width,
@@ -183,9 +205,11 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
           region,
           step,
         );
-        const profiles = requireSteady
+        // Tread: the profile along the buffer axis that is horizontal on screen.
+        const screenX = screenXAxis(String(frame.orientation), frame.isMirrored);
+        const profile = requireSteady
           ? null
-          : measureProfiles(luma, y.width, y.height, y.bytesPerRow, region, step);
+          : measureSweepProfile(luma, y.width, y.height, y.bytesPerRow, screenX.axis, sweepBand, step);
         for (const p of planes) p.dispose();
         planes = null;
 
@@ -193,12 +217,14 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
         sync.prevThumb.setBlocking(metrics.thumb);
         let issue: SampleIssue = classifyFrame(metrics, motion, THRESHOLDS, requireSteady);
 
-        // Tread: one-way sweep (owner request 2026-11-12). Rightward travel fills
-        // the chevrons; moving left freezes them and frame capture until the
+        // Tread: one-way sweep (owner requests 2026-11-12). Rightward travel fills
+        // the chevrons; frames follow the chevrons (`sweepAllowsFrame`), and
+        // moving left or not moving on freezes both (`Move right`) until the
         // camera moves right again.
-        if (profiles) {
-          const travel = rightwardTravel(sync.prevProfiles.getBlocking(), profiles, String(frame.orientation), frame.isMirrored);
-          sync.prevProfiles.setBlocking(profiles);
+        if (profile) {
+          const travel = rightwardTravel(sync.prevProfile.getBlocking(), profile, screenX.sign, sync.lastTravel.getBlocking());
+          sync.prevProfile.setBlocking(profile);
+          sync.lastTravel.setBlocking(travel ?? 0);
           const next = advanceSweep(sync.sweep.getBlocking(), travel);
           sync.sweep.setBlocking(next);
           const sent = sync.lastSentSweep.getBlocking();
@@ -207,7 +233,22 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
             sync.lastSentSweep.setBlocking({ step: stepNow, reversed: next.reversed });
             scheduleOnRN(onSweep, next.travel, next.reversed);
           }
-          if (next.reversed && issue === 'ok') issue = 'reverse';
+          const allowed = sweepAllowsFrame(next, sync.treadTaken.getBlocking(), treadTarget);
+          if (!allowed && issue === 'ok' && sync.collecting.getBlocking()) issue = 'reverse';
+          if (sync.logSweep.getBlocking()) {
+            scheduleOnRN(onSweepLog, {
+              orientation: String(frame.orientation),
+              buffer: bufferSize,
+              axis: screenX.axis,
+              sign: screenX.sign,
+              step: travel === null ? null : Math.round(travel * 1000) / 1000,
+              travel: Math.round(next.travel * 1000) / 1000,
+              back: Math.round(next.back * 1000) / 1000,
+              reversed: next.reversed,
+              taken: sync.treadTaken.getBlocking(),
+              issue,
+            });
+          }
         }
 
         if (
@@ -225,6 +266,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
           } else {
             sync.busy.setBlocking(true);
             sync.lastAccept.setBlocking(now);
+            if (!requireSteady) sync.treadTaken.setBlocking(sync.treadTaken.getBlocking() + 1);
             sync.lastAcceptedThumb.setBlocking(metrics.thumb);
             // Upright once, crop to the guide; intermediates are disposed inside.
             // Before the guide is laid out the whole upright frame is kept.
@@ -241,9 +283,11 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
               } catch {
                 // Not handed over: dispose it here and free the pipeline.
                 result.image.dispose();
+                if (!requireSteady) sync.treadTaken.setBlocking(sync.treadTaken.getBlocking() - 1);
                 sync.busy.setBlocking(false);
               }
             } else {
+              if (!requireSteady) sync.treadTaken.setBlocking(sync.treadTaken.getBlocking() - 1);
               sync.busy.setBlocking(false);
             }
           }
@@ -274,6 +318,9 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
       onFrameImage,
       onSample,
       onSweep,
+      onSweepLog,
+      sweepBand,
+      treadTarget,
       requireSteady,
       acceptIntervalMs,
       minNovelty,

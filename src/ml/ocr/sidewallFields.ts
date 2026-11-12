@@ -673,6 +673,12 @@ export function fullFrameModelCandidate(
       return { brand: hit.model.brand, family: hit.model.family, code: codeOf(hit.model.family, codesRead) };
     }
   }
+  // Still nothing: the name split over two adjacent lines (owner request 2026-11-12, round 2).
+  const split = splitLineModelFamily(lines);
+  if (split) {
+    sidewallLog('model: family read split over two adjacent lines (owner request 2026-11-12)', split.log);
+    return { brand: split.model.brand, family: split.model.family, code: codeOf(split.model.family, codesRead) };
+  }
   return null;
 }
 
@@ -822,6 +828,107 @@ function nearestModelFamily(
   }
   if (!best || tie) return null;
   return { model: best.fam.pattern.model, distance: best.distance };
+}
+
+/**
+ * Owner request 2026-11-12, round 2 (iPhone 13: iOS Vision splits a curved
+ * `ComfortContact` over two lines, `Comfori` / `Comfo` / `Comtortco` then
+ * `Contact` / `ioricontac`). For a family whose last word is shared
+ * (`…Contact`), two lines next to each other in reading order (either order)
+ * give the family when:
+ * - one line has a letter token starting with the distinct prefix, within
+ *   `MODEL_SPLIT_FUZZY.maxEdits` and within the prefix rule's own allowance
+ *   (`COMFORT` 2, `SPORT` 1), strictly closer than any sibling's prefix;
+ * - the other has a letter token ending with the shared word within
+ *   `maxEdits` (`CONTACT`);
+ * - letters left over at the join (OCR reading the join twice: `co` after
+ *   `Comtort`, `iori` before `contac`) are at most `maxJoinLetters` and look
+ *   like the other part's start or end (at most half of them wrong).
+ * Families with a distinct prefix under `minPrefixLetters` (`Max`, `Eco`,
+ * `Van`: everyday sidewall words) are never split-matched, and each piece
+ * needs `minPieceLetters`. The family must be the unique best. A `Contact` line with no matching
+ * prefix line never gives a family, so a bare `Contact` is never SportContact.
+ */
+export const MODEL_SPLIT_FUZZY = { maxEdits: 2, maxJoinLetters: 4, minPrefixLetters: 5, minPieceLetters: 4 } as const;
+
+const letterTokens = (text: string) => text.toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+
+/** Edits for `token` = `prefix` + join letters that look like the start of `suffix`; null when it doesn't fit. */
+function prefixPieceEdits(token: string, fam: FamilyLetters): number | null {
+  let best: number | null = null;
+  for (let tail = 0; tail <= Math.min(MODEL_SPLIT_FUZZY.maxJoinLetters, token.length - MODEL_SPLIT_FUZZY.minPieceLetters); tail++) {
+    const head = token.slice(0, token.length - tail);
+    const join = token.slice(token.length - tail);
+    if (editDistance(join, fam.suffix.slice(0, tail)) > Math.floor(tail / 2)) continue;
+    const d = editDistance(head, fam.prefix, MODEL_SPLIT_FUZZY.maxEdits);
+    if (d <= MODEL_SPLIT_FUZZY.maxEdits && (best === null || d < best)) best = d;
+  }
+  return best;
+}
+
+/** Edits for `token` = join letters that look like the end of `prefix` + `suffix`; null when it doesn't fit. */
+function suffixPieceEdits(token: string, fam: FamilyLetters): number | null {
+  let best: number | null = null;
+  for (let lead = 0; lead <= Math.min(MODEL_SPLIT_FUZZY.maxJoinLetters, token.length - MODEL_SPLIT_FUZZY.minPieceLetters); lead++) {
+    const join = token.slice(0, lead);
+    const tail = token.slice(lead);
+    if (lead > 0 && editDistance(join, fam.prefix.slice(-lead)) > Math.floor(lead / 2)) continue;
+    const d = editDistance(tail, fam.suffix, MODEL_SPLIT_FUZZY.maxEdits);
+    if (d <= MODEL_SPLIT_FUZZY.maxEdits && (best === null || d < best)) best = d;
+  }
+  return best;
+}
+
+function splitLineModelFamily(
+  lines: OcrLineLike[],
+): { model: ModelPattern['model']; log: Record<string, unknown> } | null {
+  const ordered = readingOrder(lines);
+  let best: { fam: FamilyLetters; edits: number; log: Record<string, unknown> } | null = null;
+  let tie = false;
+  for (let i = 0; i + 1 < ordered.length; i++) {
+    for (const [first, second] of [
+      [ordered[i], ordered[i + 1]],
+      [ordered[i + 1], ordered[i]],
+    ]) {
+      for (const fam of FAMILY_LETTERS) {
+        if (!fam.suffix) continue;
+        const allowed = Math.min(
+          MODEL_SPLIT_FUZZY.maxEdits,
+          Math.floor(fam.prefix.length * MODEL_PREFIX_FUZZY.prefixEditsPerLetter),
+        );
+        // Short prefixes are everyday sidewall words (`MAX LOAD`, `ECO`): never split-matched.
+        if (fam.prefix.length < MODEL_SPLIT_FUZZY.minPrefixLetters) continue;
+        for (const a of letterTokens(first.text)) {
+          if (a.length < MODEL_SPLIT_FUZZY.minPieceLetters) continue;
+          const pe = prefixPieceEdits(a, fam);
+          if (pe === null || pe > allowed) continue;
+          // The prefix piece must be strictly closer to this family than to any sibling.
+          const rivalled = FAMILY_LETTERS.some(
+            other =>
+              isSibling(fam, other) &&
+              other.prefix.length >= MODEL_SPLIT_FUZZY.minPrefixLetters &&
+              (prefixPieceEdits(a, other) ?? Infinity) <= pe,
+          );
+          if (rivalled) continue;
+          for (const b of letterTokens(second.text)) {
+            if (b.length < MODEL_SPLIT_FUZZY.minPieceLetters) continue;
+            const se = suffixPieceEdits(b, fam);
+            if (se === null) continue;
+            const edits = pe + se;
+            const log = { lines: [first.text, second.text], family: fam.pattern.model.family, prefixEdits: pe, suffixEdits: se };
+            if (!best || edits < best.edits) {
+              best = { fam, edits, log };
+              tie = false;
+            } else if (edits === best.edits && best.fam !== fam) {
+              tie = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (!best || tie) return null;
+  return { model: best.fam.pattern.model, log: best.log };
 }
 
 /**

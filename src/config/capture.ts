@@ -41,20 +41,35 @@ export const captureConfig = {
   /** estimate. Minimum time between accepted tread frames. */
   treadAcceptIntervalMs: 250,
   /**
-   * Tread sweep direction (owner request 2026-11-12; `sweepMotion.ts`).
-   * estimate. Luminance profile bins across the analysed square.
+   * Tread sweep direction (owner requests 2026-11-12; `sweepMotion.ts`).
+   * Round 2 (iPhone 13 video): the profile runs along the whole on-screen
+   * width, so travel is in SCREEN WIDTHS. All `estimate`; calibrate with the
+   * `[TreadWear] sweep:` log lines on a phone (docs/RELEASE_CHECKLIST.md).
+   * estimate. Luminance profile bins across the screen width.
    */
-  sweepProfileBins: 48,
-  /** estimate. Largest shift searched between analysed frames, in bins (±). */
-  sweepMaxShiftBins: 10,
+  sweepProfileBins: 64,
+  /** estimate. Centred band of the screen height averaged into the profile, as a fraction. */
+  sweepProfileBand: 0.5,
+  /** estimate. Largest shift searched between analysed frames, in bins (±): a quarter of the screen. */
+  sweepMaxShiftBins: 16,
   /** estimate. Mean absolute deviation 0–255 of a profile below which it's too flat to track. */
   sweepMinTexture: 2,
   /** estimate. Best match cost must be at most this fraction of the worst, or the shift is unknown. */
   sweepMaxMatchRatio: 0.8,
-  /** estimate. Per-frame travel, in analysed-square widths, below which the camera counts as still. */
-  sweepDeadBand: 0.015,
-  /** estimate. Rightward travel, in analysed-square widths, that fills all 4 chevrons. */
-  treadSweepTravel: 2,
+  /** estimate. Repetitive tread: matches within this fraction of the cost range of the best count as equal; the one nearest the previous shift wins. */
+  sweepAliasTolerance: 0.15,
+  /** estimate. Per-frame travel, in screen widths, below which the camera counts as still (half a bin). */
+  sweepDeadBand: 0.008,
+  /** estimate. Leftward travel, in screen widths, that locks the sweep (`Move right`). */
+  sweepReverseLatch: 0.04,
+  /**
+   * estimate. Rightward travel, in screen widths, that fills all 4 chevrons
+   * (and allows the last of `treadTargetFrames`). An edge-to-edge sweep of a
+   * 155–245 mm tread held about 15–20 cm away moves the scene by roughly one
+   * screen width on an iPhone 13 main camera in portrait; 0.8 leaves margin.
+   * NOT measured on a phone yet.
+   */
+  treadSweepTravel: 0.8,
   /** estimate. Sidewall: extra candidates gathered before keeping the sharpest `sidewallTargetFrames`. */
   sidewallExtraCandidates: 4,
   /** estimate. Sidewall: after `sidewallTargetFrames` are in, wait this long for sharper ones. */
