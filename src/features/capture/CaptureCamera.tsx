@@ -61,7 +61,14 @@ export function CaptureCamera({
 
   return (
     <View style={styles.fill} onLayout={onLayout}>
-      {issue === null && device ? (
+      {/*
+        Mounted only while the screen is focused (2026-11-12, iPhone 13:
+        `Camera ran out of frame buffers (text-scanner)` on Sidewall). Plate and
+        Chassis scan stay mounted under later screens in the stack; an inactive
+        <Camera> there kept its frame output attached. Unmounting removes the
+        output, so a screen that isn't shown can't hold camera buffers.
+      */}
+      {issue === null && device && focused ? (
         <Camera
           key={attempt}
           style={StyleSheet.absoluteFill}

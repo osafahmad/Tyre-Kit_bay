@@ -60,16 +60,19 @@ export const captureConfig = {
   sweepAliasTolerance: 0.15,
   /** estimate. Per-frame travel, in screen widths, below which the camera counts as still (half a bin). */
   sweepDeadBand: 0.008,
-  /** estimate. Leftward travel, in screen widths, that locks the sweep (`Move right`). */
-  sweepReverseLatch: 0.04,
   /**
-   * estimate. Rightward travel, in screen widths, that fills all 4 chevrons
-   * (and allows the last of `treadTargetFrames`). An edge-to-edge sweep of a
-   * 155–245 mm tread held about 15–20 cm away moves the scene by roughly one
-   * screen width on an iPhone 13 main camera in portrait; 0.8 leaves margin.
-   * NOT measured on a phone yet.
+   * Leftward travel, in screen widths, that locks the sweep (`Move right`).
+   * 0.08 from the iPhone 13 sweep logs (owner 2026-11-12): 0.04 flickered the
+   * pill during pauses in a slow sweep.
    */
-  treadSweepTravel: 0.8,
+  sweepReverseLatch: 0.08,
+  /**
+   * Rightward travel, in screen widths, that fills all 4 chevrons (and allows
+   * the last of `treadTargetFrames`). iPhone 13 sweep logs (owner 2026-11-12):
+   * a full edge-to-edge sweep reached travel 0.973; 0.65 completes the 4th
+   * chevron and 10th frame before the camera runs past the tyre edge.
+   */
+  treadSweepTravel: 0.65,
   /** estimate. Sidewall: extra candidates gathered before keeping the sharpest `sidewallTargetFrames`. */
   sidewallExtraCandidates: 4,
   /** estimate. Sidewall: after `sidewallTargetFrames` are in, wait this long for sharper ones. */

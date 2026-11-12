@@ -221,6 +221,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
         // the chevrons; frames follow the chevrons (`sweepAllowsFrame`), and
         // moving left or not moving on freezes both (`Move right`) until the
         // camera moves right again.
+        let sweepAllowed = true;
         if (profile) {
           const travel = rightwardTravel(sync.prevProfile.getBlocking(), profile, screenX.sign, sync.lastTravel.getBlocking());
           sync.prevProfile.setBlocking(profile);
@@ -233,8 +234,10 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
             sync.lastSentSweep.setBlocking({ step: stepNow, reversed: next.reversed });
             scheduleOnRN(onSweep, next.travel, next.reversed);
           }
-          const allowed = sweepAllowsFrame(next, sync.treadTaken.getBlocking(), treadTarget);
-          if (!allowed && issue === 'ok' && sync.collecting.getBlocking()) issue = 'reverse';
+          sweepAllowed = sweepAllowsFrame(next, sync.treadTaken.getBlocking(), treadTarget);
+          // `Move right` only for a real reversal (owner 2026-11-12). A frame that
+          // isn't due yet (a pause in a slow sweep) just isn't taken.
+          if (next.reversed && issue === 'ok') issue = 'reverse';
           if (sync.logSweep.getBlocking()) {
             scheduleOnRN(onSweepLog, {
               orientation: String(frame.orientation),
@@ -253,6 +256,7 @@ export function useTyreCapture({ stage, active }: { stage: CaptureStage; active:
 
         if (
           issue === 'ok' &&
+          sweepAllowed &&
           sync.collecting.getBlocking() &&
           !sync.busy.getBlocking() &&
           now - sync.lastAccept.getBlocking() >= acceptIntervalMs
