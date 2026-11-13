@@ -273,3 +273,36 @@ describe('loosened thresholds and the full-sweep fail-safe (owner 2026-11-13)', 
     expect(blocksTreadResult(await run(wall, 10))).toBe(true);
   });
 });
+
+describe('round 2: indoor glare and the full-sweep brightness limits (owner 2026-11-13)', () => {
+  /** Grooved rubber with 35 % of rows blown out by a reflection. */
+  const reflection: Paint = (x, y) => (y < 17 ? [250, 250, 250] : grooved(x, y));
+  /** Grooved rubber with 46 % of rows blown out. */
+  const heavyReflection: Paint = (x, y) => (y < 22 ? [250, 250, 250] : grooved(x, y));
+  /** Light grey, brightly lit worn rubber (median ~188). */
+  const brightRubber: Paint = x => (x % 8 < 3 ? [170, 170, 172] : [188, 188, 190]);
+  /** Very dim garage: median ~4. */
+  const dim: Paint = x => (x % 8 < 3 ? [1, 1, 1] : [4, 4, 4]);
+  const judge = (paint: Paint, fullSweep = false) =>
+    judgeTreadFrame(0, treadPresenceMetrics(image(paint)), treadPresenceConfig, fullSweep);
+
+  test('35 % glare and a very dim frame now pass the rubber check on any sweep', () => {
+    expect(treadPresenceMetrics(image(reflection)).blownOutFraction).toBeCloseTo(17 / 48, 2);
+    expect(judge(reflection).reason).toBe('ok');
+    expect(treadPresenceMetrics(image(dim)).medianLuminance).toBeLessThan(5);
+    expect(judge(dim).rubber).toBe(true);
+  });
+
+  test('a full sweep allows more glare and brighter rubber; an early stop does not', () => {
+    expect(judge(heavyReflection).reason).toBe('not_rubber_surface');
+    expect(judge(heavyReflection, true).reason).toBe('ok');
+    expect(judge(brightRubber).reason).toBe('not_rubber_surface');
+    expect(judge(brightRubber, true).reason).toBe('ok');
+  });
+
+  test('even on a full sweep, a white wall, a coloured object and a mostly blown-out frame still block', () => {
+    expect(judge(wall, true).reason).toBe('not_rubber_surface');
+    expect(judge(redTextured, true).reason).toBe('not_rubber_surface');
+    expect(judge(glare, true).reason).toBe('not_rubber_surface');
+  });
+});

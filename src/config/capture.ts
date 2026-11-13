@@ -168,14 +168,23 @@ export const treadPresenceConfig = {
   /** estimate. Fraction of readable frames that must look like tread for the scan to count as tread. */
   minPassFraction: 0.5,
   // Loosened 2026-11-13 (owner: real tread sweeps were blocked). Previous values in brackets.
-  /** estimate [150]. Median luminance 0–255 above this is too bright for tread rubber (walls, paper, sky). Dusty or sunlit rubber reads grey. */
-  maxMedianLuminance: 175,
-  /** estimate [8]. Median luminance below this is a covered lens or darkness, not rubber under light. */
-  minMedianLuminance: 5,
+  // Round 2 (owner 2026-11-13: indoor glare and reflections still blocked real tyres). Round-1 value second in brackets.
+  /** estimate [150, 175]. Median luminance 0–255 above this is too bright for tread rubber (walls, paper, sky). Dusty or sunlit rubber reads grey. */
+  maxMedianLuminance: 185,
+  /** estimate [8, 5]. Median luminance below this is a covered lens or darkness, not rubber under light. */
+  minMedianLuminance: 3,
   /** estimate [0.35]. Median HSV saturation 0–1 above this is a coloured surface, not charcoal rubber. Warm or sodium lighting tints rubber. */
   maxMedianSaturation: 0.45,
-  /** estimate [0.2]. Fraction of pixels with luminance ≥ 235 above this is glare or a blown-out surface. */
-  maxBlownOutFraction: 0.3,
+  /** estimate [0.2, 0.3]. Fraction of pixels with luminance ≥ 235 above this is glare or a blown-out surface. */
+  maxBlownOutFraction: 0.4,
+  /**
+   * estimate. Full sweep only (`isFullSweep`): the rubber check's brightness
+   * limits are relaxed to these. Kept below a white wall's ~200 median, and
+   * saturation is not relaxed, so walls and coloured objects still block.
+   */
+  fullSweepMaxMedianLuminance: 195,
+  /** estimate. Full sweep only: glare allowed, as a fraction of pixels with luminance ≥ 235. */
+  fullSweepMaxBlownOutFraction: 0.5,
   /** estimate [20]. Neighbouring-pixel luminance difference that counts as an edge (groove wall, sipe). Worn grooves are shallower. */
   edgeDelta: 16,
   /** estimate [0.05]. Fraction of neighbour pairs, along the stronger axis, that must be edges. Smooth surfaces are near 0. */

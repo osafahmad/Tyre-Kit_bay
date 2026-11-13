@@ -1091,3 +1091,37 @@ The owner asked for three things from the screen-capture and device logs. Each w
 ### Needs a real phone
 - Worn and new tyres in daylight, with flash, and in a dim garage: no false block.
 - A white wall, a dark floor and the car body, swept fully and stopped early: which ones are still blocked.
+
+## Tread presence check, round 2: indoor glare and lighting (owner request 2026-11-13)
+
+**Status: unit-tested with synthetic surfaces. Still `estimate`, UNCALIBRATED; not yet run on a phone.**
+
+### Why
+- Real tyres scanned indoors, and tyres shown on a laptop screen, were still blocked with `No tyre tread detected` because of glare and reflections.
+- No `[TreadWear] presence:` log lines were available again, so these are estimates.
+- **Caution:** a laptop screen gives off its own light and adds reflections and moiré, so its pixel statistics are not those of rubber. Tuning to it makes the check more permissive overall. Calibrate on physical tyres.
+
+### `treadPresenceConfig` (`src/config/capture.ts`)
+| Value | Original | Round 1 | Round 2 |
+|---|---|---|---|
+| `minMedianLuminance` | 8 | 5 | 3 |
+| `maxMedianLuminance` | 150 | 175 | 185 |
+| `maxBlownOutFraction` | 0.2 | 0.3 | 0.4 |
+| `fullSweepMaxMedianLuminance` (new) | — | — | 195 |
+| `fullSweepMaxBlownOutFraction` (new) | — | — | 0.5 |
+
+`maxMedianSaturation` (0.45), the groove values and the frame counts are unchanged from round 1.
+
+### Full sweep: softer rubber check (`judgeTreadFrame(…, fullSweep)`)
+- On a full sweep (10 saved frames), the groove check is still waived (round 1), and the rubber check now uses the `fullSweep*` limits: median luminance up to 195 and up to 50 % blown-out pixels.
+- Limits kept so the check still blocks something:
+  - 195 is below the synthetic white wall's ~203 median.
+  - 50 % still blocks a frame that is mostly glare.
+  - Saturation is not relaxed, so coloured objects still block.
+- An early `Finish sweep` uses the normal limits.
+- The `[TreadWear] presence:` line now also logs `rubberLimits`, the brightness and glare limits used.
+- **Known risk:** after rounds 1 and 2, on a full sweep, almost any unsaturated surface that is not near-white and not mostly glare passes: grey walls, concrete, asphalt, dark carpet, a black or grey car body. The check now mostly catches white walls, coloured objects and blown-out frames. A real-world white wall under dim auto-exposure can read below 195 and pass.
+
+### Needs a real phone
+- Physical tyres indoors (ceiling lights, a strip light reflecting off the tread, a dim garage): no false block.
+- A white wall, a grey wall and a car body, swept fully: which ones are still blocked. If the grey wall and car body pass, a tyre detector (not pixel statistics) is the next step.

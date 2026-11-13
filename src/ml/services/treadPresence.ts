@@ -16,7 +16,9 @@ import { r3, treadLog } from './treadDebug';
 // Full-sweep fail-safe (owner decision 2026-11-13): when the sweep finished
 // (`inspectionConfig.capture.treadTargetFrames` frames saved), the groove check is
 // waived, so worn, dusty or glare-hit tread isn't blocked. The rubber check
-// still applies, because a textured wall or car body can also finish a sweep.
+// still applies, because a textured wall or car body can also finish a sweep,
+// but with the wider `fullSweep*` brightness and glare limits (round 2).
+// Saturation is never relaxed.
 
 /** The thresholds, as plain numbers so tests and later calibration can pass variants. */
 export type TreadPresenceConfig = { readonly [K in keyof typeof treadPresenceConfig]: number };
@@ -146,27 +148,28 @@ export function isFullSweep(savedFrames: number): boolean {
 }
 
 /**
- * One frame's metrics against the thresholds. With `waiveGrooves` (a full
- * sweep), a rubber-looking frame passes even without groove edges; `grooves`
- * still reports what was measured.
+ * One frame's metrics against the thresholds. With `fullSweep`, a
+ * rubber-looking frame passes even without groove edges (`grooves` still
+ * reports what was measured), and the rubber check uses the wider
+ * `fullSweepMaxMedianLuminance` / `fullSweepMaxBlownOutFraction`.
  */
 export function judgeTreadFrame(
   index: number,
   metrics: TreadFrameMetrics,
   cfg: TreadPresenceConfig = treadPresenceConfig,
-  waiveGrooves = false,
+  fullSweep = false,
 ): TreadFrameJudgement {
   const rubber =
     metrics.medianLuminance >= cfg.minMedianLuminance &&
-    metrics.medianLuminance <= cfg.maxMedianLuminance &&
+    metrics.medianLuminance <= (fullSweep ? cfg.fullSweepMaxMedianLuminance : cfg.maxMedianLuminance) &&
     metrics.medianSaturation <= cfg.maxMedianSaturation &&
-    metrics.blownOutFraction <= cfg.maxBlownOutFraction;
+    metrics.blownOutFraction <= (fullSweep ? cfg.fullSweepMaxBlownOutFraction : cfg.maxBlownOutFraction);
   // Grooves run one way across the frame, so the stronger axis is the one that matters.
   const grooves =
     Math.max(metrics.strongEdgeFractionX, metrics.strongEdgeFractionY) >= cfg.minStrongEdgeFraction &&
     Math.max(metrics.meanGradientX, metrics.meanGradientY) >= cfg.minMeanGradient;
   const reason: TreadPresenceReason =
-    !rubber ? 'not_rubber_surface' : !grooves && !waiveGrooves ? 'too_smooth_no_grooves' : 'ok';
+    !rubber ? 'not_rubber_surface' : !grooves && !fullSweep ? 'too_smooth_no_grooves' : 'ok';
   return { index, metrics, rubber, grooves, reason };
 }
 
@@ -281,6 +284,9 @@ export class TreadPresenceValidator implements TreadPresenceChecker {
       savedFrames: frames.length,
       fullSweep,
       groovesWaived: fullSweep,
+      rubberLimits: fullSweep
+        ? { maxMedianLum: cfg.fullSweepMaxMedianLuminance, maxBlownOut: cfg.fullSweepMaxBlownOutFraction }
+        : { maxMedianLum: cfg.maxMedianLuminance, maxBlownOut: cfg.maxBlownOutFraction },
       checked: picked.map(i => i + 1),
       passed: verdict.metrics.framesPassed,
       unreadable: unreadable.map(i => i + 1),
