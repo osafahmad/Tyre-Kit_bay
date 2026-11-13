@@ -1151,3 +1151,35 @@ The owner asked for three things from the screen-capture and device logs. Each w
 - Android 16 KB page alignment: every arm64 `.so` in the release APK passed (`zipalign -c -P 16`), but that APK was built on 2026-11-04. Re-check on a fresh build.
 - ML Kit's iOS privacy manifest declares collected data (device ID, other diagnostic data, other user content, other data types; analytics, not linked, no tracking). The store privacy answers must match the outcome of "ML Kit usage metrics", which is still open.
 
+
+## Sidewall capture: circular progress (2026-11-13)
+
+**Status: built and unit-tested. Not yet checked on a phone.**
+
+- **Owner request:** replace the frame indicator on Sidewall capture (screen 13) with a centred circular progress bar and a frame count.
+- **What was there:** no 8-box grid existed in the code. While frames were being collected the screen showed a caption under the status pill, `3 of 8 frames`. That caption is what was replaced.
+- **Now:** `CircularProgress` (`src/components/CircularProgress.tsx`), an 84 pt ring in the centre of the guide circle with `3/8` inside it and `Scanning sidewall frames` below. Shown only while collecting, as the caption was. The total comes from `inspectionConfig.capture.sidewallTargetFrames`.
+- **Placement:** the centre of the guide circle sits over the wheel hub, away from the sidewall text the user is lining up. The ring is a UI overlay and is not part of the saved frames.
+- **Animation:** the arc eases to each new count over 280 ms (React Native `Animated`, JS driver, `react-native-svg` stroke offset). No new dependency.
+- **Colours:** theme tokens only (`cameraBlue` arc, `darkLineStrong` track, `black` disc at 60 % behind the count, `white` text).
+- **Accessibility:** one `progressbar` element, label `Scanning sidewall frames: 3 of 8`, with min / max / now values, announced politely.
+- **What the ring counts:** frames accepted by the capture session (light, sharpness and steadiness checks). `SidewallTextDetector` does not run during capture; it runs on the saved frames after Sidewall captured opens, where fields show `Reading…`. That screen is unchanged.
+- **Deviation from the screen image:** `13-sidewall-capture.png` shows the idle state only and has no progress indicator, so the ring is an addition to the collecting state, as the caption was.
+
+### Needs a real phone
+- iPhone 13, iPhone SE and one Android phone: the ring is centred in the guide circle, the count and label are readable over a bright and a dark preview, and the arc moves smoothly while frames are being analysed.
+- Largest system text size: the label under the ring stays inside the guide circle.
+
+## Sidewall captured: developer diagnostics removed (2026-11-13)
+
+**Status: removed and unit-tested. Not yet checked on a phone.**
+
+- **Owner request:** remove **Copy logs** and the staging detector card from the sidewall capture / results view.
+- **Copy logs:** removed from Sidewall captured (screen 14). It stays on Tyre result, the only other place it was shown, so staging builds can still copy `[SidewallOCR]`, `[SidewallDetector]` and `[TreadWear]` lines after a scan. `diagnosticsConfig.enableStagingLogs` and the in-memory log buffer are unchanged.
+- **Staging detector card:** `SidewallDetectorDebugCard` (frame with detector boxes, tensor readout, crop thumbnails and raw crop text) is deleted, along with its flag `diagnosticsConfig.sidewallDetectorDebugCard`, its exports, the test mock that switched it off, and its release-checklist line. Opening Sidewall captured no longer runs an extra detector and crop-OCR pass for the card.
+- **Not changed:** the detector itself, the Stage 3 crop pass that fills fields, the empty-capture notice, and the `[SidewallDetector]` log lines (`sidewallDetectorLogs`). Sidewall capture (screen 13) never showed either item.
+- **Layout:** both items were the last things in the sheet, so nothing else moved. The sheet now ends at **Scan sidewall again** with the usual bottom padding.
+- **Trade-off:** detector boxes can no longer be inspected on the phone. The per-frame boxes and timings are still in the `[SidewallDetector]` lines copied from Tyre result. The card is in git history (before this change) if it is needed again.
+
+### Needs a real phone
+- Sidewall captured on iPhone 13, iPhone SE and one Android phone: the sheet ends cleanly after **Scan sidewall again**, with no blank space below it, and the keyboard still leaves the edited field visible.

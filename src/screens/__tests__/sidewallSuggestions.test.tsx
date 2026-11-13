@@ -13,20 +13,13 @@ jest.mock('../../ml/sidewallReader', () => ({
   ...jest.requireActual('../../ml/sidewallReader'),
   getSidewallReader: () => mockReader,
 }));
-// The staging detector card (Stage 1, 2026-11-13) runs the text detector on open; its
-// service is tested in src/ml/services/__tests__/SidewallTextDetector.test.ts.
+// The text detector's service is tested in src/ml/services/__tests__/SidewallTextDetector.test.ts.
 const mockReadCrops = jest.fn<Promise<unknown>, [unknown, number]>(async () => ({ status: 'unavailable', reason: 'no_detections' }));
 const mockDetectFrame = jest.fn<Promise<unknown>, [string, number]>(async () => ({
   status: 'unavailable',
   reason: 'model_missing',
   detail: 'test',
 }));
-// The staging detector card (Stage 1–2) would also run the detector on open; it is off here so the
-// empty-capture check's calls can be counted. The card is tested through its own service tests.
-jest.mock('../../config/diagnostics', () => {
-  const real = jest.requireActual('../../config/diagnostics');
-  return { diagnosticsConfig: { ...real.diagnosticsConfig, sidewallDetectorDebugCard: false } };
-});
 jest.mock('../../ml/services/SidewallTextDetector', () => ({
   getSidewallTextDetector: () => ({
     detectFrame: (f: string, i: number) => mockDetectFrame(f, i),
@@ -115,6 +108,20 @@ test('read values fill the fields as suggestions and are saved; the user can sti
 
   await fireEvent.changeText(screen.getByLabelText('Make'), 'Michelin');
   expect(details(tyreId).make).toBe('Michelin');
+});
+
+test('no developer diagnostics on Sidewall captured, with the staging flags as shipped (2026-11-13)', async () => {
+  const tyreId = seedTyre();
+  mockReader.read.mockResolvedValue(done({ size: '205/55 R16' }));
+  await renderScreen(tyreId);
+  await flush();
+  expect(screen.queryByText('Copy logs')).toBeNull();
+  expect(screen.queryByText(/STAGING/)).toBeNull();
+  expect(screen.queryByTestId('sidewall-detector-card')).toBeNull();
+  // The actions that remain.
+  expect(screen.getByRole('button', { name: 'Scan tread' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Scan sidewall again' })).toBeTruthy();
+  expect(screen.getAllByRole('button', { name: /^Edit / })).toHaveLength(4);
 });
 
 test('fields the user typed in while reading are not overwritten', async () => {

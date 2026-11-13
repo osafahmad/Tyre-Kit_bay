@@ -1,6 +1,6 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react-native';
-import { Button, ResultRow, StatusBadge, IconButton } from '..';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { Button, CircularProgress, ResultRow, StatusBadge, IconButton } from '..';
 import { ChevronLeft } from 'lucide-react-native';
 
 test('every status badge has a text label', async () => {
@@ -52,4 +52,22 @@ test('logo shows the app name', async () => {
   await render(<LogoMark />);
   expect(screen.getByText('Tyre Kit Bay')).toBeTruthy();
   expect(screen.getByLabelText('Tyre Kit Bay')).toBeTruthy();
+});
+
+test('circular progress shows the count, is a progressbar, and clamps out-of-range values', async () => {
+  const { rerender } = await render(<CircularProgress value={3} total={8} label="Scanning sidewall frames" />);
+  expect(screen.getByText('3/8')).toBeTruthy();
+  expect(screen.getByText('Scanning sidewall frames')).toBeTruthy();
+  expect(screen.getByRole('progressbar', { name: 'Scanning sidewall frames: 3 of 8' }).props.accessibilityValue).toEqual({
+    min: 0,
+    max: 8,
+    now: 3,
+  });
+  const settle = () => act(async () => new Promise<void>(resolve => setTimeout(resolve, 400)));
+  await rerender(<CircularProgress value={11} total={8} label="Scanning sidewall frames" />);
+  await settle();
+  expect(screen.getByText('8/8')).toBeTruthy();
+  await rerender(<CircularProgress value={-2} total={8} label="Scanning sidewall frames" />);
+  await settle();
+  expect(screen.getByText('0/8')).toBeTruthy();
 });

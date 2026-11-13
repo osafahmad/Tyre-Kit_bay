@@ -10,6 +10,7 @@ import {
   CameraStatusPill,
   CameraTitle,
   CaptureButton,
+  CircularProgress,
   DarkTopBar,
   DemoDataLabel,
   FlashToggle,
@@ -36,6 +37,7 @@ import { colors } from '../../theme';
 type Props = NativeStackScreenProps<RootStackParamList, 'SidewallCapture'>;
 
 export const SIDEWALL_HINT = 'Fit the whole tyre inside the circle';
+export const SIDEWALL_PROGRESS_LABEL = 'Scanning sidewall frames';
 
 /**
  * 13 Sidewall capture (Sidewall.dc.html). Frames are checked for light,
@@ -143,9 +145,14 @@ function LiveSidewall(props: Props) {
         </View>
         <CameraStatusPill label={status.label} showCheck={status.ok} style={styles.pill} />
         {capture.snapshot.collecting ? (
-          <AppText variant="caption" color="white" style={styles.count} accessibilityLiveRegion="polite">
-            {`${capture.snapshot.accepted} of ${inspectionConfig.capture.sidewallTargetFrames} frames`}
-          </AppText>
+          // Centre of the guide circle: over the wheel hub, clear of the sidewall text. Not part of saved frames.
+          <View style={styles.progress} pointerEvents="none">
+            <CircularProgress
+              value={capture.snapshot.accepted}
+              total={inspectionConfig.capture.sidewallTargetFrames}
+              label={SIDEWALL_PROGRESS_LABEL}
+            />
+          </View>
         ) : null}
         <AppText variant="rowLabel" color="white" align="center" style={styles.hint}>
           {SIDEWALL_HINT}
@@ -210,7 +217,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.black },
   pill: { position: 'absolute', top: 16 },
   demo: { position: 'absolute', top: 60, alignSelf: 'center' },
-  count: { position: 'absolute', top: 60, alignSelf: 'center' },
+  progress: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center' },
   hint: {
     position: 'absolute',
     left: 16,

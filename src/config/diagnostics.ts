@@ -41,8 +41,8 @@ export const diagnosticsConfig = {
    * STAGING ONLY (owner request 2026-11-12: testing on a car in an underground
    * car park with a Release build and no console). Keeps the last 300
    * `[SidewallOCR]` and `[TreadWear]` lines in memory, in every build, and
-   * shows "Copy logs" on Tyre result and Sidewall captured
-   * (`src/utils/debugLogBuffer.ts`). The lines include raw sidewall OCR text.
+   * shows "Copy logs" on Tyre result (`src/utils/debugLogBuffer.ts`; removed
+   * from Sidewall captured on 2026-11-13). The lines include raw sidewall OCR text.
    * Nothing is written to disk or sent; they leave the phone only when copied.
    * Console logging still follows the two flags above.
    * MUST be false for any store build (docs/RELEASE_CHECKLIST.md).
@@ -57,13 +57,4 @@ export const diagnosticsConfig = {
    * (docs/RELEASE_CHECKLIST.md).
    */
   sidewallDetectorLogs: true,
-  /**
-   * STAGING ONLY (owner task 2026-11-13, Stage 1). Shows the "Sidewall text
-   * detector" card on Sidewall captured: the saved frame with the detector's
-   * boxes, labels and scores drawn on it, and a readout of inference time,
-   * tensor shapes and raw value ranges. It is a diagnostics view, not a
-   * result: nothing on it fills a field. MUST be false for any store build
-   * (docs/RELEASE_CHECKLIST.md).
-   */
-  sidewallDetectorDebugCard: true,
 } as const;
