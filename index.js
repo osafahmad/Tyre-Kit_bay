@@ -7,6 +7,7 @@ import App from './src/app/App';
 import { name as appName } from './app.json';
 import { diagnosticsConfig } from './src/config/diagnostics';
 import { setSidewallDebug } from './src/ml/ocr/sidewallDebug';
+import { setSidewallDetectorDebug } from './src/ml/services/sidewallDetectorDebug';
 import { setTreadDebug } from './src/ml/services/treadDebug';
 import { setDebugLogBuffer } from './src/utils/debugLogBuffer';
 
@@ -14,6 +15,8 @@ import { setDebugLogBuffer } from './src/utils/debugLogBuffer';
 setSidewallDebug(diagnosticsConfig.sidewallOcrLogs);
 // [TreadWear] logs while tread wear is verified on phones (src/config/diagnostics.ts).
 setTreadDebug(diagnosticsConfig.treadWearLogs);
+// [SidewallDetector] logs while the sidewall text detector is verified on phones (src/config/diagnostics.ts).
+setSidewallDetectorDebug(diagnosticsConfig.sidewallDetectorLogs);
 // Staging: keep the last 300 of both in memory for "Copy logs", even in Release (src/config/diagnostics.ts).
 setDebugLogBuffer(diagnosticsConfig.enableStagingLogs);
 
