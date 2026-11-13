@@ -48,4 +48,22 @@ export const diagnosticsConfig = {
    * MUST be false for any store build (docs/RELEASE_CHECKLIST.md).
    */
   enableStagingLogs: true,
+  /**
+   * `[SidewallDetector]` logs (owner task 2026-11-13, Stage 1 of the YOLO11n-seg
+   * sidewall text detector): model load and delegate, tensor shapes, per-frame
+   * timings, raw output value ranges, and every box. No frame paths, plates or
+   * OCR text are logged; frames are referred to by index. On in every build
+   * while the detector is verified on phones. Turn off for store builds
+   * (docs/RELEASE_CHECKLIST.md).
+   */
+  sidewallDetectorLogs: true,
+  /**
+   * STAGING ONLY (owner task 2026-11-13, Stage 1). Shows the "Sidewall text
+   * detector" card on Sidewall captured: the saved frame with the detector's
+   * boxes, labels and scores drawn on it, and a readout of inference time,
+   * tensor shapes and raw value ranges. It is a diagnostics view, not a
+   * result: nothing on it fills a field. MUST be false for any store build
+   * (docs/RELEASE_CHECKLIST.md).
+   */
+  sidewallDetectorDebugCard: true,
 } as const;

@@ -29,6 +29,18 @@ export const LICENSE_NOTICES: readonly LicenseNotice[] = [
     notice: 'Trained SSDLite320-MobileNetV3-Large (Torchvision BSD-3-Clause) on Adtronics Tire Crack Detection v19 (6,359 images).',
   },
   {
+    // Owner task 2026-11-13: the dataset behind sidewall_detector.tflite
+    // (yolo11n-seg-tyre-to-text-v3-2026-11-13). Roboflow Universe dataset
+    // `tyre-to-text`, version 3, workspace `hetvi-eww-zdjt2`, 424 images.
+    id: 'sidewall-text-dataset',
+    title: 'tyre-to-text Computer Vision Dataset (Version 3)',
+    creator: 'Hetvi EWW (Roboflow workspace hetvi-eww-zdjt2)',
+    sourceUrl: 'https://universe.roboflow.com/hetvi-eww-zdjt2/tyre-to-text-cm4fa',
+    license: 'Creative Commons Attribution 4.0 International (CC BY 4.0)',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
+    notice: 'Sidewall text detector trained on the tyre-to-text dataset v3 by Hetvi EWW (424 images, CC BY 4.0).',
+  },
+  {
     id: 'torchvision',
     title: 'torchvision (SSDLite MobileNetV3 model architecture)',
     creator: 'Soumith Chintala and the torchvision contributors',

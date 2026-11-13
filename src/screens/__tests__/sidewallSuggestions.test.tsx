@@ -13,6 +13,13 @@ jest.mock('../../ml/sidewallReader', () => ({
   ...jest.requireActual('../../ml/sidewallReader'),
   getSidewallReader: () => mockReader,
 }));
+// The staging detector card (Stage 1, 2026-11-13) runs the text detector on open; its
+// service is tested in src/ml/services/__tests__/SidewallTextDetector.test.ts.
+jest.mock('../../ml/services/SidewallTextDetector', () => ({
+  getSidewallTextDetector: () => ({
+    detectFrame: jest.fn(async () => ({ status: 'unavailable', reason: 'model_missing', detail: 'test' })),
+  }),
+}));
 
 /** Lets the screen's read promise chain settle inside act(). */
 const flush = () => act(async () => new Promise<void>(r => setTimeout(r, 0)));

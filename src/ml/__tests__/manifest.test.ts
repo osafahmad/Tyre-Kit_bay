@@ -14,8 +14,11 @@ declare const __dirname: string; // Jest (Node); the project doesn't load Node's
 
 const ROOT = `${__dirname}/../../..`;
 const TREAD_PATH = `${ROOT}/assets/models/tread_wear.tflite`;
+const SIDEWALL_PATH = `${ROOT}/assets/models/sidewall_detector.tflite`;
 const treadWear = modelManifest.treadWear!;
 const treadFile = readTfliteFile(readFile(TREAD_PATH));
+const sidewallText = modelManifest.sidewallText!;
+const sidewallFile = readTfliteFile(readFile(SIDEWALL_PATH));
 
 describe('shipped manifest: treadWear (tread_wear.tflite, SSDLite)', () => {
   const treadModel = (): InferenceModel => ({ inputs: treadFile.inputs, outputs: treadFile.outputs, run: jest.fn() });
@@ -152,6 +155,93 @@ describe('shipped manifest: treadWear (tread_wear.tflite, SSDLite)', () => {
   });
 });
 
+describe('shipped manifest: sidewallText (sidewall_detector.tflite, YOLO11n-seg)', () => {
+  const sidewallModel = (): InferenceModel => ({
+    inputs: sidewallFile.inputs,
+    outputs: sidewallFile.outputs,
+    run: jest.fn(),
+  });
+
+  test('is registered with the values from the model file and the owner task (2026-11-13)', () => {
+    expect(sidewallText).toEqual(
+      expect.objectContaining({
+        inputShape: [1, 3, 640, 640],
+        inputLayout: 'NCHW',
+        inputType: 'float32',
+        colorOrder: 'RGB',
+        resize: 'letterbox',
+        letterboxPadValue: 114,
+        normalisation: { mean: [0, 0, 0], std: [255, 255, 255] },
+        inputQuantization: null,
+        labels: ['Brand', 'DOT', 'Model', 'Size'],
+        confidenceThreshold: 0.25,
+        outputFormat: 'yolo_seg_raw',
+        outputType: 'float32',
+        outputQuantization: null,
+        outputs: {
+          detections: { name: 'serving_default_output_0_output', shape: [1, 40, 8400] },
+          prototypes: { name: 'serving_default_output_1_output', shape: [1, 32, 160, 160] },
+        },
+        maskCoefficients: 32,
+        boxFormat: 'cxcywh_normalised',
+        iouThreshold: 0.45,
+        maxDetections: 300,
+      }),
+    );
+    expect(validateManifestEntry('sidewallText', sidewallText)).toEqual([]);
+  });
+
+  test('matches the tensors and the Ultralytics metadata inside the bundled .tflite file', () => {
+    expect(sidewallFile.inputs).toEqual([
+      expect.objectContaining({ shape: [1, 3, 640, 640], dataType: 'float32', quantized: false }),
+    ]);
+    expect(sidewallFile.outputs).toEqual([
+      expect.objectContaining({ ...sidewallText.outputs.detections, dataType: 'float32', quantized: false }),
+      expect.objectContaining({ ...sidewallText.outputs.prototypes, dataType: 'float32', quantized: false }),
+    ]);
+    const meta = sidewallFile.ultralytics!;
+    expect(meta).toEqual(
+      expect.objectContaining({ task: 'segment', imgsz: [640, 640], end2end: false, version: '8.4.211' }),
+    );
+    // Label order comes from the file's `names`, not from the task text.
+    expect(Object.values(meta.names as Record<string, string>)).toEqual(sidewallText.labels);
+    // Licence recorded in DECISIONS.md / LICENSES.md: the same AGPL blocker as the detector removed 2026-11-10.
+    expect(String(meta.license)).toMatch(/AGPL-3\.0/);
+    expect(checkModelMatchesManifest('sidewallText', sidewallModel(), sidewallText)).toEqual([]);
+  });
+
+  test('the loader rejects swapped outputs or an NHWC description of this file', () => {
+    const swapped: InferenceModel = { ...sidewallModel(), outputs: [...sidewallFile.outputs].reverse() };
+    expect(checkModelMatchesManifest('sidewallText', swapped, sidewallText)).toEqual(
+      expect.arrayContaining(['output 0 is serving_default_output_1_output, manifest says serving_default_output_0_output']),
+    );
+    const nhwc = { ...sidewallText, inputShape: [1, 640, 640, 3], inputLayout: 'NHWC' as const };
+    expect(validateManifestEntry('sidewallText', nhwc)).toEqual([]);
+    expect(checkModelMatchesManifest('sidewallText', sidewallModel(), nhwc)).toContain(
+      'input shape is [1,3,640,640], manifest says [1,640,640,3]',
+    );
+  });
+
+  test('the loader opens it with the platform default delegates, then CPU', async () => {
+    const createModel = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('Core ML refused the Segment head'))
+      .mockResolvedValueOnce(sidewallModel());
+    const deps = fakeLoaderDeps({
+      platform: 'ios',
+      resolveAssetUri: f => (f === sidewallText.file ? 'file:///bundle/sidewall_detector.tflite' : null),
+      createModel,
+      acceleration: ['core-ml'],
+    });
+    const r = await loadModel('sidewallText', modelManifest, deps);
+    expect(r.ok && r.model.delegate).toBe('cpu');
+    expect(createModel.mock.calls).toEqual([
+      ['file:///bundle/sidewall_detector.tflite', ['core-ml']],
+      ['file:///bundle/sidewall_detector.tflite', []],
+    ]);
+  });
+});
+
 describe('rest of the shipped manifest', () => {
   test('tyre detector, tread and damage are still missing; analysis stays pending', () => {
     expect(missingModels()).toEqual(['tyreDetector', 'tread', 'damage']);
@@ -159,11 +249,14 @@ describe('rest of the shipped manifest', () => {
     expect(isTyreDetectorAvailable()).toBe(false);
   });
 
-  test('tread_wear.tflite is the only bundled model; the AGPL sidewall text detector is gone', () => {
+  test('bundled models are tread_wear.tflite and sidewall_detector.tflite, nothing else', () => {
     const fs = require('fs') as { readdirSync(path: string): string[] };
-    expect(fs.readdirSync(`${ROOT}/assets/models`).filter(f => f.endsWith('.tflite'))).toEqual(['tread_wear.tflite']);
+    expect(fs.readdirSync(`${ROOT}/assets/models`).filter(f => f.endsWith('.tflite')).sort()).toEqual([
+      'sidewall_detector.tflite',
+      'tread_wear.tflite',
+    ]);
     expect(Object.keys(modelManifest)).not.toContain('sidewallTextDetector');
     const bundled = (Object.keys(modelManifest) as (keyof typeof modelManifest)[]).filter(k => modelManifest[k]);
-    expect(bundled).toEqual(['treadWear']);
+    expect(bundled).toEqual(['treadWear', 'sidewallText']);
   });
 });

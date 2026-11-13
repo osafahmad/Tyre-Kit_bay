@@ -358,13 +358,13 @@ export function iou(a: Detection, b: Detection): number {
  * score first; a box is dropped if it overlaps a kept box of the same label
  * by more than `iouThreshold`.
  */
-export function nonMaxSuppression(
-  detections: Detection[],
+export function nonMaxSuppression<T extends Detection>(
+  detections: T[],
   iouThreshold: number,
   maxDetections: number,
-): Detection[] {
+): T[] {
   const sorted = [...detections].sort((a, b) => b.score - a.score);
-  const kept: Detection[] = [];
+  const kept: T[] = [];
   for (const d of sorted) {
     if (kept.length >= maxDetections) break;
     if (kept.every(k => k.labelIndex !== d.labelIndex || iou(k, d) <= iouThreshold)) kept.push(d);

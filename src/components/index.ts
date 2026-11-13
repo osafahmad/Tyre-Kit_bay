@@ -13,3 +13,4 @@ export { TextField } from './TextField';
 export { DemoDataLabel } from './DemoDataLabel';
 export { LicensesModal, LICENSES_TITLE } from './LicensesModal';
 export { CopyLogsButton, stagingLogsShown } from './CopyLogsButton';
+export { SidewallDetectorDebugCard, sidewallDetectorCardShown } from './SidewallDetectorDebugCard';

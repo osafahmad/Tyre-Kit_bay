@@ -909,3 +909,39 @@ The owner asked for three things from the screen-capture and device logs. Each w
 ### Staging log collector (2026-11-12)
 - **What it does:** `src/utils/debugLogBuffer.ts` keeps the last 300 `[SidewallOCR]` and `[TreadWear]` lines in memory when `diagnosticsConfig.enableStagingLogs` is on, Release builds included. **Copy logs** on Tyre result and Sidewall captured copies them to the clipboard. Nothing goes to disk or the network. Console logging still follows `sidewallOcrLogs` / `treadWearLogs`, so a Release build still logs no raw OCR text to the device log.
 - **Clipboard:** uses React Native 0.88's own `Clipboard` module, which is deprecated but still in core on iOS and Android, instead of installing `@react-native-clipboard/clipboard`. This means no new native dependency and no pod or gradle change. If a later React Native release removes it, switch to the community package.
+
+## M7 Phase 2c: YOLO11n-seg sidewall text detector, Stage 1 (owner task 2026-11-13)
+
+**Status: unit-tested against the real file's tensors and with synthetic outputs. Not yet run on a phone. Nothing fills a sidewall field from it yet (Stage 2+).**
+
+### What the file is (read from the file, 2026-11-13)
+- `assets/models/sidewall_detector.tflite` (11.7 MB; the task called it `best.tflite`, the owner bundled it under this name). Ultralytics 8.4.211 YOLO11n-seg, `task: segment`, `end2end: false`, trained on Roboflow `tyre-to-text` v3 (424 flat-tyre images, CC BY 4.0, see docs/LICENSES.md).
+- Input `serving_default_args_0` **float32 `[1, 3, 640, 640]` (NCHW)**. Outputs **`[1, 40, 8400]`** (cx, cy, w, h, 4 class scores, 32 mask coefficients × 8400 anchors = 80² + 40² + 20²) and **`[1, 32, 160, 160]`** (mask prototypes), float32. Embedded `names`: 0 Brand, 1 DOT, 2 Model, 3 Size. These match the owner's spec exactly; `manifest.test.ts` checks them against the file.
+- **Licence: AGPL-3.0** (file metadata, "Ultralytics"). This is the same copyleft blocker that led to `tyre_detector.tflite` being removed on 2026-11-10. The owner asked for this model to be integrated knowing the dataset licence; **the model licence is re-opened on the release checklist** and needs an owner decision (Ultralytics Enterprise licence, or a non-AGPL architecture) before any store build. The code written here (letterbox, decoder, NMS) is ours and does not depend on Ultralytics code.
+
+### Manifest (`modelManifest.sidewallText`, new `YoloSegDetectorManifestEntry`)
+- Letterbox on grey 114, RGB / 255, NCHW float32: the owner's spec and the Ultralytics defaults. The existing `letterboxPlan` / `padPixels` / `imageFileToModelInput` are reused unchanged.
+- `boxFormat: 'cxcywh_normalised'`: the graph contains Ultralytics' `_NormalizeCoords` (Ultralytics scales TFLite boxes to 0–1 of the input). **Unverified on a phone.** The service reads the raw box range on every frame (`yoloSegOutputStats`, `inferBoxFormat`): if the values are clearly pixels (max > 1.5) it decodes as pixels and flags `overridden` in the log and on the card, so a wrong manifest value shows up instead of producing boxes 640× too large. Once a phone run confirms the range, the manifest value is fixed and the override stays as a guard only.
+- **Thresholds are starting values, configurable in the manifest entry:** confidence 0.25 (Ultralytics default), IoU 0.45 (the owner's 2026-11-06 value; Ultralytics' own default is 0.7), 300 detections. The staging card and `detectFrame` accept overrides (`YoloSegDecodeOptions`) for tuning. The model saw only flat tyres, so expect to raise or lower the confidence after the phone test.
+- Delegates: platform defaults (iOS Core ML then CPU, Android GPU then CPU). Whether Core ML builds this Segment graph is unknown; the loader falls back and logs the attempt. If Core ML fails and costs seconds like the SSDLite model did, set `acceleration: { ios: [] }` from the measurement.
+- The loader validates the entry (attribute count = 4 + labels + mask coefficients, anchor count from the input size and strides 8/16/32, prototype channels, letterbox) and checks both output tensors by name, type and shape at load.
+
+### Code
+- `src/ml/inference/yoloSeg.ts`: `decodeYoloSegOutput` (attribute-major read, best label per anchor, scores used as output since the export applies sigmoid, clamp to the input, greedy NMS per label), `yoloSegOutputStats` (raw ranges for the readout), `inferBoxFormat`, `detectionToFrameRect` (undoes the letterbox, clips to the frame, drops boxes in the padding). Mask coefficients are kept on each detection for Stage 4; prototypes are only range-checked.
+- `nonMaxSuppression` is now generic over the detection type (same behaviour).
+- `src/ml/services/SidewallTextDetector.ts`: loads once, `detectFrame(frame, index, options)` → `done` (detections in input and frame pixels, timings, stats, tensors, delegate) | `unavailable` (model missing, with the loader's reason; or a `demo://` frame) | `failed`. Never throws. Every decoded image is disposed.
+- `[SidewallDetector]` logs (`sidewallDetectorDebug.ts`, `diagnosticsConfig.sidewallDetectorLogs`, on): load, delegates, tensors, per-frame timings, ranges and boxes. Frames by index; no paths or text. Also kept in the staging "Copy logs" buffer.
+- **Staging card** (`SidewallDetectorDebugCard`, `diagnosticsConfig.sidewallDetectorDebugCard`, on): shown at the bottom of Sidewall captured. One saved frame at a time (Previous / Next), the frame drawn with the detector's boxes in camera blue, each labelled `Brand 0.82` etc., and a monospace readout: model version, delegate and load time, frame size, letterbox geometry, decode / inference / post times, input and output tensor shapes, raw box range and the format used, best score per class, mask coefficient and prototype ranges, anchors above the threshold, and every detection's frame box. Labelled `STAGING · Diagnostics only`. It is not one of the 21 screens and renders nothing when the flag is off. **MUST be off for store builds** (release checklist).
+- The whole-frame ML Kit flow (`sidewallReader.ts`) is unchanged and still produces the suggestions.
+
+### Not done (later stages)
+- Stage 2: crops with ~10 % padding from the saved frame → ML Kit at 0° and 180° → raw text per class on the card.
+- Stage 3: crop text → the existing parsers (`sidewallFields.ts`, `tyreBrands.ts`, `tyreModels.ts`) under the CLAUDE.md crop exceptions, with tests.
+- Stage 4: mask decode (coefficients × prototypes → sigmoid → min-area rectangle → warped, landscape crop; CLAHE only if a native binding exists without new heavy dependencies) behind a flag.
+- Stage 5: review screen wiring, confidence, crop previews, fallbacks.
+
+### Needs a real phone
+- Does the model load, and on which delegate (iOS Core ML vs CPU; Android GPU vs CPU)? Load and inference time at 640 × 640 on iPhone 13 and Redmi 13.
+- The raw box range (0–1 expected). If the card says `(manifest says cxcywh_normalised!)`, the manifest value is wrong and must be changed to `cxcywh_pixels`.
+- Boxes landing on the real text on mounted tyres, and the confidence threshold that keeps the four classes without noise.
+- Memory: 640 × 640 × 3 float32 input (4.9 MB) plus the 1.3 MB and 3.3 MB outputs per frame, on a low-end Android phone.

@@ -26,6 +26,18 @@ describe('licence notices', () => {
     );
   });
 
+  test('the sidewall text dataset carries the full CC BY 4.0 attribution (owner task 2026-11-13)', () => {
+    const d = LICENSE_NOTICES.find(n => n.id === 'sidewall-text-dataset')!;
+    expect(d).toEqual(
+      expect.objectContaining({
+        creator: 'Hetvi EWW (Roboflow workspace hetvi-eww-zdjt2)',
+        sourceUrl: 'https://universe.roboflow.com/hetvi-eww-zdjt2/tyre-to-text-cm4fa',
+        license: 'Creative Commons Attribution 4.0 International (CC BY 4.0)',
+        licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
+      }),
+    );
+  });
+
   test('the old smart-inspection tread wear dataset is no longer credited', () => {
     expect(JSON.stringify(LICENSE_NOTICES)).not.toMatch(/smart-inspection|tire-tread-wear/);
   });
