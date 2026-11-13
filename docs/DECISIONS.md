@@ -945,3 +945,34 @@ The owner asked for three things from the screen-capture and device logs. Each w
 - The raw box range (0–1 expected). If the card says `(manifest says cxcywh_normalised!)`, the manifest value is wrong and must be changed to `cxcywh_pixels`.
 - Boxes landing on the real text on mounted tyres, and the confidence threshold that keeps the four classes without noise.
 - Memory: 640 × 640 × 3 float32 input (4.9 MB) plus the 1.3 MB and 3.3 MB outputs per frame, on a low-end Android phone.
+
+## M7 Phase 2d: detector audit, Stage 2 crop OCR, partial sizes (owner request 2026-11-13, iPhone 13 car test)
+
+**Status: unit-tested. Stage 2 not yet run on a phone.**
+
+### Device results (owner, iPhone 13, mounted tyres, 1080 × 1120 frames)
+- `tread_wear.tflite` (Adtronics crack-v19): 10/10 real tread frames, no false positives, `No Surface Defects Detected` in 486 ms.
+- `sidewall_detector.tflite`: loads on **Core ML**, 38–63 ms per frame. Output shapes `[1, 40, 8400]` / `[1, 32, 160, 160]` and the **normalised box range 0.004–0.996 are confirmed**, so `boxFormat: 'cxcywh_normalised'` stays and the run-time range check is now only a guard.
+- Problem: `Brand` and `DOT` boxes landed on the hub and the upper sidewall, not on the text arcs.
+
+### Audit of the input packing and output stride (owner request)
+- **Input** (`pixelsToTensor`, `padPixels`): nitro-image returns BGRA on iOS and RGBA on Android and names the byte order in `pixelFormat`; `pixelLayout` maps it to R, G, B offsets. The NCHW branch writes `out[c * plane + i]`, so the tensor is the R plane (row-major), then G, then B, each 0–1. The letterbox puts the 617 × 640 image at x = 11 on grey 114. **Correct.**
+- **Output** (`decodeYoloSegOutput`): values are read `channel * anchors + anchor`, i.e. channel-major, matching `[1, 40, 8400]`. Boxes are `cx, cy, w, h` × 640, then frame = `(coord − pad) / scale`. **Correct.**
+- New test `inference/__tests__/nchwStrideAudit.test.ts` uses non-symmetric data (a 3 × 2 image where every byte differs, BGRA with row padding; one anchor with distinct values in each row; the real 1080 × 1120 geometry) and would fail with interleaved NHWC, BGR order, anchor-major reading, or a wrong pad/scale.
+- **Conclusion:** the pipeline is not transposed. The misplaced boxes are the model's: it was trained on 424 flat-tyre images and has not seen hubs or fenders. Stage 2 makes this visible per box (a hub crop reads no text). Options if it stays wrong: raise the threshold, keep only boxes whose crop reads class-appropriate text (Stage 3), or retrain with mounted-tyre images.
+
+### Stage 2: per-box crop OCR (`readCrops` in `SidewallTextDetector.ts`, `sidewallCropOcr.ts`)
+- Each box after NMS is padded by **12 %** of its width and height on every side (`CROP_PADDING_RATIO`, whole pixels, clamped to the frame) and cropped from the **saved full-resolution frame** with nitro-image. Every intermediate image is disposed.
+- The crop is read by ML Kit (`rn-mlkit-ocr`, the existing `recognizeLines`) at **0°, 90° CW, 90° CCW and 180°** (`CROP_ROTATIONS`), each as a physically rotated temporary JPEG that is deleted after OCR. The 0° crop is kept as the card's thumbnail and deleted when the card re-runs or unmounts (`deleteCropFiles`).
+- **Orientation choice** (`scoreCropRead`): every orientation's lines go through the shared `filterSidewallText`; 3 points when the box's own field parsed (Size → size, DOT → validated TIN, Brand → listed make, Model → listed family), 2 for a weaker sign of the class (partial size, DOT marker or TIN-shaped line, listed model code), 1 for any letters/digits, plus a small bonus for more text. Ties go to the earlier orientation (0° first). No regex was re-written; the parsers are reused.
+- The card lists, per box: thumbnail, label and score, crop size and position, OCR time, the orientation kept and what it parsed to, then the raw text of every orientation. The `[SidewallDetector]` log carries the same. **Raw crop text** goes to the console only when `sidewallOcrLogs` is on (development), like `[SidewallOCR]`; the staging buffer keeps it (it exists for that, and is off for store builds).
+- Still nothing fills a field. Stage 3 connects the best read to the parsers and the suggestion rules.
+
+### Partial sizes (`sizeParts`, `partialSizeText`, `SidewallTextReading.sizePartial`)
+- Logs: `13/60 R17 96H,ELDl/` and `J60 R17` for a 215/60 R17 96H when the camera was slightly far. Whole sizes with widths 125–355 already parsed (`parseTyreSize`, limits 100–395 / 20–95); nothing changed there.
+- `sizeParts` now also returns `aspect` (the two digits directly before the rim marker, `/60 R17` → 60) and `loadSpeed` (`R17 96H` → `96H`). An aspect directly before `R`/`ZR`/`B` + rim is accepted as the size's rim even without a load/speed index: it is the same shape `joinAspectRimWithWidth` already joins (`55 R15`). A bare `R17`, or `R17` after a word, is still not a rim.
+- `partialSizeText` gives `/60 R17 96H` (or `/60 R17`, `R17 96H`). `filterSidewallText` sets `sizePartial` when no whole size was read. It is **shown on the card and in the logs only, and never suggested as the size**: the width is never guessed (CLAUDE.md), and `13` is not a completable two-digit width. The cross-frame join (`widthAspect` + `rim`) is unchanged and benefits from the extra rims.
+
+### Needs a real phone
+- Stage 2 on the same car: do the hub/fender crops read nothing (expected) and do any `Size` boxes read the size at some orientation? Crop OCR time per box (4 ML Kit runs each).
+- Whether 12 % padding clips curved text; whether 90° CW or CCW is the usual winner on the side arcs.

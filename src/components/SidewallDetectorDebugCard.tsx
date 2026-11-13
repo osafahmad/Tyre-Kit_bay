@@ -1,9 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Image, Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { unlink } from '@dr.pogodin/react-native-fs';
 import { diagnosticsConfig } from '../config/diagnostics';
 import { absoluteFramePath } from '../features/capture/frameFiles';
 import {
+  deleteCropFiles,
   getSidewallTextDetector,
+  type SidewallCropResult,
+  type SidewallCropsOutcome,
   type SidewallTextDetectOutcome,
   type SidewallTextFrameResult,
 } from '../ml/services/SidewallTextDetector';
@@ -18,35 +22,53 @@ const isRealFrame = (f: string) => !f.startsWith('demo://');
 const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
 /**
- * STAGING ONLY (owner task 2026-11-13, Stage 1). Runs the YOLO11n-seg sidewall
- * text detector on one saved sidewall frame at a time and draws its boxes,
- * labels and scores over the frame, with a readout of inference time, tensor
- * shapes and raw value ranges. Diagnostics only: nothing here fills a field,
- * and the card renders nothing unless the staging flag is on.
+ * STAGING ONLY (owner task 2026-11-13, Stages 1–2). Runs the YOLO11n-seg
+ * sidewall text detector on one saved sidewall frame at a time and draws its
+ * boxes, labels and scores over the frame, with a readout of inference time,
+ * tensor shapes and raw value ranges. Then each box is cropped and read by
+ * ML Kit in four orientations; the crop thumbnails and raw text are listed
+ * per class. Diagnostics only: nothing here fills a field, and the card
+ * renders nothing unless the staging flag is on.
  */
 export function SidewallDetectorDebugCard({ frames }: { frames: string[] }) {
   const real = frames.filter(isRealFrame);
   const [index, setIndex] = useState(0);
   const [outcome, setOutcome] = useState<SidewallTextDetectOutcome | null>(null);
+  const [crops, setCrops] = useState<SidewallCropsOutcome | 'reading' | null>(null);
   const [run, setRun] = useState(0);
   const [width, setWidth] = useState(0);
   const frame = real[Math.min(index, Math.max(real.length - 1, 0))];
   const shown = sidewallDetectorCardShown();
+  /** Thumbnails of the last crop pass, deleted when the next pass starts or the card goes away. */
+  const files = useRef<SidewallCropResult[]>([]);
 
   useEffect(() => {
     if (!shown || !frame) return;
     let cancelled = false;
     setOutcome(null);
-    getSidewallTextDetector()
-      .detectFrame(frame, index)
-      .then(o => {
-        if (!cancelled) setOutcome(o);
-      })
-      .catch(e => {
-        if (!cancelled) setOutcome({ status: 'failed', error: e instanceof Error ? e.message : String(e) });
-      });
+    setCrops(null);
+    const detector = getSidewallTextDetector();
+    const release = () => deleteCropFiles(files.current.splice(0), unlink);
+    (async () => {
+      await release();
+      const o = await detector.detectFrame(frame, index);
+      if (cancelled) return;
+      setOutcome(o);
+      if (o.status !== 'done') return;
+      setCrops('reading');
+      const c = await detector.readCrops(o.result, index);
+      if (cancelled) {
+        if (c.status === 'done') await deleteCropFiles(c.crops, unlink);
+        return;
+      }
+      if (c.status === 'done') files.current = c.crops;
+      setCrops(c);
+    })().catch(e => {
+      if (!cancelled) setOutcome({ status: 'failed', error: e instanceof Error ? e.message : String(e) });
+    });
     return () => {
       cancelled = true;
+      release().catch(() => {});
     };
   }, [shown, frame, index, run]);
 
@@ -64,7 +86,7 @@ export function SidewallDetectorDebugCard({ frames }: { frames: string[] }) {
         STAGING · Sidewall text detector
       </AppText>
       <AppText variant="caption" color="textSecondary" style={styles.note}>
-        Diagnostics only. Boxes are the detector's output; nothing here fills a field.
+        Diagnostics only. Boxes and crop text are the detector's and ML Kit's raw output; nothing here fills a field.
       </AppText>
       {real.length === 0 ? (
         <AppText variant="caption" color="textSecondary">
@@ -127,9 +149,50 @@ export function SidewallDetectorDebugCard({ frames }: { frames: string[] }) {
           <AppText variant="caption" color="black" style={[styles.readout, { fontFamily: mono }]}>
             {readoutText(outcome)}
           </AppText>
+          {result ? <CropList crops={crops} /> : null}
           <Button label="Run again" variant="text" height={36} onPress={() => setRun(n => n + 1)} />
         </>
       )}
+    </View>
+  );
+}
+
+/** Stage 2: one row per detected box with its thumbnail and the text of each orientation. */
+function CropList({ crops }: { crops: SidewallCropsOutcome | 'reading' | null }) {
+  if (crops === null) return null;
+  if (crops === 'reading') {
+    return (
+      <AppText variant="caption" color="textSecondary">
+        Reading crops with ML Kit (0°, 90° CW, 90° CCW, 180°)…
+      </AppText>
+    );
+  }
+  if (crops.status === 'unavailable') {
+    return (
+      <AppText variant="caption" color="textSecondary">
+        {crops.reason === 'ocr_missing' ? 'Crop OCR unavailable: no ML Kit in this build.' : 'No boxes to crop.'}
+      </AppText>
+    );
+  }
+  return (
+    <View style={styles.cropList}>
+      {crops.crops.map(c => (
+        <View key={c.detection} style={styles.cropRow} testID={`crop-${c.detection}`}>
+          {c.thumbnailPath ? (
+            <Image
+              source={{ uri: fileUri(c.thumbnailPath) }}
+              style={[styles.thumb, { aspectRatio: Math.max(0.25, Math.min(4, (c.crop.x2 - c.crop.x1) / (c.crop.y2 - c.crop.y1))) }]}
+              resizeMode="contain"
+              accessibilityLabel={`${c.label} crop`}
+            />
+          ) : (
+            <View style={[styles.thumb, styles.thumbMissing]} />
+          )}
+          <AppText variant="caption" color="black" style={[styles.cropText, { fontFamily: mono }]}>
+            {cropText(c)}
+          </AppText>
+        </View>
+      ))}
     </View>
   );
 }
@@ -140,6 +203,23 @@ function fileUri(path: string): string {
 
 const shapeText = (t: { name: string; shape: number[]; dataType: string }) => `[${t.shape.join(',')}] ${t.dataType}`;
 const rangeText = (r: { min: number; max: number } | null) => (r ? `${r.min} … ${r.max}` : 'n/a');
+const rotationText = (r: number) => (r === 0 ? '0°' : r === 90 ? '90° CW' : r === -90 ? '90° CCW' : `${r}°`);
+
+/** One crop's lines: label, box, the orientation kept and what it parsed to, then every orientation's raw text. */
+export function cropText(c: SidewallCropResult): string {
+  const size = `${c.crop.x2 - c.crop.x1}×${c.crop.y2 - c.crop.y1}`;
+  const lines = [`${c.label} ${c.score.toFixed(2)} · crop ${size} @ ${c.crop.x1},${c.crop.y1} · OCR ${c.ocrMs} ms`];
+  if (!c.best) lines.push('  no orientation could be read');
+  else {
+    const parsed = (['size', 'sizePartial', 'dotTin', 'make', 'model'] as const)
+      .filter(k => c.best!.reading[k])
+      .map(k => `${k} ${c.best!.reading[k]}`)
+      .join(', ');
+    lines.push(`  best ${rotationText(c.best.rotation)}${parsed ? ` → ${parsed}` : ' (no field parsed)'}`);
+  }
+  for (const r of c.reads) lines.push(`  ${rotationText(r.rotation).padEnd(7)} ${r.text === '' ? '(no text)' : r.text}`);
+  return lines.join('\n');
+}
 
 /** The readout under the frame: one fact per line, so it can be read off a phone screenshot. */
 export function readoutText(outcome: SidewallTextDetectOutcome | null): string {
@@ -195,4 +275,9 @@ const styles = StyleSheet.create({
   box: { position: 'absolute', borderWidth: 2, borderColor: colors.cameraBlue },
   tag: { position: 'absolute', left: -2, top: -2, backgroundColor: colors.navy, paddingHorizontal: 4, paddingVertical: 1 },
   readout: { lineHeight: 17 },
+  cropList: { gap: 8, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 8 },
+  cropRow: { gap: 4 },
+  thumb: { height: 64, maxWidth: '100%', backgroundColor: colors.black, borderRadius: 4 },
+  thumbMissing: { width: 64, opacity: 0.3 },
+  cropText: { lineHeight: 17 },
 });

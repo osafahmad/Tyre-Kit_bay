@@ -512,7 +512,7 @@ describe('size recovery (round 5)', () => {
     expect(sizeParts(rows('19555'))).toMatchObject({ widthAspect: '195/55', rim: null });
     expect(sizeParts(rows('R15 85Vt'))).toMatchObject({ widthAspect: null, rim: 15 });
     expect(sizeParts(rows('Rl565V'))).toMatchObject({ widthAspect: null, rim: 15 });
-    expect(sizeParts(rows('R15', '95/55', '15'))).toEqual({ widthAspect: null, shortWidthAspect: '95/55', rim: null }); // stray R15, bare 15; the short width is a round-11 part
+    expect(sizeParts(rows('R15', '95/55', '15'))).toEqual({ widthAspect: null, shortWidthAspect: '95/55', rim: null, aspect: null, loadSpeed: null }); // stray R15, bare 15; the short width is a round-11 part
   });
 
   test('width inference still needs the rim on the same or adjacent line', () => {
@@ -573,7 +573,7 @@ describe('size recovery (round 5)', () => {
 describe('round 11: screen-capture noise around the rim and two-digit widths (owner request 2026-11-11)', () => {
   const { recoverSize, sizeParts, completeShortWidthAspect } = require('../sidewallFields') as typeof import('../sidewallFields');
   const rows = (...texts: string[]) => texts.map((t, i) => line(t, i * 30));
-  const none = { widthAspect: null, shortWidthAspect: null, rim: null };
+  const none = { widthAspect: null, shortWidthAspect: null, rim: null, aspect: null, loadSpeed: null };
 
   test('symbol or a single 3 before the 8-for-R marker, next to a width/aspect', () => {
     expect(recoverSize(rows('195/55', '$815 85V'))).toBe('195/55 R15');
@@ -647,5 +647,48 @@ describe('round 10: marker-less TIN wrapped over two lines (owner request 2026-1
     expect(markerlessTinCandidate(rows('195/55', '1323'), NOW)).toBeNull();
     expect(markerlessTinCandidate(rows('R15 85V', '1323'), NOW)).toBeNull();
     expect(markerlessTinCandidate(rows('R1585V 3721'), NOW)).toBeNull();
+  });
+});
+
+describe('partial size from a too-far read (owner request 2026-11-13, iPhone 13, 215/60 R17 96H)', () => {
+  const { sizeParts, partialSizeText } = require('../sidewallFields') as typeof import('../sidewallFields');
+  const { parseTyreSize } = require('../parsers') as typeof import('../parsers');
+  const one = (text: string) => [{ text, frame: { x: 0, y: 0, width: 100, height: 18 } }];
+
+  test('the whole size with widths 125–355 still parses cleanly', () => {
+    for (const t of ['215/60 R17 96H', '215/60R17 96H', '125/80 R13', '355/25 R24 99Y']) {
+      expect(parseTyreSize(t)).not.toBeNull();
+    }
+  });
+
+  test('`13/60 R17 96H,ELDl/`: the width is not a size, but the rim, aspect and load/speed are kept as a partial', () => {
+    const p = sizeParts(one('13/60 R17 96H,ELDl/'));
+    expect(p).toEqual({ widthAspect: null, shortWidthAspect: '13/60', rim: 17, aspect: 60, loadSpeed: '96H' });
+    expect(partialSizeText(p)).toBe('/60 R17 96H');
+    // `13` is not one of the completable two-digit widths, so no size is built from it.
+    const { completeShortWidthAspect } = require('../sidewallFields') as typeof import('../sidewallFields');
+    expect(completeShortWidthAspect('13/60', 17)).toBeNull();
+  });
+
+  test('`J60 R17`: aspect directly before the rim marker counts as the size’s rim, with no load/speed', () => {
+    const p = sizeParts(one('J60 R17'));
+    expect(p).toMatchObject({ widthAspect: null, rim: 17, aspect: 60, loadSpeed: null });
+    expect(partialSizeText(p)).toBe('/60 R17');
+  });
+
+  test('`/60 R17 96H` on its own', () => {
+    expect(partialSizeText(sizeParts(one('/60 R17 96H')))).toBe('/60 R17 96H');
+  });
+
+  test('a bare `R17` or a stray `R17` after a word is still not a rim', () => {
+    expect(sizeParts(one('R17')).rim).toBeNull();
+    expect(sizeParts(one('TUBELESS R17'))).toMatchObject({ rim: null, aspect: null });
+    expect(partialSizeText({ widthAspect: null, aspect: null, rim: null, loadSpeed: null })).toBeNull();
+  });
+
+  test('a whole width/aspect wins over the partial, and the partial text is null for it', () => {
+    const p = sizeParts(one('215/60 R17 96H'));
+    expect(p).toEqual({ widthAspect: '215/60', shortWidthAspect: null, rim: 17, aspect: null, loadSpeed: '96H' });
+    expect(partialSizeText(p)).toBeNull();
   });
 });

@@ -9,6 +9,8 @@ import {
   readingOrder,
   recoverSize,
   sizeWithinLimits,
+  partialSizeText,
+  sizeParts,
 } from './ocr/sidewallFields';
 import type { OcrLineLike } from './ocr/textCandidates';
 
@@ -51,6 +53,12 @@ export type SidewallTextReading = {
   modelCode: { family: string; code: string } | null;
   /** Load index (or dual `121/119`) and speed symbol read after the size, e.g. `91V`. */
   loadSpeed: string | null;
+  /**
+   * Owner request 2026-11-13: when no whole size was read, the legible rim
+   * part (`/60 R17 96H`, `partialSizeText`). Diagnostics and later stages only;
+   * it is never suggested as the size, because the width is never guessed.
+   */
+  sizePartial: string | null;
 };
 
 /** ISO 4000 / ETRTO speed symbols (I, O and X aren't used). */
@@ -162,6 +170,7 @@ export function filterSidewallText(lines: OcrLineLike[], now: Date = new Date())
   const model = fullFrameModelCandidate(lines);
   return {
     size: size?.value ?? null,
+    sizePartial: size ? null : partialSizeText(sizeParts(lines)),
     dotTin: fullFrameDotCandidate(lines, now),
     // A matched model family names its brand too (owner decision 2026-11-11), after the earlier make rules.
     make: fullFrameMakeCandidate(lines) ?? brandRootCandidate(lines) ?? modelFamilyBrandCandidate(lines) ?? model?.brand ?? null,

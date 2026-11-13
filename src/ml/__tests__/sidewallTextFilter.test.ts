@@ -54,6 +54,7 @@ describe('standard clean sidewall', () => {
       model: 'ComfortContact CC7',
       modelCode: { family: 'ComfortContact', code: 'CC7' },
       loadSpeed: '85V',
+      sizePartial: null,
     });
   });
 
@@ -81,6 +82,7 @@ describe('standard clean sidewall', () => {
       model: 'Primacy',
       modelCode: null,
       loadSpeed: null,
+      sizePartial: null,
     });
     expect(read(mlKitResult([{ text: 'Comfort Contact', y: 0 }])).model).toBe('ComfortContact');
     expect(read(mlKitResult([{ text: 'COMFORTCONTACT', y: 0 }, { text: 'CC7', y: 30 }])).model).toBe('ComfortContact CC7');
@@ -146,6 +148,7 @@ describe('dusty / noisy frames with rim and other text', () => {
       model: null,
       modelCode: null,
       loadSpeed: '91H',
+      sizePartial: null,
     });
   });
 
@@ -162,7 +165,7 @@ describe('dusty / noisy frames with rim and other text', () => {
       [{ text: 'MAX PRESS 350 kPa (51 PSI)', y: 30 }],
       [{ text: 'TREADWEAR 400 TRACTION A TEMPERATURE A', y: 60 }],
     );
-    expect(read(result)).toEqual({ size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null });
+    expect(read(result)).toEqual({ size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null, sizePartial: null });
   });
 
   test('misread characters are never swapped into a size or brand', () => {
@@ -261,7 +264,7 @@ describe('iPhone 13 Continental 195/55 R15 85V (owner decision 2026-11-10)', () 
 });
 
 test('no text → nothing', () => {
-  expect(read({ text: '', blocks: [] })).toEqual({ size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null });
+  expect(read({ text: '', blocks: [] })).toEqual({ size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null, sizePartial: null });
 });
 
 describe('Purfect KB-27, size with a space after R (owner request 2026-11-12, iPhone 13)', () => {
@@ -305,5 +308,20 @@ describe('Purfect KB-27, size with a space after R (owner request 2026-11-12, iP
         brand.toUpperCase(),
       );
     }
+  });
+});
+
+describe('sizePartial (owner request 2026-11-13)', () => {
+  const now = new Date('2026-11-13');
+  const line = (text: string) => [{ text, frame: { x: 0, y: 0, width: 100, height: 18 } }];
+  test('a legible rim/load/speed without a width is surfaced as a partial, never as the size', () => {
+    const r = filterSidewallText(line('13/60 R17 96H,ELDl/'), now);
+    expect(r.size).toBeNull();
+    expect(r.sizePartial).toBe('/60 R17 96H');
+    expect(filterSidewallText(line('J60 R17'), now).sizePartial).toBe('/60 R17');
+  });
+  test('a whole size leaves sizePartial null', () => {
+    const r = filterSidewallText(line('215/60 R17 96H'), now);
+    expect(r).toMatchObject({ size: '215/60 R17', loadSpeed: '96H', sizePartial: null });
   });
 });

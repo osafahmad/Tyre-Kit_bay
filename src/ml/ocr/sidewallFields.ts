@@ -440,12 +440,38 @@ const RIM_WITH_LOAD = /(?:^|[^A-Z])Z?(?:[RB]\s?(1[3-9]|2[0-2])|R\s?[LI]([3-9]))\
 /** Round 11: the same with `8` read for `R` (`$815 85V`, `3815 85V`, `$81525NE`), under the `RIM_TOKEN_8` rules. */
 const RIM_8_WITH_LOAD = /(?:^|[^A-Z0-9])3?8(1[3-9]|2[0-2])\s?\d{2,3}(?:\/\d{2,3})?\s?[A-HJ-NP-WYZ]/;
 
+/**
+ * Owner request 2026-11-13 (iPhone 13, 215/60 R17 96H read as `13/60 R17 96H,ELDl/`
+ * and `J60 R17` from slightly too far): the size's own rim read with the
+ * aspect directly before it (`60 R17`, `/60 R17`). The aspect-then-marker shape
+ * is the one `joinAspectRimWithWidth` already accepts (`55 R15`), so it counts
+ * as a rim even without a load/speed index. A bare `R17` still doesn't.
+ */
+const ASPECT_THEN_RIM_ANYWHERE = /(?:^|[^0-9])([2-8][05])\s?Z?[RB]\s?(1[3-9]|2[0-2])(?!\d)/;
+/** The load index and speed symbol read right after a marked rim (`R17 96H` → `96H`). */
+const RIM_LOAD_SPEED_TEXT = /Z?[RB]\s?(?:1[3-9]|2[0-2])\s?(\d{2,3}(?:\/\d{2,3})?)\s?\(?([A-HJ-NP-WYZ])\)?(?![A-Z0-9])/;
+
 export type SizeParts = {
   widthAspect: string | null;
   /** Two-digit width read with its aspect (`A95/55` → `95/55`): only completed through the rim-gated `SIZE_WIDTH_INFERENCE`. */
   shortWidthAspect: string | null;
   rim: number | null;
+  /** Aspect read directly before the rim marker (`/60 R17` → 60) when no width/aspect was read; never completed to a size. */
+  aspect: number | null;
+  /** Load index and speed symbol read after the rim (`96H`), when the rim was read. */
+  loadSpeed: string | null;
 };
+
+/**
+ * What was legible of a size when the width wasn't (`/60 R17 96H`, `R17 96H`),
+ * for the logs and the staging card. It is never shown or saved as the size:
+ * the width is never guessed (CLAUDE.md). Null when nothing size-shaped was read.
+ */
+export function partialSizeText(parts: Pick<SizeParts, 'widthAspect' | 'aspect' | 'rim' | 'loadSpeed'>): string | null {
+  if (parts.widthAspect || parts.rim === null) return null;
+  const aspect = parts.aspect !== null ? `/${parts.aspect} ` : '';
+  return `${aspect}R${parts.rim}${parts.loadSpeed ? ` ${parts.loadSpeed}` : ''}`;
+}
 
 /**
  * Size pieces from one frame that gave no whole size, for joining across the
@@ -463,6 +489,8 @@ export function sizeParts(lines: OcrLineLike[]): SizeParts {
   let widthAspect: string | null = null;
   let shortWidthAspect: string | null = null;
   let rim: number | null = null;
+  let aspect: number | null = null;
+  let loadSpeed: string | null = null;
   for (const text of readingOrder(lines).map(l => l.text.toUpperCase())) {
     if (widthAspect === null) {
       const m = FULL_WIDTH_ASPECT.exec(text) ?? COMPACT_ALONE.exec(text) ?? SPACED_WIDTH_ASPECT.exec(text);
@@ -475,14 +503,27 @@ export function sizeParts(lines: OcrLineLike[]): SizeParts {
     }
     if (rim === null) {
       const r = RIM_WITH_LOAD.exec(text);
+      const a = ASPECT_THEN_RIM_ANYWHERE.exec(text);
       if (r) rim = r[1] ? Number(r[1]) : 10 + Number(r[2]);
+      else if (a) rim = Number(a[2]);
       else {
         const u = RIM_8_WITH_LOAD.exec(text) ?? RIM_LOAD_UNMARKED_LINE.exec(text);
         if (u) rim = Number(u[1]);
       }
+      if (rim !== null) {
+        if (a && Number(a[2]) === rim && within(Number(a[1]), FULL_FRAME_SIZE_LIMITS.aspect)) aspect = Number(a[1]);
+        const ls = RIM_LOAD_SPEED_TEXT.exec(text);
+        if (ls && ls[1].split('/').every(n => Number(n) <= 279)) loadSpeed = `${ls[1]}${ls[2]}`;
+      }
     }
   }
-  return { widthAspect, shortWidthAspect: widthAspect === null ? shortWidthAspect : null, rim };
+  return {
+    widthAspect,
+    shortWidthAspect: widthAspect === null ? shortWidthAspect : null,
+    rim,
+    aspect: widthAspect === null ? aspect : null,
+    loadSpeed,
+  };
 }
 
 /**

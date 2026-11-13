@@ -230,7 +230,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         const centreLines = await ocrCentre(path, label);
         const parsed: SidewallTextReading = centreLines
           ? filterSidewallText(centreLines, deps.now())
-          : { size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null };
+          : { size: null, dotTin: null, make: null, model: null, modelCode: null, loadSpeed: null, sizePartial: null };
         let source = 'centre';
         let lines = centreLines ?? [];
         let modelLines = parsed.model ? lines : null;

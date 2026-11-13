@@ -14,12 +14,26 @@ import {
   type YoloSegOutputStats,
 } from '../inference/yoloSeg';
 import { modelManifest, type ModelManifest, type YoloSegDetectorManifestEntry } from '../manifest';
+import { ocrConfig } from '../../config/capture';
+import { isOcrAvailable, recognizeLines } from '../ocr/ocr';
+import type { OcrLineLike } from '../ocr/textCandidates';
+import {
+  bestCropRead,
+  cropRead,
+  CROP_ROTATIONS,
+  paddedCropRect,
+  type CropRead,
+  type CropRect,
+  type CropRotation,
+} from './sidewallCropOcr';
 import { sidewallDetectorLog } from './sidewallDetectorDebug';
 
 // Runs the YOLO11n-seg sidewall text detector on one saved sidewall frame,
 // after capture only. Stage 1 (owner task 2026-11-13): boxes, scores, timings
-// and raw tensor ranges for the staging card on Sidewall captured. Nothing
-// here fills a sidewall field; OCR on the crops is Stage 2.
+// and raw tensor ranges for the staging card on Sidewall captured. Stage 2:
+// each box is cropped from the saved frame with a cushion and read by ML Kit
+// in four orientations (`readCrops`). Nothing here fills a sidewall field;
+// connecting the crop text to the fields is Stage 3.
 
 export type SidewallTextDetection = SegDetection & {
   /** The box in the saved frame's pixels (letterbox undone), or null if it lies in the padding. */
@@ -48,12 +62,48 @@ export type SidewallTextDetectOutcome =
   | { status: 'failed'; error: string }
   | { status: 'done'; result: SidewallTextFrameResult };
 
+/** Stage 2: one detector box read by ML Kit in every orientation. */
+export type SidewallCropResult = {
+  /** Index into `SidewallTextFrameResult.detections`. */
+  detection: number;
+  label: string;
+  score: number;
+  /** The padded crop, in saved-frame pixels. */
+  crop: CropRect;
+  /** Temporary JPEG of the 0° crop, for the card's thumbnail. Delete it with `deleteCropFiles`. */
+  thumbnailPath: string | null;
+  /** One read per orientation that could be run; a failed orientation is left out. */
+  reads: CropRead[];
+  /** The read whose text fits the box's class best, or null when no orientation ran. */
+  best: CropRead | null;
+  ocrMs: number;
+};
+
+export type SidewallCropsOutcome =
+  | { status: 'unavailable'; reason: 'ocr_missing' | 'no_detections' }
+  | { status: 'done'; crops: SidewallCropResult[] };
+
+/** The native image and OCR calls Stage 2 needs. Injected so tests don't touch native code. */
+export type SidewallCropOcrDeps = {
+  ocrAvailable(): boolean;
+  /**
+   * Writes the `rect` part of the image at `path`, turned by `rotation`
+   * (90 = clockwise, as nitro-image), to a temporary JPEG and returns its path.
+   */
+  cropToTempFile(path: string, rect: CropRect, rotation: CropRotation): Promise<string>;
+  recognizeLines(path: string): Promise<OcrLineLike[]>;
+  deleteFile(path: string): Promise<void>;
+  now(): Date;
+};
+
 export type SidewallTextDetectorDeps = {
   /** The model, or the load failure. */
   loadModel(): Promise<
     { ok: true; model: LoadedModel<YoloSegDetectorManifestEntry> } | { ok: false; failure: ModelLoadFailure }
   >;
   pipeline: PipelineDeps;
+  /** Stage 2 crop OCR. Without it `readCrops` reports `ocr_missing`. */
+  ocr?: SidewallCropOcrDeps;
   now?: () => number;
 };
 
@@ -207,6 +257,149 @@ export class SidewallTextDetector {
       return { status: 'failed', error: errorText(e) };
     }
   }
+
+  /**
+   * Stage 2: every detection of a frame result, cropped from the saved frame
+   * with `CROP_PADDING_RATIO` and read by ML Kit at 0°, 90° CW, 90° CCW and
+   * 180°. The 0° crop is kept as a temporary JPEG for the card; the caller
+   * deletes it with `deleteCropFiles`. Never throws: a crop or orientation
+   * that fails is logged and left out.
+   */
+  async readCrops(result: SidewallTextFrameResult, frameIndex: number): Promise<SidewallCropsOutcome> {
+    const ocr = this.deps.ocr;
+    const label = `frame ${frameIndex + 1}`;
+    if (!ocr || !ocr.ocrAvailable()) {
+      sidewallDetectorLog(`${label}: crop OCR unavailable (no ML Kit in this build)`);
+      return { status: 'unavailable', reason: 'ocr_missing' };
+    }
+    if (result.detections.length === 0) return { status: 'unavailable', reason: 'no_detections' };
+    let path: string;
+    try {
+      path = localFramePath(result.frame, this.deps.pipeline);
+    } catch (e) {
+      sidewallDetectorLog(`${label}: crops skipped, not a local file`, { error: errorText(e) });
+      return { status: 'unavailable', reason: 'no_detections' };
+    }
+    const crops: SidewallCropResult[] = [];
+    for (const [i, d] of result.detections.entries()) {
+      const crop = d.frameRect ? paddedCropRect(d.frameRect, result.source) : null;
+      if (!crop) {
+        sidewallDetectorLog(`${label} box ${i + 1} (${d.label}): no crop (box in the padding)`);
+        continue;
+      }
+      const started = this.now();
+      let thumbnailPath: string | null = null;
+      const reads: CropRead[] = [];
+      for (const rotation of CROP_ROTATIONS) {
+        let file: string | null = null;
+        try {
+          file = await ocr.cropToTempFile(path, crop, rotation);
+          const lines = await ocr.recognizeLines(file);
+          reads.push(cropRead(d.label, rotation, lines, ocr.now()));
+        } catch (e) {
+          sidewallDetectorLog(`${label} box ${i + 1} (${d.label}) ${rotation}° failed`, { error: errorText(e) });
+        } finally {
+          if (file) {
+            // The upright crop stays for the thumbnail; the turned ones are only OCR input.
+            if (rotation === 0) thumbnailPath = file;
+            else await ocr.deleteFile(file).catch(() => {});
+          }
+        }
+      }
+      const best = bestCropRead(reads);
+      const crp: SidewallCropResult = {
+        detection: i,
+        label: d.label,
+        score: d.score,
+        crop,
+        thumbnailPath,
+        reads,
+        best,
+        ocrMs: this.now() - started,
+      };
+      crops.push(crp);
+      sidewallDetectorLog(
+        `${label} box ${i + 1} (${d.label} ${r3(d.score)}): best ${best ? `${best.rotation}° score ${r3(best.score)}` : 'none'}`,
+        {
+          crop: [crop.x1, crop.y1, crop.x2 - crop.x1, crop.y2 - crop.y1],
+          ocrMs: crp.ocrMs,
+          reads: reads.map(r => ({
+            rotation: r.rotation,
+            score: r3(r.score),
+            text: r.text,
+            parsed: parsedFields(r),
+          })),
+        },
+        { rawText: true },
+      );
+    }
+    return { status: 'done', crops };
+  }
+}
+
+/** The fields one orientation's text parsed to, for logs. */
+function parsedFields(r: CropRead): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of ['size', 'sizePartial', 'dotTin', 'make', 'model'] as const) {
+    const v = r.reading[k];
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
+/** Deletes the thumbnails `readCrops` kept. */
+export async function deleteCropFiles(crops: SidewallCropResult[], deleteFile: (p: string) => Promise<void>): Promise<void> {
+  await Promise.all(crops.map(c => (c.thumbnailPath ? deleteFile(c.thumbnailPath).catch(() => {}) : Promise.resolve())));
+}
+
+type NitroImage = {
+  readonly width: number;
+  readonly height: number;
+  cropAsync(x1: number, y1: number, x2: number, y2: number): Promise<NitroImage>;
+  rotateAsync(degrees: number, allowFastFlagRotation?: boolean): Promise<NitroImage>;
+  saveToTemporaryFileAsync(format: 'jpg', quality?: number): Promise<string>;
+  dispose(): void;
+};
+
+function nitroImages(): { loadFromFileAsync(path: string): Promise<NitroImage> } {
+  const { Images } = require('react-native-nitro-image') as typeof import('react-native-nitro-image');
+  return Images as unknown as { loadFromFileAsync(path: string): Promise<NitroImage> };
+}
+
+/** Stage 2 native deps: nitro-image crop + physical rotation to a temp JPEG, ML Kit, file delete. */
+export function defaultSidewallCropOcrDeps(): SidewallCropOcrDeps {
+  return {
+    ocrAvailable: isOcrAvailable,
+    async cropToTempFile(path, rect, rotation) {
+      const images: NitroImage[] = [];
+      try {
+        const frame = await nitroImages().loadFromFileAsync(path);
+        images.push(frame);
+        let img = await frame.cropAsync(rect.x1, rect.y1, rect.x2, rect.y2);
+        images.push(img);
+        if (rotation !== 0) {
+          // Physically turned (not an orientation flag), so ML Kit sees upright text.
+          img = await img.rotateAsync(rotation, false);
+          images.push(img);
+        }
+        return await img.saveToTemporaryFileAsync('jpg', ocrConfig.jpegQualityPercent);
+      } finally {
+        for (const img of images) {
+          try {
+            img.dispose();
+          } catch {
+            // Already released.
+          }
+        }
+      }
+    },
+    recognizeLines,
+    deleteFile: async path => {
+      const { unlink } = require('@dr.pogodin/react-native-fs') as typeof import('@dr.pogodin/react-native-fs');
+      await unlink(path);
+    },
+    now: () => new Date(),
+  };
 }
 
 function nitroDecoder(): ImageDecoder {
@@ -233,6 +426,7 @@ export function defaultSidewallTextDetectorDeps(
         return nitroDecoder();
       },
     },
+    ocr: defaultSidewallCropOcrDeps(),
   };
 }
 

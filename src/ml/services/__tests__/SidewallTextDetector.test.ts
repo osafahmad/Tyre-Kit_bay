@@ -1,4 +1,4 @@
-import { SidewallTextDetector, type SidewallTextDetectorDeps } from '../SidewallTextDetector';
+import { deleteCropFiles, SidewallTextDetector, type SidewallCropOcrDeps, type SidewallTextDetectorDeps } from '../SidewallTextDetector';
 import { fakeDecoder } from '../../inference/__fixtures__/models';
 import type { InferenceModel, LoadedModel } from '../../inference/types';
 import type { YoloSegDetectorManifestEntry } from '../../manifest';
@@ -176,4 +176,116 @@ test('staging buffer: per-frame lines name frames by index and carry no path', a
   const text = getDebugLogsText();
   expect(text).toMatch(/\[SidewallDetector\] .* frame 3: 1 detections/);
   expect(text).not.toMatch(/secret-plate/);
+});
+
+describe('Stage 2: readCrops', () => {
+  const L = (text: string) => ({ text, frame: { x: 0, y: 0, width: 100, height: 18 } });
+  /** Fake crop + OCR: the text ML Kit "reads" depends on the rotation, so the best orientation is visible. */
+  function fakeOcr(textByRotation: Record<number, string[]>, available = true) {
+    const files: string[] = [];
+    const deleted: string[] = [];
+    const ocr: SidewallCropOcrDeps & { files: string[]; deleted: string[]; cropToTempFile: jest.Mock } = {
+      ocrAvailable: () => available,
+      cropToTempFile: jest.fn(async (_path: string, rect, rotation) => {
+        const f = `/tmp/crop_${rect.x1}_${rotation}.jpg`;
+        files.push(f);
+        return f;
+      }),
+      recognizeLines: async path => {
+        const rotation = Number(path.match(/_(-?\d+)\.jpg$/)![1]);
+        return (textByRotation[rotation] ?? []).map(L);
+      },
+      deleteFile: async p => {
+        deleted.push(p);
+      },
+      now: () => new Date('2026-11-13'),
+      files,
+      deleted,
+    };
+    return ocr;
+  }
+
+  async function frameResult(d: ReturnType<typeof detector>) {
+    const outcome = await d.d.detectFrame('frames/a.jpg', 0);
+    if (outcome.status !== 'done') throw new Error(outcome.status);
+    return outcome.result;
+  }
+
+  test('each box is padded, cropped from the saved frame in 4 orientations, read, and the best kept; turned crops are deleted', async () => {
+    const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+    const ocr = fakeOcr({ 0: ['ILl'], 90: ['215/60 R17 96H'], [-90]: ['H96'], 180: [] });
+    const det = detector(loaded(run), { width: 64, height: 32 }, { ocr });
+    const result = await frameResult(det);
+    expect(result.detections[0].frameRect).toEqual({ x: 16, y: 8, width: 32, height: 16 });
+
+    const crops = await det.d.readCrops(result, 0);
+    expect(crops.status).toBe('done');
+    if (crops.status !== 'done') return;
+    expect(crops.crops).toHaveLength(1);
+    const c = crops.crops[0];
+    // 12 % of 32 × 16 is 3.84 × 1.92: floor/ceil → 12,6 .. 52,26.
+    expect(c.crop).toEqual({ x1: 12, y1: 6, x2: 52, y2: 26 });
+    expect(c.label).toBe('Size');
+    expect(ocr.cropToTempFile.mock.calls.map(call => call[2])).toEqual([0, 90, -90, 180]);
+    expect(ocr.cropToTempFile.mock.calls.every(call => call[0] === '/docs/frames/a.jpg')).toBe(true);
+    expect(c.reads.map(r => [r.rotation, r.text])).toEqual([
+      [0, 'ILl'],
+      [90, '215/60 R17 96H'],
+      [-90, 'H96'],
+      [180, ''],
+    ]);
+    expect(c.best?.rotation).toBe(90);
+    expect(c.best?.reading.size).toBe('215/60 R17');
+    expect(c.thumbnailPath).toBe('/tmp/crop_12_0.jpg');
+    expect(ocr.deleted.sort()).toEqual(['/tmp/crop_12_-90.jpg', '/tmp/crop_12_180.jpg', '/tmp/crop_12_90.jpg']);
+
+    const unlink = jest.fn(async () => {});
+    await deleteCropFiles(crops.crops, unlink);
+    expect(unlink).toHaveBeenCalledWith('/tmp/crop_12_0.jpg');
+  });
+
+  test('a failed orientation is left out; the others still count', async () => {
+    const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+    const ocr = fakeOcr({ 0: ['215/60 R17'], 180: ['x'] });
+    ocr.recognizeLines = async path => {
+      if (/_90\.jpg$/.test(path)) throw new Error('ML Kit choked');
+      return path.endsWith('_0.jpg') ? [L('215/60 R17')] : [];
+    };
+    const det = detector(loaded(run), { width: 64, height: 32 }, { ocr });
+    const crops = await det.d.readCrops(await frameResult(det), 0);
+    if (crops.status !== 'done') throw new Error(crops.status);
+    expect(crops.crops[0].reads.map(r => r.rotation)).toEqual([0, -90, 180]);
+    expect(crops.crops[0].best?.rotation).toBe(0);
+    // The failed orientation's file is still deleted.
+    expect(ocr.deleted).toContain('/tmp/crop_12_90.jpg');
+  });
+
+  test('no ML Kit → ocr_missing; no boxes → no_detections', async () => {
+    const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+    const det = detector(loaded(run), { width: 64, height: 32 }, { ocr: fakeOcr({}, false) });
+    const result = await frameResult(det);
+    expect(await det.d.readCrops(result, 0)).toEqual({ status: 'unavailable', reason: 'ocr_missing' });
+    const det2 = detector(loaded(run), { width: 64, height: 32 }, { ocr: fakeOcr({}) });
+    expect(await det2.d.readCrops({ ...result, detections: [] }, 0)).toEqual({ status: 'unavailable', reason: 'no_detections' });
+    const det3 = detector(loaded(run), { width: 64, height: 32 });
+    expect(await det3.d.readCrops(result, 0)).toEqual({ status: 'unavailable', reason: 'ocr_missing' });
+  });
+
+  test('raw crop text reaches the staging buffer but not the console unless raw text logging is on', async () => {
+    const { setSidewallDetectorDebug } = require('../sidewallDetectorDebug') as typeof import('../sidewallDetectorDebug');
+    setDebugLogBuffer(true);
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      setSidewallDetectorDebug(true, false);
+      const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+      const det = detector(loaded(run), { width: 64, height: 32 }, { ocr: fakeOcr({ 0: ['SECRET-TEXT 215/60 R17'] }) });
+      await det.d.readCrops(await frameResult(det), 0);
+      expect(getDebugLogsText()).toMatch(/SECRET-TEXT/);
+      expect(log.mock.calls.flat().join(' ')).not.toMatch(/SECRET-TEXT/);
+      expect(log.mock.calls.flat().join(' ')).toMatch(/1 detections/); // non-raw lines still log
+    } finally {
+      setSidewallDetectorDebug(false, false);
+      log.mockRestore();
+    }
+  });
 });

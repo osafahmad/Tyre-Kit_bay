@@ -18,7 +18,9 @@ jest.mock('../../ml/sidewallReader', () => ({
 jest.mock('../../ml/services/SidewallTextDetector', () => ({
   getSidewallTextDetector: () => ({
     detectFrame: jest.fn(async () => ({ status: 'unavailable', reason: 'model_missing', detail: 'test' })),
+    readCrops: jest.fn(async () => ({ status: 'unavailable', reason: 'no_detections' })),
   }),
+  deleteCropFiles: jest.fn(async () => {}),
 }));
 
 /** Lets the screen's read promise chain settle inside act(). */
