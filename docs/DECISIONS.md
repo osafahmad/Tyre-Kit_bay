@@ -1037,3 +1037,25 @@ The owner asked for three things from the screen-capture and device logs. Each w
 - The same Continental tyre: Sidewall captured should end with `195/55 R15`, the whole TIN, `Continental` and `ComfortContact`, and the merge log should say which side each came from.
 - Time of the crop pass on 3 frames (it runs after the whole-frame read; the fields keep saying `Reading…` until both finish).
 - A tyre where the detector boxes land on the hub: those boxes must show `(no text — ignored)` and change nothing.
+
+## UX: inline Edit on Sidewall captured, Back on every flow step (owner request 2026-11-13)
+
+**Status: unit-tested. Not yet checked on a phone.** These depart from the screen images (`14-sidewall-captured.png`, `20-inspection-progress.png`, `21-final-report.png` and others show no back control or Edit link). They were added at the owner's request.
+
+### Inline Edit (14 Sidewall captured)
+- Each field (Tyre size, DOT/TIN, Make, Model) has an `Edit` text button on the right, in navy, at least 44 pt. Tapping it focuses that field's input. While the field is active, the button reads `Done` and the input has a navy underline. `Done` closes the keyboard.
+- The inputs are still editable by tapping the value directly. `Edit` makes that easier to find; it doesn't lock the field. Values save on every change, as before, and a field the user edits is still never overwritten by a later OCR or crop suggestion.
+- Accessibility labels are `Edit {field}` and `Done editing {field}`, so they don't clash with the input's own `{field}` label.
+- Not added to 19 Tyre result. Its rows include values worked out from the sidewall details (rim, tyre age), so editing there would need those recalculated. Corrections stay on Sidewall captured, or `Scan this tyre again`.
+
+### Back on every flow step
+- A shared `BackButton` (`src/components/Headers.tsx`, chevron, `Back`, 44 pt, white on black and black on white) was added where there wasn't one: Plate confirm, Sidewall captured, Capture problem, Frames captured and Analysing (top-left, over the artwork or centred content); Inspection progress and Report (in the black header, above the plate line); Camera access, only when something is behind it.
+- Screens that already had one are unchanged: the camera screens, Vehicle details, Select tyres, Tyre result and the walkthrough.
+- Every one calls `goBackSafely` (`src/app/navigation.ts`). It does the same thing as Android back and iOS swipe, so `LeaveInspectionGuard` still asks `Leave this inspection?` when Back would leave an unfinished inspection. If nothing is behind the screen (a restored root), it goes Home, where `Continue inspection` resumes the inspection.
+- Capture screens hand off with `replace`, so Back from a review screen goes to the last review or hub screen, not into the camera: Frames captured / Capture problem (tread) / Analysing → Sidewall captured; Sidewall captured → Inspection progress or Select tyres.
+- Sidewall captured saves its fields before going back.
+- **Analysing:** leaving mid-run by any route (Back, Android back, swipe) sets the tyre from `analysing` back to `captured`, so it resumes at Frames captured rather than being stuck. A result that arrives after leaving is dropped (as before). The analyzer has no cancel, so the run already in progress finishes in the background.
+
+### Needs a real phone
+- Back button position against the notch and Dynamic Island, and over the artwork on small screens (iPhone SE).
+- `Edit` focusing the right field with the keyboard up, and `KeyboardAvoidingView` keeping the active field visible.

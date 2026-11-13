@@ -3,9 +3,9 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check, Circle, LoaderCircle } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AnalysisRing, AppText, Button, DemoDataLabel } from '../../components';
+import { AnalysisRing, AppText, BackButton, Button, DemoDataLabel } from '../../components';
 import type { RootStackParamList } from '../../app/routes';
-import { resetToProgress } from '../../app/navigation';
+import { goBackSafely, resetToProgress } from '../../app/navigation';
 import { findTyre, useInspectionStore, useTyre } from '../../features/inspection/store';
 import { tyreName } from '../../features/inspection/positions';
 import { feedback } from '../../features/feedback/feedback';
@@ -64,7 +64,12 @@ export function AnalysingScreen({ navigation, route }: Props) {
   useEffect(
     () => () => {
       mounted.current = false;
+      // Left mid-run (back button, Android back, swipe): the late result is
+      // dropped above, so put the tyre back to `captured` (Frames captured on
+      // resume) instead of leaving it stuck in `analysing`.
+      if (latestTyre(tyreId)?.state === 'analysing') updateTyre(tyreId, { state: 'captured' });
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -144,6 +149,7 @@ export function AnalysingScreen({ navigation, route }: Props) {
         { paddingTop: insets.top + 16, paddingBottom: Math.max(insets.bottom, 12) + 24 },
       ]}
     >
+      <BackButton overlay tone="light" onPress={() => goBackSafely(navigation)} />
       <View style={styles.body}>
         <View style={styles.ring}>
           <AnalysisRing progress={stopped ? 0 : (current + 0.5) / steps.length} />

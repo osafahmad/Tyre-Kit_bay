@@ -160,3 +160,34 @@ test('confirm plate saves it and moves on to the chassis scan', async () => {
   const state = useInspectionStore.getState();
   expect(state.inspections.find(i => i.id === state.currentId)?.plate).toBe('ABC-1234');
 });
+
+test('Back is on every flow step; leaving Analysing mid-run returns the tyre to captured', async () => {
+  await render(<App repository={repo} />);
+  await goHomeFromWelcome();
+  await press('Start scan');
+  await press('Skip');
+  await press('Skip');
+  await fireEvent.press(await screen.findByRole('radio', { name: '2' }));
+  await press('Scan 2 tyres');
+  await press('Capture sidewall');
+  expect(await screen.findByText('Sidewall captured')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
+  await press('Scan tread');
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(10_000);
+  });
+  expect(await screen.findByText('Frames captured')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
+  await press('Analyse tyre');
+  expect(await screen.findByText('Analysing tyre')).toBeTruthy();
+  await press('Back');
+  // Back pops to the sidewall review; the dropped run doesn't leave the tyre `analysing`.
+  expect(await screen.findByText('Sidewall captured')).toBeTruthy();
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(5_000);
+  });
+  const state = useInspectionStore.getState();
+  const tyre = state.inspections.find(i => i.id === state.currentId)!.tyres[0];
+  expect(tyre.state).toBe('captured');
+  expect(tyre.result).toBeNull();
+});

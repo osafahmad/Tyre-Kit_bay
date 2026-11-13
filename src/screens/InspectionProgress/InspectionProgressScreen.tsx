@@ -1,8 +1,8 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppText, Button, DemoDataLabel, ProgressSegments, StatusBadge } from '../../components';
-import { resetToReport, useRootNavigation } from '../../app/navigation';
+import { AppText, BackButton, Button, DemoDataLabel, ProgressSegments, StatusBadge } from '../../components';
+import { goBackSafely, resetToReport, useRootNavigation } from '../../app/navigation';
 import {
   analysedTyres,
   nextTyre,
@@ -45,7 +45,10 @@ export function InspectionProgressScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.back}>
+          <BackButton onPress={() => goBackSafely(navigation)} />
+        </View>
         <AppText variant="rowLabel" color="textOnDark">
           {inspection.plate ?? 'No plate'}
         </AppText>
@@ -146,6 +149,7 @@ function TyreRow({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.white },
   header: { backgroundColor: colors.black, paddingHorizontal: 24, paddingBottom: 24 },
+  back: { marginLeft: -12, marginBottom: 4 },
   title: { marginTop: 4, marginBottom: 16 },
   demo: { marginTop: 12 },
   list: { padding: 20, paddingTop: 16, gap: 10, maxWidth: sizes.maxContentWidth + 40, width: '100%', alignSelf: 'center' },

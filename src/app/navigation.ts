@@ -38,6 +38,17 @@ export function backTo<Name extends keyof RootStackParamList>(
   }
 }
 
+/**
+ * The on-screen back button (owner request 2026-11-13). Same as Android back
+ * and iOS swipe, so `LeaveInspectionGuard` still asks before leaving an
+ * unfinished inspection. If nothing is behind (a restored root), go Home,
+ * where `Continue inspection` picks the inspection up again.
+ */
+export function goBackSafely(navigation: Navigator & { canGoBack(): boolean; goBack(): void }) {
+  if (navigation.canGoBack()) navigation.goBack();
+  else resetToHome(navigation);
+}
+
 /** Home with nothing behind it. */
 export function resetToHome(navigation: Navigator) {
   navigation.dispatch(

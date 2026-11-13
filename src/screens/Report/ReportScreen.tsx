@@ -3,9 +3,9 @@ import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check, Info, TriangleAlert } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppText, Button, DemoDataLabel, StatusBadge } from '../../components';
+import { AppText, BackButton, Button, DemoDataLabel, StatusBadge } from '../../components';
 import type { RootStackParamList } from '../../app/routes';
-import { resetToHome } from '../../app/navigation';
+import { goBackSafely, resetToHome } from '../../app/navigation';
 import { useInspection } from '../../features/inspection/store';
 import { formatLongDateTime } from '../../features/inspection/format';
 import { reportSummary, reportTyreRows } from '../../features/report/summary';
@@ -45,7 +45,10 @@ export function ReportScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.root}>
-      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.back}>
+          <BackButton onPress={() => goBackSafely(navigation)} />
+        </View>
         <AppText variant="rowLabel" color="textOnDark">
           {`${inspection.plate ?? 'No plate'} · ${formatLongDateTime(new Date(inspection.createdAt))}`}
         </AppText>
@@ -155,6 +158,7 @@ export function ReportScreen({ navigation, route }: Props) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.white },
   header: { backgroundColor: colors.black, paddingHorizontal: 24, paddingBottom: 22 },
+  back: { marginLeft: -12, marginBottom: 4 },
   title: { marginTop: 4 },
   chassis: { marginTop: 6, fontFamily: monospaceFont },
   demo: { marginTop: 10 },

@@ -7,7 +7,7 @@ export { ResultRow, NOT_READ } from './ResultRow';
 export { LogoMark } from './LogoMark';
 export * from './Artwork';
 export * from './CameraParts';
-export { DarkTopBar, CameraTitle, DarkContentHeader } from './Headers';
+export { BackButton, DarkTopBar, CameraTitle, DarkContentHeader } from './Headers';
 export { InspectionRow } from './InspectionRow';
 export { TextField } from './TextField';
 export { DemoDataLabel } from './DemoDataLabel';

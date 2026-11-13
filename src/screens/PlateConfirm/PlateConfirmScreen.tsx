@@ -3,7 +3,8 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppText, Button, ConfirmCarArt } from '../../components';
+import { AppText, BackButton, Button, ConfirmCarArt } from '../../components';
+import { goBackSafely } from '../../app/navigation';
 import type { RootStackParamList } from '../../app/routes';
 import { useInspectionStore } from '../../features/inspection/store';
 import { colors, fonts, radius, sizes } from '../../theme';
@@ -18,6 +19,7 @@ export function PlateConfirmScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.root}>
+      <BackButton overlay onPress={() => goBackSafely(navigation)} />
       <View style={[styles.art, { paddingTop: insets.top + 40 }]}>
         <ConfirmCarArt />
       </View>

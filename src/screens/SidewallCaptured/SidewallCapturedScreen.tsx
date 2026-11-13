@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -9,7 +10,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppText, Button, CopyLogsButton, SidewallDetectorDebugCard, SidewallDoneArt } from '../../components';
+import { AppText, BackButton, Button, CopyLogsButton, SidewallDetectorDebugCard, SidewallDoneArt } from '../../components';
+import { goBackSafely } from '../../app/navigation';
 import type { RootStackParamList } from '../../app/routes';
 import { useInspectionStore, useTyre } from '../../features/inspection/store';
 import { emptyToNull } from '../../features/inspection/validation';
@@ -23,7 +25,7 @@ import { cropSuggestions, mergeCropSuggestions } from '../../ml/sidewallCropMerg
 import { sidewallLog } from '../../ml/ocr/sidewallDebug';
 import { ocrConfig } from '../../config/capture';
 import { TriangleAlert } from 'lucide-react-native';
-import { colors, fonts, radius } from '../../theme';
+import { colors, fonts, radius, sizes } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SidewallCaptured'>;
 
@@ -131,6 +133,15 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tyreId]);
 
+  // Inline Edit (owner request 2026-11-13): focuses that field's input; Done closes the keyboard.
+  const inputs = useRef<Partial<Record<keyof SidewallDetails, React.ComponentRef<typeof TextInput> | null>>>({});
+  const [editing, setEditing] = useState<keyof SidewallDetails | null>(null);
+  const toggleEdit = (key: keyof SidewallDetails) => {
+    const input = inputs.current[key];
+    if (editing === key) input?.blur();
+    else input?.focus();
+  };
+
   const change = (key: keyof SidewallDetails, text: string, upper: boolean) => {
     touched.current.add(key);
     const next = { ...values, [key]: upper ? text.toUpperCase() : text };
@@ -143,6 +154,13 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <BackButton
+        overlay
+        onPress={() => {
+          save();
+          goBackSafely(navigation);
+        }}
+      />
       <View style={[styles.art, { paddingTop: insets.top + 32 }]}>
         <SidewallDoneArt size={210} />
       </View>
@@ -172,7 +190,12 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
               {f.label}
             </AppText>
             <TextInput
+              ref={r => {
+                inputs.current[f.key] = r;
+              }}
               value={values[f.key]}
+              onFocus={() => setEditing(f.key)}
+              onBlur={() => setEditing(e => (e === f.key ? null : e))}
               onChangeText={t => change(f.key, t, f.upper)}
               placeholder={reading && !touched.current.has(f.key) ? 'Reading…' : 'Not read'}
               placeholderTextColor={colors.textSecondary}
@@ -180,8 +203,19 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
               accessibilityHint={values[f.key] === '' ? 'Not read. Type it in if you can see it.' : undefined}
               autoCapitalize={f.upper ? 'characters' : 'words'}
               autoCorrect={false}
-              style={styles.input}
+              style={[styles.input, editing === f.key && styles.inputActive]}
             />
+            <Pressable
+              onPress={() => toggleEdit(f.key)}
+              accessibilityRole="button"
+              accessibilityLabel={`${editing === f.key ? 'Done editing' : 'Edit'} ${f.label}`}
+              hitSlop={4}
+              style={({ pressed }) => [styles.edit, { opacity: pressed ? 0.6 : 1 }]}
+            >
+              <AppText variant="bodySmall" weight="semibold" color="navy">
+                {editing === f.key ? 'Done' : 'Edit'}
+              </AppText>
+            </Pressable>
           </View>
         ))}
         <View style={styles.actions}>
@@ -247,6 +281,15 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semibold,
     fontSize: 15,
     paddingVertical: 8,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  inputActive: { borderBottomColor: colors.navy },
+  edit: {
+    minWidth: sizes.touchTarget,
+    minHeight: sizes.touchTarget,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   actions: { gap: 6, marginTop: 12 },
 });

@@ -3,8 +3,8 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Camera, Smartphone, WifiOff, type LucideIcon } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppText, Button } from '../../components';
-import { resetToHome } from '../../app/navigation';
+import { AppText, BackButton, Button } from '../../components';
+import { goBackSafely, resetToHome } from '../../app/navigation';
 import type { RootStackParamList } from '../../app/routes';
 import { requestCameraAccess } from '../../features/capture/useCameraAccess';
 import { colors, sizes } from '../../theme';
@@ -45,6 +45,9 @@ export function CameraAccessScreen({ navigation, route }: Props) {
         { paddingTop: insets.top + 16, paddingBottom: Math.max(insets.bottom, 12) + 20 },
       ]}
     >
+      {navigation.canGoBack() ? (
+        <BackButton overlay tone="light" onPress={() => goBackSafely(navigation)} />
+      ) : null}
       <View style={styles.body}>
         <View style={styles.iconBox}>
           <Camera size={34} color={colors.cameraBlue} strokeWidth={1.8} />

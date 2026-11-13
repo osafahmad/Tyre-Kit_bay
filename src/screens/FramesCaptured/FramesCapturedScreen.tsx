@@ -3,7 +3,8 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppText, Button, DemoDataLabel } from '../../components';
+import { AppText, BackButton, Button, DemoDataLabel } from '../../components';
+import { goBackSafely } from '../../app/navigation';
 import type { RootStackParamList } from '../../app/routes';
 import { useTyre } from '../../features/inspection/store';
 import { tyreName } from '../../features/inspection/positions';
@@ -41,6 +42,7 @@ export function FramesCapturedScreen({ navigation, route }: Props) {
         { paddingTop: insets.top + 16, paddingBottom: Math.max(insets.bottom, 12) + 24 },
       ]}
     >
+      <BackButton overlay onPress={() => goBackSafely(navigation)} />
       <View style={styles.body}>
         <View style={styles.check}>
           <Check size={56} color={colors.white} strokeWidth={2.4} />

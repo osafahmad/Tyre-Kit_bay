@@ -19,9 +19,9 @@ import {
   type LucideIcon,
 } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppText, Button } from '../../components';
+import { AppText, BackButton, Button } from '../../components';
 import type { RootStackParamList } from '../../app/routes';
-import { resetToProgress } from '../../app/navigation';
+import { goBackSafely, resetToProgress } from '../../app/navigation';
 import { useInspectionStore } from '../../features/inspection/store';
 import type { CaptureErrorReason } from '../../features/inspection/types';
 import { colors, sizes } from '../../theme';
@@ -119,6 +119,7 @@ export function CaptureProblemScreen({ navigation, route }: Props) {
         { paddingTop: insets.top + 16, paddingBottom: Math.max(insets.bottom, 12) + 24 },
       ]}
     >
+      <BackButton overlay onPress={() => goBackSafely(navigation)} />
       <ScrollView contentContainerStyle={styles.body}>
         {/* Warning icon kept off the status palette: amber is for tyre condition only. */}
         <View style={styles.iconBox}>

@@ -62,6 +62,34 @@ export function DarkTopBar({
   );
 }
 
+/**
+ * Back chevron for flow screens without a top bar (owner request 2026-11-13).
+ * `tone` is the background it sits on. `overlay` pins it top-left over
+ * artwork or centred content, below the safe area.
+ */
+export function BackButton({
+  onPress,
+  tone = 'dark',
+  overlay = false,
+}: {
+  onPress: () => void;
+  tone?: 'dark' | 'light';
+  overlay?: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const button = (
+    <IconButton
+      icon={ChevronLeft}
+      accessibilityLabel="Back"
+      onPress={onPress}
+      color={tone === 'dark' ? 'white' : 'black'}
+      testID="back-button"
+    />
+  );
+  if (!overlay) return button;
+  return <View style={[styles.overlay, { top: insets.top + 8 }]}>{button}</View>;
+}
+
 /** Centred camera title and subtitle under the top bar. */
 export function CameraTitle({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
@@ -112,6 +140,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   spacer: { width: sizes.touchTarget, height: sizes.touchTarget },
+  overlay: { position: 'absolute', left: 12, zIndex: 1 },
   skip: {
     minWidth: sizes.touchTarget,
     height: sizes.touchTarget,

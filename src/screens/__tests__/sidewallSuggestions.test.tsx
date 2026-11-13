@@ -60,14 +60,24 @@ const details = (tyreId: string) => {
   return s.inspections.flatMap(i => i.tyres).find(t => t.id === tyreId)!.sidewallDetails;
 };
 
-function renderScreen(tyreId: string) {
-  const navigation = { navigate: jest.fn(), replace: jest.fn() };
+function renderScreen(tyreId: string, navigation = mockNavigation()) {
   return render(
     <SidewallCapturedScreen
       navigation={navigation as never}
       route={{ key: 'k', name: 'SidewallCaptured', params: { tyreId } } as never}
     />,
   );
+}
+
+function mockNavigation() {
+  return {
+    navigate: jest.fn(),
+    replace: jest.fn(),
+    canGoBack: jest.fn(() => true),
+    goBack: jest.fn(),
+    dispatch: jest.fn(),
+    getState: jest.fn(() => undefined),
+  };
 }
 
 const done = (
@@ -304,4 +314,34 @@ describe('Stage 3: detector crop reads merged into the fields (owner request 202
     expect(screen.getByLabelText('Tyre size').props.value).toBe('205/55 R16');
     expect(screen.getByLabelText('Make').props.value).toBe('Continental');
   });
+});
+
+test('inline Edit: each field has its own Edit, which turns into Done while that field is active', async () => {
+  mockReader.read.mockResolvedValue(done({}, 0));
+  const tyreId = seedTyre({ size: '205/55 R16', dotTin: null, make: null, model: null });
+  await renderScreen(tyreId);
+  await flush();
+  for (const label of ['Tyre size', 'DOT/TIN', 'Make', 'Model']) {
+    expect(screen.getByRole('button', { name: `Edit ${label}` })).toBeTruthy();
+  }
+  await fireEvent(screen.getByLabelText('Tyre size'), 'focus');
+  expect(screen.getByRole('button', { name: 'Done editing Tyre size' })).toBeTruthy();
+  // Only the active field changes.
+  expect(screen.getByRole('button', { name: 'Edit Make' })).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText('Tyre size'), '205/55 r17');
+  await fireEvent(screen.getByLabelText('Tyre size'), 'blur');
+  expect(screen.getByRole('button', { name: 'Edit Tyre size' })).toBeTruthy();
+  expect(details(tyreId).size).toBe('205/55 R17');
+});
+
+test('Back saves the details and goes back one step', async () => {
+  mockReader.read.mockResolvedValue(done({}, 0));
+  const tyreId = seedTyre();
+  const navigation = mockNavigation();
+  await renderScreen(tyreId, navigation);
+  await flush();
+  await fireEvent.changeText(screen.getByLabelText('Make'), 'Continental');
+  await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
+  expect(navigation.goBack).toHaveBeenCalledTimes(1);
+  expect(details(tyreId).make).toBe('Continental');
 });
