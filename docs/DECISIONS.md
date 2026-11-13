@@ -1059,3 +1059,35 @@ The owner asked for three things from the screen-capture and device logs. Each w
 ### Needs a real phone
 - Back button position against the notch and Dynamic Island, and over the artwork on small screens (iPhone SE).
 - `Edit` focusing the right field with the keyboard up, and `KeyboardAvoidingView` keeping the active field visible.
+
+## Tread presence check loosened, with a full-sweep fail-safe (owner request 2026-11-13)
+
+**Status: unit-tested with synthetic surfaces. Still `estimate`, UNCALIBRATED; not yet run on a phone.**
+
+### Why
+- Real tread sweeps were blocked with `No tyre tread detected`: worn grooves, dust, glare, and dim or warm-lit basements.
+- No `[TreadWear] presence:` log lines from those sweeps were available, so the new values are still estimates, chosen as a moderate step looser. Recalibrate from the log lines (each frame's `medianLum`, `medianSat`, `blownOut`, `gradX/Y`, `edgesX/Y`) of real tyres and of walls and floors.
+
+### `treadPresenceConfig` (`src/config/capture.ts`)
+| Value | Before | Now | Effect |
+|---|---|---|---|
+| `minMedianLuminance` | 8 | 5 | Darker basements pass |
+| `maxMedianLuminance` | 150 | 175 | Dusty, sunlit or grey worn rubber passes |
+| `maxMedianSaturation` | 0.35 | 0.45 | Rubber tinted by warm or sodium light passes |
+| `maxBlownOutFraction` | 0.2 | 0.3 | More glare allowed |
+| `edgeDelta` | 20 | 16 | Shallower groove walls count as edges |
+| `minStrongEdgeFraction` | 0.05 | 0.03 | Fewer edges needed |
+| `minMeanGradient` | 5 | 3.5 | Lower overall contrast allowed |
+
+`analysisWidth` (160), `maxFramesChecked` (5), `minFrames` (3) and `minPassFraction` (0.5) are unchanged.
+
+### Full-sweep fail-safe (`isFullSweep`, `judgeTreadFrame(…, waiveGrooves)`)
+- Tread capture accepts frames on brightness, sharpness, novelty and sweep travel. It does not detect a tyre, so a textured wall, floor or car body can also finish a sweep. Skipping the check on a full sweep would bring back the wall `6.2 mm · Good` result this check was added for.
+- **Owner decision:** relax, don't skip. When the sweep finished (`inspectionConfig.capture.treadTargetFrames`, 10 saved frames; the capture only reaches the 10th frame after the sweep travel), the **groove check is waived**: a frame passes if it looks like rubber. The **rubber check still blocks** (bright wall, coloured object, mostly blown out).
+- An early `Finish sweep` (5–9 frames) uses both checks as before.
+- Logged in `[TreadWear] presence:` as `fullSweep` / `groovesWaived`; each frame's `grooves` still records what was measured.
+- **Known risk:** a dark, low-saturation surface (asphalt, dark carpet, a black bumper) swept fully now passes. Watch for it in the logs.
+
+### Needs a real phone
+- Worn and new tyres in daylight, with flash, and in a dim garage: no false block.
+- A white wall, a dark floor and the car body, swept fully and stopped early: which ones are still blocked.

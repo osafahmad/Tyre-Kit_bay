@@ -1,4 +1,5 @@
 import { treadPresenceConfig } from '../../config/capture';
+import { inspectionConfig } from '../../config/inspection';
 import { absoluteFramePath } from '../../features/capture/frameFiles';
 import { localFramePath, type PipelineDeps } from '../inference/pipeline';
 import { pixelLayout, type DecodableImage, type ImageDecoder } from '../inference/tensorUtils';
@@ -11,6 +12,11 @@ import { r3, treadLog } from './treadDebug';
 // rubber, and strong repeated groove edges. No model: plain pixel statistics
 // on the saved JPEGs, with thresholds in `treadPresenceConfig` (UNCALIBRATED).
 // It can only block a result, never improve one.
+//
+// Full-sweep fail-safe (owner decision 2026-11-13): when the sweep finished
+// (`inspectionConfig.capture.treadTargetFrames` frames saved), the groove check is
+// waived, so worn, dusty or glare-hit tread isn't blocked. The rubber check
+// still applies, because a textured wall or car body can also finish a sweep.
 
 /** The thresholds, as plain numbers so tests and later calibration can pass variants. */
 export type TreadPresenceConfig = { readonly [K in keyof typeof treadPresenceConfig]: number };
@@ -134,11 +140,21 @@ export function treadPresenceMetrics(pixels: RawPixels, edgeDelta: number = trea
   };
 }
 
-/** One frame's metrics against the thresholds. */
+/** True when the sweep finished: the capture stops on its own at the target frame count. */
+export function isFullSweep(savedFrames: number): boolean {
+  return savedFrames >= inspectionConfig.capture.treadTargetFrames;
+}
+
+/**
+ * One frame's metrics against the thresholds. With `waiveGrooves` (a full
+ * sweep), a rubber-looking frame passes even without groove edges; `grooves`
+ * still reports what was measured.
+ */
 export function judgeTreadFrame(
   index: number,
   metrics: TreadFrameMetrics,
   cfg: TreadPresenceConfig = treadPresenceConfig,
+  waiveGrooves = false,
 ): TreadFrameJudgement {
   const rubber =
     metrics.medianLuminance >= cfg.minMedianLuminance &&
@@ -149,7 +165,8 @@ export function judgeTreadFrame(
   const grooves =
     Math.max(metrics.strongEdgeFractionX, metrics.strongEdgeFractionY) >= cfg.minStrongEdgeFraction &&
     Math.max(metrics.meanGradientX, metrics.meanGradientY) >= cfg.minMeanGradient;
-  const reason: TreadPresenceReason = !rubber ? 'not_rubber_surface' : !grooves ? 'too_smooth_no_grooves' : 'ok';
+  const reason: TreadPresenceReason =
+    !rubber ? 'not_rubber_surface' : !grooves && !waiveGrooves ? 'too_smooth_no_grooves' : 'ok';
   return { index, metrics, rubber, grooves, reason };
 }
 
@@ -245,13 +262,14 @@ export class TreadPresenceValidator implements TreadPresenceChecker {
     const cfg = this.deps.config ?? treadPresenceConfig;
     const real = frames.filter(isRealFrame);
     const picked = spreadIndexes(real.length, cfg.maxFramesChecked);
+    const fullSweep = isFullSweep(frames.length);
     const started = Date.now();
     const judged: TreadFrameJudgement[] = [];
     const unreadable: number[] = [];
     for (const i of picked) {
       if (isCancelled()) break;
       try {
-        judged.push(judgeTreadFrame(i, await this.frameMetrics(real[i]), cfg));
+        judged.push(judgeTreadFrame(i, await this.frameMetrics(real[i]), cfg, fullSweep));
       } catch (e) {
         unreadable.push(i);
         treadLog(`presence: frame ${i + 1} unreadable`, { error: errorText(e) });
@@ -261,6 +279,8 @@ export class TreadPresenceValidator implements TreadPresenceChecker {
     treadLog(`presence: ${verdict.reason} (tread ${verdict.isTyreTread}, confidence ${r3(verdict.confidence)})`, {
       ms: Date.now() - started,
       savedFrames: frames.length,
+      fullSweep,
+      groovesWaived: fullSweep,
       checked: picked.map(i => i + 1),
       passed: verdict.metrics.framesPassed,
       unreadable: unreadable.map(i => i + 1),

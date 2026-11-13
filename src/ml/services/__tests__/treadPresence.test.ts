@@ -3,6 +3,7 @@ import type { DecodableImage, ImageDecoder } from '../../inference/tensorUtils';
 import type { RawPixels } from '../../inference/types';
 import {
   blocksTreadResult,
+  isFullSweep,
   combineTreadJudgements,
   judgeTreadFrame,
   spreadIndexes,
@@ -218,5 +219,57 @@ describe('TreadPresenceValidator', () => {
     expect(text).toMatch(/\[TreadWear\] .* presence: not_rubber_surface \(tread false, confidence 0\)/);
     expect(text).toMatch(/"medianLum":/);
     expect(text).not.toMatch(/a\.jpg/);
+  });
+});
+
+describe('loosened thresholds and the full-sweep fail-safe (owner 2026-11-13)', () => {
+  /** Worn, dusty tread: grey rubber with shallow grooves (ΔL 17 every 8 columns). */
+  const worn: Paint = x => (x % 8 < 3 ? [128, 128, 130] : [145, 145, 147]);
+  /** Rubber under warm basement light: orange-tinted (saturation ~0.4), grooved. */
+  const warm: Paint = x => (x % 8 < 3 ? [30, 22, 18] : [90, 66, 54]);
+  /** A bright, slightly textured wall: rubber check fails even on a full sweep. */
+  const brightBrick: Paint = x => (x % 8 < 3 ? [190, 185, 180] : [215, 210, 205]);
+  const judge = (paint: Paint, waive = false) =>
+    judgeTreadFrame(0, treadPresenceMetrics(image(paint)), treadPresenceConfig, waive);
+
+  test('worn, shallow-groove tread and warm-lit rubber now pass', () => {
+    expect(judge(worn).reason).toBe('ok');
+    expect(judge(warm).reason).toBe('ok');
+  });
+
+  test('a full sweep waives the groove check only: a smooth rubber-coloured surface passes, a wall does not', () => {
+    expect(judge(floor).reason).toBe('too_smooth_no_grooves');
+    expect(judge(floor, true)).toMatchObject({ reason: 'ok', grooves: false });
+    expect(judge(wall, true).reason).toBe('not_rubber_surface');
+    expect(judge(brightBrick, true).reason).toBe('not_rubber_surface');
+    expect(judge(redTextured, true).reason).toBe('not_rubber_surface');
+  });
+
+  test('isFullSweep: the tread target frame count', () => {
+    expect(isFullSweep(9)).toBe(false);
+    expect(isFullSweep(10)).toBe(true);
+  });
+
+  test('validator: 10 smooth frames (finished sweep) pass; 9 (Finish sweep early) are blocked; a fully swept wall is blocked', async () => {
+    const decode = (paint: Paint): ImageDecoder => ({
+      loadFromFileAsync: async () => {
+        const img: DecodableImage = {
+          width: 64,
+          height: 48,
+          cropAsync: async () => img,
+          resizeAsync: async () => img,
+          toRawPixelDataAsync: async () => image(paint),
+          dispose: () => {},
+        };
+        return img;
+      },
+    });
+    const run = (paint: Paint, n: number) =>
+      new TreadPresenceValidator({ pipeline: { resolveFramePath: p => p, decoder: decode(paint) } }).validate(
+        Array.from({ length: n }, (_, i) => `f${i}.jpg`),
+      );
+    expect(blocksTreadResult(await run(floor, 10))).toBe(false);
+    expect((await run(floor, 9)).reason).toBe('too_smooth_no_grooves');
+    expect(blocksTreadResult(await run(wall, 10))).toBe(true);
   });
 });
