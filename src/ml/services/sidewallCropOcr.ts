@@ -95,3 +95,59 @@ export function bestCropRead(reads: CropRead[]): CropRead | null {
   for (const r of reads) if (!best || r.score > best.score) best = r;
   return best;
 }
+
+// ---------------------------------------------------------------- Stage 3: which boxes count
+
+/**
+ * A crop whose best read reached this score parsed its own class's field
+ * (`scoreCropRead`: 3 + text bonus), so it is "strongly verified".
+ */
+export const CROP_STRONG_SCORE = 3;
+/**
+ * estimate. Two boxes of different classes whose padded crops overlap by at
+ * least this IoU are taken as the same text; a weak one never competes with a
+ * strongly verified one.
+ */
+export const CROP_OVERLAP_IOU = 0.5;
+
+/** Why a crop is left out of the field suggestions. Null: it is used. */
+export type CropIgnoredReason = 'no_text' | 'overlap';
+
+type JudgedCrop = { label: string; crop: CropRect; best: CropRead | null };
+
+/** Intersection over union of two crop rectangles. */
+export function cropIou(a: CropRect, b: CropRect): number {
+  const w = Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1);
+  const h = Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1);
+  if (w <= 0 || h <= 0) return 0;
+  const inter = w * h;
+  const union = (a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+/**
+ * Stage 3 (owner request 2026-11-13, iPhone 13: false `Brand` boxes on tread
+ * shoulder rubber read 0 characters in all 4 orientations):
+ * - `verified`: at least one orientation read a letter or digit (best score > 0).
+ *   An unverified box is ignored as `no_text`.
+ * - A verified box that overlaps (IoU ≥ `CROP_OVERLAP_IOU`) a box of another
+ *   class that parsed its own field, while it didn't parse its own, is
+ *   ignored as `overlap`, with the index of the box that won.
+ * Ignored boxes stay in the results so the staging card can show them.
+ */
+export function judgeCrops<T extends JudgedCrop>(
+  crops: T[],
+): (T & { verified: boolean; ignored: CropIgnoredReason | null; overlappedBy: number | null })[] {
+  const verified = crops.map(c => !!c.best && c.best.score > 0);
+  const strong = crops.map((c, i) => verified[i] && c.best!.score >= CROP_STRONG_SCORE);
+  return crops.map((c, i) => {
+    if (!verified[i]) return { ...c, verified: false, ignored: 'no_text' as const, overlappedBy: null };
+    if (!strong[i]) {
+      const winner = crops.findIndex(
+        (o, j) => j !== i && strong[j] && o.label !== c.label && cropIou(o.crop, c.crop) >= CROP_OVERLAP_IOU,
+      );
+      if (winner >= 0) return { ...c, verified: true, ignored: 'overlap' as const, overlappedBy: winner };
+    }
+    return { ...c, verified: true, ignored: null, overlappedBy: null };
+  });
+}

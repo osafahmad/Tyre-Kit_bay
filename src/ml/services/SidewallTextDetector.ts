@@ -21,7 +21,9 @@ import {
   bestCropRead,
   cropRead,
   CROP_ROTATIONS,
+  judgeCrops,
   paddedCropRect,
+  type CropIgnoredReason,
   type CropRead,
   type CropRect,
   type CropRotation,
@@ -77,6 +79,12 @@ export type SidewallCropResult = {
   /** The read whose text fits the box's class best, or null when no orientation ran. */
   best: CropRead | null;
   ocrMs: number;
+  /** Stage 3: some orientation read a letter or digit. */
+  verified: boolean;
+  /** Stage 3: why this box is left out of the field suggestions (`judgeCrops`), or null when it is used. */
+  ignored: CropIgnoredReason | null;
+  /** For `overlap`: the `detection` index of the strongly verified box that won. */
+  overlappedBy: number | null;
 };
 
 export type SidewallCropsOutcome =
@@ -280,7 +288,7 @@ export class SidewallTextDetector {
       sidewallDetectorLog(`${label}: crops skipped, not a local file`, { error: errorText(e) });
       return { status: 'unavailable', reason: 'no_detections' };
     }
-    const crops: SidewallCropResult[] = [];
+    const crops: Omit<SidewallCropResult, 'verified' | 'ignored' | 'overlappedBy'>[] = [];
     for (const [i, d] of result.detections.entries()) {
       const crop = d.frameRect ? paddedCropRect(d.frameRect, result.source) : null;
       if (!crop) {
@@ -307,7 +315,7 @@ export class SidewallTextDetector {
         }
       }
       const best = bestCropRead(reads);
-      const crp: SidewallCropResult = {
+      const crp = {
         detection: i,
         label: d.label,
         score: d.score,
@@ -333,7 +341,23 @@ export class SidewallTextDetector {
         { rawText: true },
       );
     }
-    return { status: 'done', crops };
+    const judged = judgeCrops(crops).map(c => ({
+      ...c,
+      // judgeCrops counts positions in this list; report the box's own detection index.
+      overlappedBy: c.overlappedBy === null ? null : crops[c.overlappedBy].detection,
+    }));
+    const ignored = judged.filter(c => c.ignored);
+    if (ignored.length > 0) {
+      sidewallDetectorLog(`${label}: ${ignored.length} of ${judged.length} boxes ignored`, {
+        boxes: ignored.map(c => ({
+          box: c.detection + 1,
+          label: c.label,
+          reason: c.ignored,
+          overlappedBy: c.overlappedBy === null ? null : c.overlappedBy + 1,
+        })),
+      });
+    }
+    return { status: 'done', crops: judged };
   }
 }
 

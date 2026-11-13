@@ -14,9 +14,14 @@ import type { RootStackParamList } from '../../app/routes';
 import { useInspectionStore, useTyre } from '../../features/inspection/store';
 import { emptyToNull } from '../../features/inspection/validation';
 import type { SidewallDetails } from '../../features/inspection/types';
-import { applySuggestions, getSidewallReader } from '../../ml/sidewallReader';
+import { unlink } from '@dr.pogodin/react-native-fs';
+import { applyMergedSuggestions, applySuggestions, getSidewallReader, type SidewallSuggestions } from '../../ml/sidewallReader';
 import { getSidewallTextDetector } from '../../ml/services/SidewallTextDetector';
 import { countSidewallDetections, NO_SIDEWALL_NOTICE, sidewallLooksEmpty } from '../../ml/services/sidewallPresence';
+import { cropPassCoveredAllFrames, readSidewallCrops } from '../../ml/services/sidewallCropPass';
+import { cropSuggestions, mergeCropSuggestions } from '../../ml/sidewallCropMerge';
+import { sidewallLog } from '../../ml/ocr/sidewallDebug';
+import { ocrConfig } from '../../config/capture';
 import { TriangleAlert } from 'lucide-react-native';
 import { colors, fonts, radius } from '../../theme';
 
@@ -79,14 +84,40 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
       .read(frames, () => cancelled)
       .then(async outcome => {
         if (cancelled || outcome.status !== 'done') return;
-        const next = applySuggestions(valuesRef.current, outcome.suggestions, touched.current);
-        if (fields.some(f => next[f.key] !== valuesRef.current[f.key])) {
+        const before = valuesRef.current;
+        const next = applySuggestions(before, outcome.suggestions, touched.current);
+        // Only what this read filled may be replaced by the crops below.
+        const filled: SidewallSuggestions = {};
+        for (const f of fields) if (next[f.key] !== before[f.key]) filled[f.key] = next[f.key];
+        if (Object.keys(filled).length > 0) {
           setValues(next);
           saveRef.current(next);
         }
+
+        // Stage 3 (owner request 2026-11-13): detector boxes → crop OCR → merged with the whole-frame values.
+        const detector = getSidewallTextDetector();
+        const pass = await readSidewallCrops(frames, detector, { isCancelled: () => cancelled, deleteFile: unlink });
+        if (cancelled) return;
+        const crops = cropSuggestions(pass.frames, ocrConfig.sidewallMinAgreeingReads);
+        if (Object.keys(crops).length > 0) {
+          const merged = mergeCropSuggestions(outcome.suggestions, outcome.basis ?? {}, crops);
+          const after = applyMergedSuggestions(valuesRef.current, merged.suggestions, filled, touched.current);
+          sidewallLog('detector crops merged with the whole-frame read', {
+            crops,
+            decisions: merged.decisions,
+            applied: fields.filter(f => after[f.key] !== valuesRef.current[f.key]).map(f => f.key),
+          });
+          if (fields.some(f => after[f.key] !== valuesRef.current[f.key])) {
+            setValues(after);
+            saveRef.current(after);
+          }
+        }
+
         if (outcome.linesRead === 0) {
           // Nothing read anywhere: ask the detector before saying the capture is empty.
-          const count = await countSidewallDetections(frames, getSidewallTextDetector(), () => cancelled);
+          const count = cropPassCoveredAllFrames(pass)
+            ? { detections: pass.detections, framesRun: pass.framesRun, modelMissing: pass.modelMissing }
+            : await countSidewallDetections(frames, detector, () => cancelled);
           if (!cancelled && sidewallLooksEmpty(outcome.linesRead, count)) setEmptyNotice(true);
         }
       })

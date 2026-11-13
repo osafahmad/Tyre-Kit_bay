@@ -15,6 +15,7 @@ jest.mock('../../ml/sidewallReader', () => ({
 }));
 // The staging detector card (Stage 1, 2026-11-13) runs the text detector on open; its
 // service is tested in src/ml/services/__tests__/SidewallTextDetector.test.ts.
+const mockReadCrops = jest.fn<Promise<unknown>, [unknown, number]>(async () => ({ status: 'unavailable', reason: 'no_detections' }));
 const mockDetectFrame = jest.fn<Promise<unknown>, [string, number]>(async () => ({
   status: 'unavailable',
   reason: 'model_missing',
@@ -29,7 +30,7 @@ jest.mock('../../config/diagnostics', () => {
 jest.mock('../../ml/services/SidewallTextDetector', () => ({
   getSidewallTextDetector: () => ({
     detectFrame: (f: string, i: number) => mockDetectFrame(f, i),
-    readCrops: jest.fn(async () => ({ status: 'unavailable', reason: 'no_detections' })),
+    readCrops: (r: unknown, i: number) => mockReadCrops(r, i),
   }),
   deleteCropFiles: jest.fn(async () => {}),
 }));
@@ -69,11 +70,16 @@ function renderScreen(tyreId: string) {
   );
 }
 
-const done = (suggestions: Record<string, string>, linesRead = 3): SidewallReadOutcome => ({
+const done = (
+  suggestions: Record<string, string>,
+  linesRead = 3,
+  basis: Record<string, 'agreed' | 'single' | 'joined' | 'date_code'> = {},
+): SidewallReadOutcome => ({
   status: 'done',
   suggestions,
   ocrRuns: 2,
   linesRead,
+  basis,
 });
 
 beforeEach(() => {
@@ -221,12 +227,12 @@ describe('empty sidewall capture notice (owner request 2026-11-13)', () => {
     expect(screen.queryByText(NOTICE)).toBeNull();
   });
 
-  test('OCR read lines (even unusable ones): the detector is not asked and no notice is shown', async () => {
+  test('OCR read lines (even unusable ones): no notice, even when the detector finds no box', async () => {
+    mockDetectFrame.mockImplementation(async () => doneResult(0));
     const tyreId = seedTyre();
     mockReader.read.mockResolvedValue(done({}, 4));
     await renderScreen(tyreId);
     await flush();
-    expect(mockDetectFrame).not.toHaveBeenCalled();
     expect(screen.queryByText(NOTICE)).toBeNull();
   });
 
@@ -238,5 +244,64 @@ describe('empty sidewall capture notice (owner request 2026-11-13)', () => {
     await flush();
     expect(screen.getByText(NOTICE)).toBeTruthy();
     expect(mockDetectFrame).toHaveBeenCalledTimes(1); // stops at the first missing-model answer
+  });
+});
+
+describe('Stage 3: detector crop reads merged into the fields (owner request 2026-11-13, iPhone 13 Continental)', () => {
+  const { cropRead, judgeCrops } = jest.requireActual('../../ml/services/sidewallCropOcr') as typeof import('../../ml/services/sidewallCropOcr');
+  const now = new Date();
+  const L = (text: string, i: number) => ({ text, frame: { x: 0, y: i * 30, width: 200, height: 24 } });
+  const crop = (label: string, texts: string[], detection: number) => {
+    const best = cropRead(label, -90, texts.map(L), now);
+    const rect = { x1: detection * 300, y1: 0, x2: detection * 300 + 200, y2: 60 };
+    const [j] = judgeCrops([{ label, crop: rect, best }]);
+    return { detection, label, score: 0.8, crop: rect, thumbnailPath: null, reads: [best], best, ocrMs: 1, verified: j.verified, ignored: j.ignored, overlappedBy: null };
+  };
+  const frameCrops = () => [
+    crop('Size', ['195/55 R15'], 0),
+    crop('DOT', ['DOT: 1YG 092MKT', '0124'], 1),
+    crop('Brand', ['Continental'], 2),
+    crop('Model', ['ComfortContact'], 3),
+    crop('Brand', [], 4), // false box on tread shoulder rubber: no text, ignored
+  ];
+
+  beforeEach(() => {
+    mockDetectFrame.mockReset().mockImplementation(async () => ({ status: 'done', result: { detections: [{}, {}, {}, {}, {}] } }));
+    mockReadCrops.mockReset().mockImplementation(async () => ({ status: 'done', crops: frameCrops() }));
+  });
+
+  test('crop size replaces a noisy single-frame size, the crop TIN replaces a date code, make and model are filled', async () => {
+    const tyreId = seedTyre();
+    mockReader.read.mockResolvedValue(done({ size: '195/53 R15', dotTin: '0124' }, 9, { size: 'single', dotTin: 'date_code' }));
+    await renderScreen(tyreId);
+    await flush();
+    expect(screen.getByLabelText('Tyre size').props.value).toBe('195/55 R15');
+    expect(screen.getByLabelText('DOT/TIN').props.value).toBe('1YG 092MKT 0124');
+    expect(screen.getByLabelText('Make').props.value).toBe('Continental');
+    expect(screen.getByLabelText('Model').props.value).toBe('ComfortContact');
+    expect(details(tyreId)).toEqual({ size: '195/55 R15', dotTin: '1YG 092MKT 0124', make: 'Continental', model: 'ComfortContact' });
+    expect(mockReadCrops).toHaveBeenCalledTimes(2); // both saved frames, within sidewallCropConfig.maxFrames
+  });
+
+  test('a whole-frame size agreed by 2 frames beats a single crop read; empty fields are still filled from crops', async () => {
+    // One frame only gives crops: a single crop read loses to an agreed whole-frame read.
+    mockDetectFrame.mockImplementation(async (_f: string, i: number) =>
+      i === 0 ? { status: 'done', result: { detections: [{}] } } : { status: 'done', result: { detections: [] } },
+    );
+    const tyreId = seedTyre();
+    mockReader.read.mockResolvedValue(done({ size: '195/65 R15' }, 9, { size: 'agreed' }));
+    await renderScreen(tyreId);
+    await flush();
+    expect(screen.getByLabelText('Tyre size').props.value).toBe('195/65 R15');
+    expect(screen.getByLabelText('Make').props.value).toBe('Continental'); // empty fields are still filled
+  });
+
+  test('values confirmed on an earlier scan are never replaced by crop reads', async () => {
+    const tyreId = seedTyre({ size: '205/55 R16', dotTin: null, make: null, model: null });
+    mockReader.read.mockResolvedValue(done({}, 9));
+    await renderScreen(tyreId);
+    await flush();
+    expect(screen.getByLabelText('Tyre size').props.value).toBe('205/55 R16');
+    expect(screen.getByLabelText('Make').props.value).toBe('Continental');
   });
 });

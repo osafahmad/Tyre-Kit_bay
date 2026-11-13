@@ -144,7 +144,11 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
         return { status: 'idle' };
       }
       if (blocksTreadResult(presence)) {
-        treadLog(`scanTreadWear blocked (run ${run}): no tyre tread in the frames`, { reason: presence.reason });
+        treadLog(`scanTreadWear blocked (run ${run}): no tyre tread in the frames; result cleared`, {
+          reason: presence.reason,
+        });
+        // The analyzer's depth and status were made for frames that show no tread: drop them (owner 2026-11-13).
+        useInspectionStore.getState().setTreadNotDetected(tyreId, frames);
         next = { status: 'no_tread', verdict: presence };
         setLocal(next);
         return next;

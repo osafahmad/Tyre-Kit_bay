@@ -182,3 +182,16 @@ export const treadPresenceConfig = {
   /** estimate. Mean neighbour luminance difference, along the stronger axis, below which the surface is smooth. */
   minMeanGradient: 5,
 } as const;
+
+/**
+ * Stage 3 detector crop OCR on Sidewall captured (owner request 2026-11-13,
+ * `src/ml/services/sidewallCropPass.ts`).
+ */
+export const sidewallCropConfig = {
+  /**
+   * estimate. Saved sidewall frames the detector + crop OCR pass runs on,
+   * spread over the scan. Each box costs 4 ML Kit runs (0°, 90° CW, 90° CCW,
+   * 180°), so 3 frames with ~5 boxes is ~60 runs. Raise only after timing it on a phone.
+   */
+  maxFrames: 3,
+} as const;

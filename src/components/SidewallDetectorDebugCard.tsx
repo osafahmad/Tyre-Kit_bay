@@ -208,7 +208,13 @@ const rotationText = (r: number) => (r === 0 ? '0°' : r === 90 ? '90° CW' : r 
 /** One crop's lines: label, box, the orientation kept and what it parsed to, then every orientation's raw text. */
 export function cropText(c: SidewallCropResult): string {
   const size = `${c.crop.x2 - c.crop.x1}×${c.crop.y2 - c.crop.y1}`;
-  const lines = [`${c.label} ${c.score.toFixed(2)} · crop ${size} @ ${c.crop.x1},${c.crop.y1} · OCR ${c.ocrMs} ms`];
+  const ignored =
+    c.ignored === 'no_text'
+      ? ' (no text — ignored)'
+      : c.ignored === 'overlap'
+        ? ` (overlaps box ${c.overlappedBy !== null ? c.overlappedBy + 1 : '?'} — ignored)`
+        : '';
+  const lines = [`${c.label} ${c.score.toFixed(2)}${ignored} · crop ${size} @ ${c.crop.x1},${c.crop.y1} · OCR ${c.ocrMs} ms`];
   if (!c.best) lines.push('  no orientation could be read');
   else {
     const parsed = (['size', 'sizePartial', 'dotTin', 'make', 'model'] as const)

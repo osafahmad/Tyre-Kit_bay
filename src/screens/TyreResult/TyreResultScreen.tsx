@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
@@ -16,6 +16,7 @@ import {
   statusLabels,
 } from '../../components';
 import type { RootStackParamList } from '../../app/routes';
+import type { TyreResult } from '../../features/inspection/types';
 import { resetToProgress } from '../../app/navigation';
 import { useInspection, useInspectionStore } from '../../features/inspection/store';
 import { tyreName } from '../../features/inspection/positions';
@@ -47,7 +48,11 @@ export function TyreResultScreen({ navigation, route }: Props) {
   // Shown in its own card. A damage class can raise the status (saved to the store, so the header updates).
   const { treadWear } = useTyreInspection(tyreId, { autoScan: true });
   const tyre = inspection?.tyres.find(t => t.id === tyreId);
-  const result = tyre?.result;
+  // A blocked tread check clears the saved result (owner 2026-11-13). The screen keeps the last one
+  // for the sidewall rows while it shows the warning; depth, status and damage are hidden then.
+  const lastResult = useRef<TyreResult | null>(null);
+  if (tyre?.result) lastResult.current = tyre.result;
+  const result = tyre?.result ?? (treadWear.status === 'no_tread' ? lastResult.current : null);
   // Diagnostics: when the card and the Wear pattern row actually change on screen.
   const shownWear = result ? wearPatternRowValue(treadWear, result.wearPattern) : null;
   useEffect(() => {

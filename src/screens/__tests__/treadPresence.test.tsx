@@ -89,10 +89,22 @@ test('a wall sweep: "No tyre tread detected" with the groove hint; no 6.2 mm, Go
   expect(screen.queryByText('Average tread depth')).toBeNull();
   expect(screen.queryByText('No Surface Defects Detected')).toBeNull();
   expect(screen.queryByText('Even wear')).toBeNull();
-  // Nothing was saved to the result.
+  // The analyzer's result is dropped and the tyre goes back to tread capture; the screen still shows the warning.
   const tyre = useInspectionStore.getState().inspections[0].tyres[0];
-  expect(tyre.result?.treadWear).toBeUndefined();
-  expect(tyre.result?.wearPattern).toBe('Even wear');
+  expect(tyre).toMatchObject({ result: null, state: 'capturing_tread' });
+  expect(screen.getByText('Bridgestone')).toBeTruthy(); // sidewall rows still shown
+});
+
+test('Next tyre without rescanning: the report and PDF never carry the fake 6.2 mm · Good', async () => {
+  mockValidate.mockResolvedValue(verdict('too_smooth_no_grooves'));
+  const params = seed();
+  await show(params);
+  const { reportSummary, reportTyreRows } = jest.requireActual('../../features/report/summary') as typeof import('../../features/report/summary');
+  const inspection = useInspectionStore.getState().inspections[0];
+  const [row] = reportTyreRows(inspection);
+  expect(row).toMatchObject({ kind: 'not_scanned', status: null });
+  expect(JSON.stringify(reportTyreRows(inspection))).not.toMatch(/6\.2 mm/);
+  expect(reportSummary(inspection).status).toBeNull();
 });
 
 test('a bright or coloured surface gets the rubber hint', async () => {

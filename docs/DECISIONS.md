@@ -996,7 +996,44 @@ The owner asked for three things from the screen-capture and device logs. Each w
 - The wear model is not run and nothing is saved to the result (no `No Surface Defects Detected`, no wear record).
 - Header: `No tyre tread detected` instead of the depth or status, no status badge, caption `No tread reading. Scan this tyre again.` A banner above the rows repeats the title with the reason text (grooves or rubber wording, `NO_TREAD_REASON_TEXT`). The Tread Pattern & Wear card shows the same with a warning badge. The Wear pattern and Cracks or damage rows show `Not read`. Sidewall rows are unchanged.
 - `Scan this tyre again` becomes the primary button; `Next tyre` stays as a text button below it. Copy logs is unchanged.
-- **Not done:** the saved result itself is not altered or marked, so the inspection summary, report and PDF would still carry the analyzer's values for that tyre if the user moves on without rescanning. Flag for an owner decision (mark the tyre as needing recapture, or drop the result).
+- ~~**Not done:** the saved result itself is not altered or marked.~~ **Fixed 2026-11-13 (Stage 3 request):** see "Blocked tread clears the saved result" below.
 
 ### Sidewall empty-frame notice (`src/ml/services/sidewallPresence.ts`)
 - `SidewallReadOutcome` now carries `linesRead`, the number of ML Kit lines over every run of a read. When it is 0, Sidewall captured runs the text detector over every saved frame (`countSidewallDetections`). If it finds no box either, or the model can't load, an inline notice says `No tyre sidewall detected — point closely at the tyre's sidewall lettering and retake`. The fields stay editable; nothing is blocked. The detector is not run when OCR read any line, even unusable ones, so the extra work only happens on empty captures.
+
+## M7 Phase 2e: Stage 3, detector crops feed the sidewall fields (owner request 2026-11-13)
+
+**Status: unit-tested. Not yet run on a phone.**
+
+### Device results that led here (owner, iPhone 13, Continental ComfortContact 195/55 R15, DOT 0124)
+- `Brand` boxes (0.92–0.95) on the Continental text read `Continental`. `DOT` boxes (0.31–0.69) on the vertical DOT strip read `DOT: 1YG 092MKT | 0124` at 90° CCW. `Size` boxes (0.59–0.83) read `195/55 R15`, where the whole frame misread `195/53 R15`. `Model` boxes (0.79) read `ComfortContact`.
+- False `Brand` boxes on tread shoulder rubber read no character in any of the 4 orientations.
+- All of these texts already parse through the shared `filterSidewallText` (the two-line DOT included), so Stage 3 adds no regex and no new CLAUDE.md exception. The crop-only brand fuzzy match CLAUDE.md allows is **not** used yet; make comes only from the whole-word, root and model-family rules, as for whole frames.
+
+### Which boxes count (`judgeCrops`, `sidewallCropOcr.ts`)
+- `verified`: some orientation read a letter or digit (best score > 0). An unverified box is `ignored: 'no_text'`.
+- A verified box that did not parse its own field, overlapping (padded-crop IoU ≥ 0.5, `CROP_OVERLAP_IOU`, estimate) a box of another class that did parse its own field (score ≥ 3, `CROP_STRONG_SCORE`), is `ignored: 'overlap'` with the winning box. Two boxes that each parsed their own field both stay. Same-class overlaps are already removed by per-class NMS.
+- Ignored boxes stay in the results. The staging card marks them `(no text — ignored)` or `(overlaps box N — ignored)`, and `[SidewallDetector]` logs a per-frame ignore summary.
+
+### Crop pass (`sidewallCropPass.ts`, `sidewallCropConfig.maxFrames`: 3, estimate)
+- After the whole-frame read on Sidewall captured, the detector + 4-orientation crop OCR runs on up to 3 saved frames spread over the scan (each box costs 4 ML Kit runs). Thumbnails are deleted at once. It stops at the first sign the model is missing and never throws. `[SidewallDetector] crop pass done` logs time, frames, boxes, used and ignored counts.
+- When the whole-frame read returned no line, the empty-sidewall check reuses the pass's box count if the pass covered every frame (or the model is missing); otherwise it sweeps every frame as before.
+
+### Crop reads → fields (`sidewallCropMerge.ts`)
+- A box gives only its own class's field: `Size` → size, `DOT` → DOT/TIN, `Brand` → make, `Model` → model. A `Model` box's family names its brand as make only when no `Brand` box read a make (owner decision 2026-11-11). One read per frame per value.
+- Across frames, the reader's own rules: 2 frames agreeing is `agreed`; otherwise size, make and model take the best single read, and a DOT/TIN is suggested whole only when every crop read the same TIN.
+- The whole-frame reader now reports how each suggestion was reached (`SidewallReadOutcome.basis`: `agreed`, `single`, `joined`, `date_code`).
+- **Merge:** only one side has a value → that value. Same letters and digits → the whole frame's spelling. Otherwise the stronger basis wins: whole frame `agreed` 3, `single`/`joined` 2, `date_code` 1; crop `agreed` 3, `single` 2; **a tie goes to the crop**, because it is zoomed on the detected text (the `195/53` vs `195/55` case). So a single crop read replaces a single noisy whole-frame read, and an agreed whole-frame read keeps its value unless the crops agree too.
+- **DOT/TIN:** when the whole frame gave only the date code, a crop TIN ending in that date code wins (`0124` → `1YG 092MKT 0124`). A crop TIN with a different date code wins only if crops agreed on it.
+- **Applying** (`applyMergedSuggestions`): merged values replace only what this session's whole-frame pass filled, or fill empty fields. A field the user touched, or one confirmed on an earlier scan, is never replaced. Fields stay editable. The decisions are logged as `[SidewallOCR] detector crops merged with the whole-frame read` (crop values, each field's choice and why, the fields changed).
+
+### Blocked tread clears the saved result (`setTreadNotDetected`)
+- When the presence check blocks the tread frames, the analyzer's result (depth, status, damage) is dropped and the tyre goes back to `capturing_tread`, keeping its sidewall details and, until recapture, its tread frames. A verdict for frames that were recaptured meanwhile is ignored.
+- Effect: the progress list shows the tyre as still to scan, the report and PDF list it as `Not scanned`, the summary leaves it out of the status, and resuming opens Sidewall captured → Scan tread (not Analysing, which would remake the demo result).
+- Tyre result keeps showing the last result's sidewall rows with the `No tyre tread detected` warning while it is open.
+- **Known gap:** while the presence check runs (a few hundred ms), a demo depth is still drawn in the header with the pending badge, as before this change. It is never shown as `Good`, and it is gone once the check blocks.
+
+### Needs a real phone
+- The same Continental tyre: Sidewall captured should end with `195/55 R15`, the whole TIN, `Continental` and `ComfortContact`, and the merge log should say which side each came from.
+- Time of the crop pass on 3 frames (it runs after the whole-frame read; the fields keep saying `Reading…` until both finish).
+- A tyre where the detector boxes land on the hub: those boxes must show `(no text — ignored)` and change nothing.

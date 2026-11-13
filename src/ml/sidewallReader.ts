@@ -44,6 +44,16 @@ export interface SidewallReader {
 
 export type SidewallSuggestions = Partial<Record<SidewallField, string>>;
 
+/**
+ * How a suggestion was reached, so Stage 3 can rank a detector crop read
+ * against it (owner request 2026-11-13):
+ * - `agreed`: at least `minAgreeingReads` frames read the same value.
+ * - `single`: one frame's read, with no agreement (size, make, model, a lone DOT/TIN).
+ * - `joined`: size built from parts read in different frames.
+ * - `date_code`: only the 4-digit DOT date code, not the whole TIN.
+ */
+export type SuggestionBasis = 'agreed' | 'single' | 'joined' | 'date_code';
+
 export type SidewallReadOutcome =
   | { status: 'unavailable'; reason: 'ocr_missing' | 'no_frames' }
   | {
@@ -53,6 +63,8 @@ export type SidewallReadOutcome =
       ocrRuns: number;
       /** Text lines ML Kit returned over every run (owner request 2026-11-13: 0 means an empty sidewall capture). */
       linesRead: number;
+      /** How each suggestion was reached. */
+      basis: Partial<Record<SidewallField, SuggestionBasis>>;
     };
 
 export type CentreCrop = { path: string; sourceWidth: number; sourceHeight: number };
@@ -343,9 +355,13 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       }
 
       const suggestions: SidewallSuggestions = {};
+      const basis: Partial<Record<SidewallField, SuggestionBasis>> = {};
       for (const field of READ_FIELDS) {
         const value = agreedValue(reads[field], minAgreeing);
-        if (value) suggestions[field] = value;
+        if (value) {
+          suggestions[field] = value;
+          basis[field] = 'agreed';
+        }
       }
       for (const field of ['size', 'make', 'model'] as const) {
         if (suggestions[field] || reads[field].length === 0) continue;
@@ -356,6 +372,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         const value = bestSizeRead(reads[field]);
         if (value) {
           suggestions[field] = value;
+          basis[field] = 'single';
           sidewallLog(`${field}: no ${minAgreeing}-frame agreement; suggesting the best single read`, {
             value,
             reads: reads[field].map(r => r.value),
@@ -386,6 +403,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         const p = widthAspect && rim !== null ? parseTyreSize(`${widthAspect} R${rim}`) : null;
         if (p) {
           suggestions.size = p.value;
+          basis.size = 'joined';
           sidewallLog('size: no frame read a whole size; joined width/aspect and rim read in different frames', {
             value: p.value,
             parts,
@@ -399,6 +417,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           const completed = short ? completeShortWidthAspect(short, rim) : null;
           if (completed) {
             suggestions.size = completed;
+            basis.size = 'joined';
             sidewallLog('size: two-digit width/aspect completed with a rim read in another frame (rim-gated, CLAUDE.md exception)', {
               value: completed,
               parts,
@@ -411,6 +430,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         // (marker + 8–13 characters + valid date code), with no competing
         // read in any other frame, is suggested whole.
         suggestions.dotTin = reads.dotTin[0].value;
+        basis.dotTin = 'single';
         sidewallLog('dotTin: single read, no competing reads; suggesting it whole', { value: suggestions.dotTin });
       }
       if (!suggestions.dotTin && reads.dotTin.length > 0) {
@@ -426,6 +446,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
           (distinct.size === 1 ? dateCodes[0].value : null);
         if (code) {
           suggestions.dotTin = code;
+          basis.dotTin = 'date_code';
           sidewallLog(
             distinct.size === 1 && dateCodes.length < minAgreeing
               ? 'dotTin: single date code read, no competing date codes; suggesting the date code only'
@@ -440,6 +461,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
         const tin = agreedValue(markerlessTins, minAgreeing);
         if (tin) {
           suggestions.dotTin = tin;
+          basis.dotTin = 'agreed';
           sidewallLog(`dotTin: no DOT marker read; ${minAgreeing} frames agree on a TIN-shaped line`, { value: tin });
         }
       }
@@ -456,14 +478,36 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       }
       sidewallLog('read done', {
         suggestions,
+        basis,
         ocrRuns,
         linesRead,
         cancelled: isCancelled(),
         hitOcrCap: ocrRuns >= deps.maxOcrRuns,
       });
-      return { status: 'done', suggestions, ocrRuns, linesRead };
+      return { status: 'done', suggestions, ocrRuns, linesRead, basis };
     },
   };
+}
+
+/**
+ * Stage 3: the merged values (full frame + detector crops) replace what the
+ * full-frame pass filled in this session, or fill fields still empty. A field
+ * the user touched, or that held a value before this read (confirmed on an
+ * earlier scan), is never replaced.
+ */
+export function applyMergedSuggestions(
+  current: Record<SidewallField, string>,
+  merged: SidewallSuggestions,
+  earlier: SidewallSuggestions,
+  touched: ReadonlySet<SidewallField>,
+): Record<SidewallField, string> {
+  const next = { ...current };
+  for (const field of FIELDS) {
+    const s = merged[field];
+    if (!s || touched.has(field)) continue;
+    if (current[field] === '' || current[field] === earlier[field]) next[field] = s;
+  }
+  return next;
 }
 
 /** Fills only fields that are still empty and that the user hasn't touched. */

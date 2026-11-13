@@ -97,6 +97,15 @@ type Actions = {
    * longer the ones that were checked (e.g. it was scanned again meanwhile).
    */
   setTreadWear(tyreId: string, record: TreadWearRecord, checkedFrames: string[]): void;
+  /**
+   * Owner request 2026-11-13: the tread presence check found no tyre tread in
+   * the saved tread frames (a wall or floor). The analyzer's result (depth,
+   * status, damage) is dropped and the tyre goes back to tread capture, so the
+   * summary, progress list, report and PDF never show it. The tread frames
+   * stay until they are recaptured (Tyre result still shows the warning for
+   * them). Ignored if the tread frames are no longer the ones checked.
+   */
+  setTreadNotDetected(tyreId: string, checkedFrames: string[]): void;
   setAnalysisFailed(tyreId: string): void;
   /** Models aren't available: keep the frames, record no result, move on. */
   setAnalysisPending(tyreId: string): void;
@@ -213,6 +222,16 @@ export const useInspectionStore = create<InspectionStore>()((set, get) => {
           t.treadFrames.every((f, i) => f === checkedFrames[i]);
         if (!t.result || !sameFrames) return t;
         return { ...t, result: withTreadWear(t.result, record) };
+      });
+    },
+
+    setTreadNotDetected(tyreId, checkedFrames) {
+      patchTyre(tyreId, t => {
+        const sameFrames =
+          t.treadFrames.length === checkedFrames.length &&
+          t.treadFrames.every((f, i) => f === checkedFrames[i]);
+        if (!sameFrames) return t;
+        return { ...t, state: 'capturing_tread', result: null, errorReason: null };
       });
     },
 

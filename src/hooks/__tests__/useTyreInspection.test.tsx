@@ -285,7 +285,16 @@ describe('tread presence gate (owner request 2026-11-13)', () => {
     await scan();
     expect(s.scan).not.toHaveBeenCalled();
     expect(hook.treadWear).toEqual({ status: 'no_tread', verdict: v });
-    expect(tyre(a).result).toEqual(analysed); // no wear record, no `No Surface Defects Detected`
+    // The analyzer's 6.2 mm · Good is dropped and the tyre goes back to tread capture (owner 2026-11-13),
+    // so the summary, progress list, report and PDF never show it. The tread frames are kept for now.
+    expect(tyre(a)).toMatchObject({ result: null, state: 'capturing_tread', treadFrames: ['t1.jpg', 't2.jpg'] });
+    expect(tyre(a).sidewallDetails).toEqual({ size: '215/65 R15', dotTin: null, make: 'Michelin', model: null });
+  });
+
+  test('a stale verdict for frames that were recaptured meanwhile leaves the new result alone', async () => {
+    const [a] = seed();
+    store().setTreadNotDetected(a, ['old1.jpg', 'old2.jpg']);
+    expect(tyre(a)).toMatchObject({ result: analysed, state: 'done' });
   });
 
   test('too few readable frames does not block: the wear scan runs as before', async () => {
