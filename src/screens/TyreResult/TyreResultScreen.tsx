@@ -29,7 +29,8 @@ import { isDemoVersion } from '../../ml';
 import { AUTOMATED_CHECK_NOTICE } from '../../features/report/reportHtml';
 import { colors, sizes } from '../../theme';
 import { useTyreInspection } from '../../hooks/useTyreInspection';
-import { TreadWearCard, isTreadWearBusy, wearPatternRowValue } from './TreadWearCard';
+import { NO_TREAD_TITLE, TreadWearCard, isTreadWearBusy, noTreadReasonText, wearPatternRowValue } from './TreadWearCard';
+import { TriangleAlert } from 'lucide-react-native';
 import { treadLog } from '../../ml/services/treadDebug';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TyreResult'>;
@@ -62,6 +63,8 @@ export function TyreResultScreen({ navigation, route }: Props) {
   const demo = isDemoVersion(inspection.analyzerVersion);
 
   const wearBusy = isTreadWearBusy(treadWear);
+  // Owner request 2026-11-13: frames that show no tyre tread get no depth, status or damage reading.
+  const noTread = treadWear.status === 'no_tread';
   const rows: [string, string | null][] = [
     ['Tyre size', result.size],
     ['Rim diameter', formatRim(result.rimInches)],
@@ -70,7 +73,7 @@ export function TyreResultScreen({ navigation, route }: Props) {
     ['DOT/TIN', result.dotTin],
     ['Tyre age', formatAge(result)],
     ['Wear pattern', shownWear],
-    ['Cracks or damage', formatDamage(result.damageFound)],
+    ['Cracks or damage', noTread ? null : formatDamage(result.damageFound)],
   ];
 
   return (
@@ -82,14 +85,21 @@ export function TyreResultScreen({ navigation, route }: Props) {
             {tyreName(tyre.position)}
           </AppText>
           <View style={styles.mainRow}>
-            <AppText variant="resultNumber" color="white" accessibilityRole="header" style={styles.main}>
-              {hasDepth
-                ? formatDepth(result.treadDepthMm!)
-                : wearBusy
-                  ? STATUS_PENDING_LABEL
-                  : statusLabels[result.status]}
+            <AppText
+              variant={noTread ? 'headerTitleSmall' : 'resultNumber'}
+              color="white"
+              accessibilityRole="header"
+              style={styles.main}
+            >
+              {noTread
+                ? NO_TREAD_TITLE
+                : hasDepth
+                  ? formatDepth(result.treadDepthMm!)
+                  : wearBusy
+                    ? STATUS_PENDING_LABEL
+                    : statusLabels[result.status]}
             </AppText>
-            {hasDepth ? (
+            {hasDepth && !noTread ? (
               <View style={styles.badge}>
                 {/* The tread check can still raise the status: no `Good` until it has finished (owner 2026-11-12). */}
                 {wearBusy ? (
@@ -100,9 +110,14 @@ export function TyreResultScreen({ navigation, route }: Props) {
               </View>
             ) : null}
           </View>
-          {hasDepth ? (
+          {hasDepth && !noTread ? (
             <AppText variant="rowLabel" color="textOnDark" style={styles.caption}>
               Average tread depth
+            </AppText>
+          ) : null}
+          {noTread ? (
+            <AppText variant="rowLabel" color="textOnDark" style={styles.caption}>
+              No tread reading. Scan this tyre again.
             </AppText>
           ) : null}
           {demo ? (
@@ -113,6 +128,19 @@ export function TyreResultScreen({ navigation, route }: Props) {
         </View>
       </View>
       <ScrollView contentContainerStyle={styles.rows}>
+        {treadWear.status === 'no_tread' ? (
+          <View style={styles.warning} accessibilityRole="alert" testID="no-tread-banner">
+            <TriangleAlert size={18} color={colors.navy} strokeWidth={2.5} />
+            <View style={styles.warningBody}>
+              <AppText variant="bodySmall" weight="semibold" color="navy">
+                {NO_TREAD_TITLE}
+              </AppText>
+              <AppText variant="caption" color="textBody">
+                {noTreadReasonText(treadWear.verdict.reason)}
+              </AppText>
+            </View>
+          </View>
+        ) : null}
         {rows.map(([label, value], i) => (
           <ResultRow
             key={label}
@@ -131,16 +159,18 @@ export function TyreResultScreen({ navigation, route }: Props) {
       </ScrollView>
       {inProgress ? (
         <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}>
-          <Button label="Next tyre" onPress={() => resetToProgress(navigation)} />
+          {/* With no tread in the frames the rescan is the main action (owner request 2026-11-13). */}
+          {noTread ? null : <Button label="Next tyre" onPress={() => resetToProgress(navigation)} />}
           <Button
             label="Scan this tyre again"
-            variant="text"
-            height={44}
+            variant={noTread ? 'primary' : 'text'}
+            height={noTread ? undefined : 44}
             onPress={() => {
               resetTyre(tyre.id);
               navigation.navigate('SidewallCapture', { tyreId: tyre.id });
             }}
           />
+          {noTread ? <Button label="Next tyre" variant="text" height={44} onPress={() => resetToProgress(navigation)} /> : null}
         </View>
       ) : (
         <View style={{ height: Math.max(insets.bottom, 12) }} />
@@ -167,5 +197,18 @@ const styles = StyleSheet.create({
   demo: { marginTop: 10 },
   rows: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 16, maxWidth: sizes.maxContentWidth + 40, width: '100%', alignSelf: 'center' },
   notice: { marginTop: 16 },
+  warning: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 12,
+    marginBottom: 4,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.navy,
+    borderRadius: 10,
+    backgroundColor: colors.white,
+  },
+  warningBody: { flex: 1, gap: 2 },
   actions: { gap: 4, paddingHorizontal: 20, paddingTop: 8 },
 });

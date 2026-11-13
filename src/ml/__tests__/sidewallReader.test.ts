@@ -86,6 +86,7 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
       status: 'done',
       suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN', model: 'Primacy' },
       ocrRuns: 2, // agreed after two frames
+      linesRead: 12,
     });
     // The centre of the saved frame, then the crop is deleted; no whole-frame read was needed.
     expect(deps.cropCentreToTempFile).toHaveBeenCalledWith('/docs/f1.jpg', 0.6);
@@ -341,6 +342,7 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
     expect(await reader.read(FRAMES)).toMatchObject({
       suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
       ocrRuns: 4, // f1 centre (error) + f1 whole frame, f2 and f3 centres
+      linesRead: 12,
     });
   });
 
@@ -349,6 +351,7 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
     expect(await reader.read(FRAMES)).toMatchObject({
       suggestions: { size: '205/55 R16', dotTin: '4B7Y ABC 2319', make: 'MICHELIN' },
       ocrRuns: 4,
+      linesRead: 14,
     });
     expect(calls.slice(0, 2)).toEqual([
       { frame: 'f1.jpg', part: 'centre' },
@@ -368,14 +371,14 @@ describe('centre crop → ML Kit → filter → suggestions', () => {
 
   test('no readable text in any frame → done with no suggestions (nothing made up)', async () => {
     const { reader } = setup({ ocr: () => [] });
-    expect(await reader.read(FRAMES)).toEqual({ status: 'done', suggestions: {}, ocrRuns: 6 });
+    expect(await reader.read(FRAMES)).toEqual({ status: 'done', suggestions: {}, ocrRuns: 6, linesRead: 0 });
   });
 
   test('stops at the OCR run limit and when cancelled', async () => {
     const capped = setup({ ocr: () => [], maxOcrRuns: 3 });
     expect(await capped.reader.read(FRAMES)).toMatchObject({ ocrRuns: 3 });
     const cancelled = setup();
-    expect(await cancelled.reader.read(FRAMES, () => true)).toEqual({ status: 'done', suggestions: {}, ocrRuns: 0 });
+    expect(await cancelled.reader.read(FRAMES, () => true)).toEqual({ status: 'done', suggestions: {}, ocrRuns: 0, linesRead: 0 });
     expect(cancelled.deps.recognizeLines).not.toHaveBeenCalled();
   });
 });
@@ -570,7 +573,7 @@ describe('vertical sidewall text: rotated passes (owner request 2026-11-12, iPho
   test('rotated passes count toward the OCR budget, and nothing is made up', async () => {
     const { reader, calls } = rotatedSetup(null, 6);
     const outcome = await reader.read(['f1.jpg', 'f2.jpg', 'f3.jpg']);
-    expect(outcome).toEqual({ status: 'done', suggestions: {}, ocrRuns: 6 });
+    expect(outcome).toEqual({ status: 'done', suggestions: {}, ocrRuns: 6, linesRead: 0 });
     expect(calls).toHaveLength(6);
   });
 

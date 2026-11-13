@@ -15,6 +15,9 @@ import { useInspectionStore, useTyre } from '../../features/inspection/store';
 import { emptyToNull } from '../../features/inspection/validation';
 import type { SidewallDetails } from '../../features/inspection/types';
 import { applySuggestions, getSidewallReader } from '../../ml/sidewallReader';
+import { getSidewallTextDetector } from '../../ml/services/SidewallTextDetector';
+import { countSidewallDetections, NO_SIDEWALL_NOTICE, sidewallLooksEmpty } from '../../ml/services/sidewallPresence';
+import { TriangleAlert } from 'lucide-react-native';
 import { colors, fonts, radius } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SidewallCaptured'>;
@@ -54,6 +57,8 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
   const [reading, setReading] = useState(
     () => !!frames && Object.values(values).some(v => v === '') && getSidewallReader().canRead(frames),
   );
+  // Owner request 2026-11-13: OCR read no line and the text detector found no box in any frame.
+  const [emptyNotice, setEmptyNotice] = useState(false);
 
   const save = (next = values) =>
     setSidewallDetails(tyreId, {
@@ -72,12 +77,17 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
     let cancelled = false;
     getSidewallReader()
       .read(frames, () => cancelled)
-      .then(outcome => {
+      .then(async outcome => {
         if (cancelled || outcome.status !== 'done') return;
         const next = applySuggestions(valuesRef.current, outcome.suggestions, touched.current);
         if (fields.some(f => next[f.key] !== valuesRef.current[f.key])) {
           setValues(next);
           saveRef.current(next);
+        }
+        if (outcome.linesRead === 0) {
+          // Nothing read anywhere: ask the detector before saying the capture is empty.
+          const count = await countSidewallDetections(frames, getSidewallTextDetector(), () => cancelled);
+          if (!cancelled && sidewallLooksEmpty(outcome.linesRead, count)) setEmptyNotice(true);
         }
       })
       .catch(() => {})
@@ -117,6 +127,14 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
         <AppText variant="rowLabel" color="textSecondary" style={styles.lead}>
           Check the details and correct anything that's wrong.
         </AppText>
+        {emptyNotice ? (
+          <View style={styles.notice} accessibilityRole="alert" testID="no-sidewall-notice">
+            <TriangleAlert size={18} color={colors.navy} strokeWidth={2.5} />
+            <AppText variant="caption" weight="semibold" color="navy" style={styles.noticeText}>
+              {NO_SIDEWALL_NOTICE}
+            </AppText>
+          </View>
+        ) : null}
         {fields.map(f => (
           <View key={f.key} style={styles.field}>
             <AppText variant="rowLabel" color="textSecondary" style={styles.fieldLabel}>
@@ -170,6 +188,17 @@ const styles = StyleSheet.create({
   },
   sheet: { paddingTop: 22, paddingHorizontal: 20 },
   lead: { marginTop: 4, marginBottom: 12 },
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.navy,
+    borderRadius: 10,
+  },
+  noticeText: { flex: 1 },
   field: {
     flexDirection: 'row',
     alignItems: 'center',

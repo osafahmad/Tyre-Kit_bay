@@ -15,9 +15,20 @@ jest.mock('../../ml/sidewallReader', () => ({
 }));
 // The staging detector card (Stage 1, 2026-11-13) runs the text detector on open; its
 // service is tested in src/ml/services/__tests__/SidewallTextDetector.test.ts.
+const mockDetectFrame = jest.fn<Promise<unknown>, [string, number]>(async () => ({
+  status: 'unavailable',
+  reason: 'model_missing',
+  detail: 'test',
+}));
+// The staging detector card (Stage 1–2) would also run the detector on open; it is off here so the
+// empty-capture check's calls can be counted. The card is tested through its own service tests.
+jest.mock('../../config/diagnostics', () => {
+  const real = jest.requireActual('../../config/diagnostics');
+  return { diagnosticsConfig: { ...real.diagnosticsConfig, sidewallDetectorDebugCard: false } };
+});
 jest.mock('../../ml/services/SidewallTextDetector', () => ({
   getSidewallTextDetector: () => ({
-    detectFrame: jest.fn(async () => ({ status: 'unavailable', reason: 'model_missing', detail: 'test' })),
+    detectFrame: (f: string, i: number) => mockDetectFrame(f, i),
     readCrops: jest.fn(async () => ({ status: 'unavailable', reason: 'no_detections' })),
   }),
   deleteCropFiles: jest.fn(async () => {}),
@@ -58,10 +69,11 @@ function renderScreen(tyreId: string) {
   );
 }
 
-const done = (suggestions: Record<string, string>): SidewallReadOutcome => ({
+const done = (suggestions: Record<string, string>, linesRead = 3): SidewallReadOutcome => ({
   status: 'done',
   suggestions,
   ocrRuns: 2,
+  linesRead,
 });
 
 beforeEach(() => {
@@ -177,5 +189,54 @@ test('a rescan that only reads size and DOT keeps make and model from the earlie
     dotTin: '0124',
     make: 'Continental', // not replaced by the later read
     model: 'ComfortContact',
+  });
+});
+
+describe('empty sidewall capture notice (owner request 2026-11-13)', () => {
+  const NOTICE = "No tyre sidewall detected — point closely at the tyre's sidewall lettering and retake";
+  const doneResult = (n: number) => ({
+    status: 'done',
+    result: { detections: Array.from({ length: n }, () => ({ label: 'Size' })) },
+  });
+
+  beforeEach(() => mockDetectFrame.mockReset());
+
+  test('OCR read no line and the detector found no box in any frame: the notice is shown', async () => {
+    mockDetectFrame.mockImplementation(async () => doneResult(0));
+    const tyreId = seedTyre();
+    mockReader.read.mockResolvedValue(done({}, 0));
+    await renderScreen(tyreId);
+    await flush();
+    expect(screen.getByText(NOTICE)).toBeTruthy();
+    expect(mockDetectFrame).toHaveBeenCalledTimes(2); // both frames
+    expect(screen.getByLabelText('Tyre size').props.placeholder).toBe('Not read');
+  });
+
+  test('OCR read no line but the detector found a box: no notice (the text is there, just unread)', async () => {
+    mockDetectFrame.mockImplementation(async () => doneResult(1));
+    const tyreId = seedTyre();
+    mockReader.read.mockResolvedValue(done({}, 0));
+    await renderScreen(tyreId);
+    await flush();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  test('OCR read lines (even unusable ones): the detector is not asked and no notice is shown', async () => {
+    const tyreId = seedTyre();
+    mockReader.read.mockResolvedValue(done({}, 4));
+    await renderScreen(tyreId);
+    await flush();
+    expect(mockDetectFrame).not.toHaveBeenCalled();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  test('the model is missing: the empty OCR alone shows the notice', async () => {
+    mockDetectFrame.mockImplementation(async () => ({ status: 'unavailable', reason: 'model_missing', detail: 'x' }));
+    const tyreId = seedTyre();
+    mockReader.read.mockResolvedValue(done({}, 0));
+    await renderScreen(tyreId);
+    await flush();
+    expect(screen.getByText(NOTICE)).toBeTruthy();
+    expect(mockDetectFrame).toHaveBeenCalledTimes(1); // stops at the first missing-model answer
   });
 });

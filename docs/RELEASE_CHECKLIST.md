@@ -4,6 +4,7 @@ Everything in spec §11 plus project-specific items found while building. Every 
 
 ## From the spec (§11)
 - [ ] Thresholds in `src/config/inspection.ts` confirmed by the owner.
+- [ ] **Tread presence thresholds calibrated** (`treadPresenceConfig`, `src/config/capture.ts`): run real tyres (daylight, flash, new and worn) and walls, floors and car bodies through the tread step and compare the `[TreadWear] presence:` metrics; real tread must pass and the others must be blocked (DECISIONS.md, "Tyre & tread presence validation").
 - [ ] Real models bundled in `assets/models/` and every `src/ml/manifest.ts` value verified against the training output.
 - [ ] Tread accuracy tested on a separate gauge-measured set.
 - [ ] Demo analyzer unavailable in release builds (`createAnalyzer(false)` test passes; check a release build shows no `Demo data`).

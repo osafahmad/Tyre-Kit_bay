@@ -10,6 +10,12 @@ import {
   type TreadWearUnavailableReason,
 } from '../ml/services/TreadWearDetector';
 import { r3, treadLog } from '../ml/services/treadDebug';
+import {
+  blocksTreadResult,
+  getTreadPresenceValidator,
+  type TreadPresenceChecker,
+  type TreadPresenceVerdict,
+} from '../ml/services/treadPresence';
 
 // One tyre's inspection data for a screen: the saved tyre and its confirmed
 // sidewall details (from the store, untouched), plus the tread wear check.
@@ -35,6 +41,12 @@ export type TreadWearState =
   | { status: 'idle' }
   | { status: 'scanning' }
   | { status: 'unavailable'; reason: TreadWearUnavailableReason }
+  /**
+   * The saved tread frames don't show tyre tread (owner request 2026-11-13:
+   * a wall or floor). No wear check ran and nothing was saved; Tyre result
+   * hides the depth and status and asks for a rescan.
+   */
+  | { status: 'no_tread'; verdict: TreadPresenceVerdict }
   /** Checked just now, and saved. */
   | {
       status: 'done';
@@ -77,6 +89,8 @@ export function summariseTreadWear(frames: TreadWearFrameResult[]): TreadWearFin
 export type UseTyreInspectionOptions = {
   /** Injected in tests. Defaults to the app's tread wear detector. */
   treadWearScanner?: TreadWearScanner;
+  /** Injected in tests. Defaults to the app's tread presence validator. */
+  treadPresence?: TreadPresenceChecker;
   /**
    * Check the saved tread frames as soon as the tyre is shown (Tyre result),
    * unless the result already has a saved wear check.
@@ -91,6 +105,8 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
   const runId = useRef(0);
   const scannerRef = useRef(options.treadWearScanner);
   scannerRef.current = options.treadWearScanner;
+  const presenceRef = useRef(options.treadPresence);
+  presenceRef.current = options.treadPresence;
   const treadFrames = found?.tyre.treadFrames;
   const framesRef = useRef(treadFrames);
   framesRef.current = treadFrames;
@@ -119,6 +135,20 @@ export function useTyreInspection(tyreId: string, options: UseTyreInspectionOpti
     const scanner = scannerRef.current ?? getTreadWearDetector();
     let next: TreadWearState;
     try {
+      // Presence first: a wall or floor must never get a tread result. Unreadable
+      // frames don't block (the wear scan reports those itself); only a surface
+      // that was seen and isn't tread does.
+      const presence = await (presenceRef.current ?? getTreadPresenceValidator()).validate(frames, isCancelled);
+      if (isCancelled()) {
+        treadLog(`scanTreadWear cancelled during the presence check (run ${run})`);
+        return { status: 'idle' };
+      }
+      if (blocksTreadResult(presence)) {
+        treadLog(`scanTreadWear blocked (run ${run}): no tyre tread in the frames`, { reason: presence.reason });
+        next = { status: 'no_tread', verdict: presence };
+        setLocal(next);
+        return next;
+      }
       const outcome = await scanner.scan(frames, isCancelled);
       if (outcome.status === 'cancelled') {
         treadLog(`scanTreadWear cancelled (run ${run}): a newer scan or screen replaced it`);

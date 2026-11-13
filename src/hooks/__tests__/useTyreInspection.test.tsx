@@ -5,6 +5,17 @@ import type { TyreResult } from '../../features/inspection/types';
 import type { TreadWearClass } from '../../ml/config/treadWearConfig';
 import type { TreadWearScanOutcome, TreadWearScanner } from '../../ml/services/TreadWearDetector';
 import { summariseTreadWear, treadWearSeverity, useTyreInspection } from '../useTyreInspection';
+import type { TreadPresenceChecker, TreadPresenceVerdict } from '../../ml/services/treadPresence';
+
+const verdict = (reason: TreadPresenceVerdict['reason'], isTyreTread = reason === 'ok'): TreadPresenceVerdict => ({
+  isTyreTread,
+  confidence: isTyreTread ? 1 : 0,
+  reason,
+  metrics: { framesChecked: 2, framesReadable: 2, framesPassed: isTyreTread ? 2 : 0, frames: [], unreadable: [] },
+});
+const presence = (v: TreadPresenceVerdict): TreadPresenceChecker & { validate: jest.Mock } => ({
+  validate: jest.fn(async () => v),
+});
 
 const store = () => useInspectionStore.getState();
 const tyre = (id: string) => store().inspections[0].tyres.find(t => t.id === id)!;
@@ -50,8 +61,18 @@ function seed({ withResult = true } = {}): [string, string] {
 }
 
 let hook: ReturnType<typeof useTyreInspection>;
-function Harness({ tyreId, s, autoScan = false }: { tyreId: string; s: TreadWearScanner; autoScan?: boolean }) {
-  hook = useTyreInspection(tyreId, { treadWearScanner: s, autoScan });
+function Harness({
+  tyreId,
+  s,
+  autoScan = false,
+  p = presence(verdict('ok')),
+}: {
+  tyreId: string;
+  s: TreadWearScanner;
+  autoScan?: boolean;
+  p?: TreadPresenceChecker;
+}) {
+  hook = useTyreInspection(tyreId, { treadWearScanner: s, treadPresence: p, autoScan });
   return null;
 }
 
@@ -252,5 +273,35 @@ describe('useTyreInspection', () => {
     });
     expect(hook.treadWear).toEqual({ status: 'idle' });
     expect(hook.tyre!.id).toBe(b);
+  });
+});
+
+describe('tread presence gate (owner request 2026-11-13)', () => {
+  test('frames that show no tread: no wear scan, nothing saved, state no_tread with the verdict', async () => {
+    const [a] = seed();
+    const s = scanner(done([{ frame: 't1.jpg', detections: [] }]));
+    const v = verdict('too_smooth_no_grooves');
+    await render(<Harness tyreId={a} s={s} p={presence(v)} />);
+    await scan();
+    expect(s.scan).not.toHaveBeenCalled();
+    expect(hook.treadWear).toEqual({ status: 'no_tread', verdict: v });
+    expect(tyre(a).result).toEqual(analysed); // no wear record, no `No Surface Defects Detected`
+  });
+
+  test('too few readable frames does not block: the wear scan runs as before', async () => {
+    const [a] = seed();
+    const s = scanner(done([{ frame: 't1.jpg', detections: [] }]));
+    await render(<Harness tyreId={a} s={s} p={presence(verdict('insufficient_frames', false))} />);
+    await scan();
+    expect(s.scan).toHaveBeenCalled();
+    expect(hook.treadWear).toEqual(expect.objectContaining({ status: 'done' }));
+  });
+
+  test('the validator sees the same frames as the scanner', async () => {
+    const [a] = seed();
+    const p = presence(verdict('ok'));
+    await render(<Harness tyreId={a} s={scanner(done([]))} p={p} />);
+    await scan();
+    expect(p.validate).toHaveBeenCalledWith(['t1.jpg', 't2.jpg'], expect.any(Function));
   });
 });

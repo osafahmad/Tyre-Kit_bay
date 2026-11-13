@@ -976,3 +976,27 @@ The owner asked for three things from the screen-capture and device logs. Each w
 ### Needs a real phone
 - Stage 2 on the same car: do the hub/fender crops read nothing (expected) and do any `Size` boxes read the size at some orientation? Crop OCR time per box (4 ML Kit runs each).
 - Whether 12 % padding clips curved text; whether 90° CW or CCW is the usual winner on the side arcs.
+
+## Tyre & tread presence validation (owner request 2026-11-13)
+
+**Status: unit-tested with synthetic surfaces. Thresholds UNCALIBRATED; not yet run on a phone.**
+
+### Why
+- A wall or floor swept as a tread still produced `6.2 mm · Good` (the staging demo analyzer's first depth) and `No Surface Defects Detected` (the wear model found no defect class on a wall). Nothing checked that the frames showed a tyre at all.
+
+### Tread presence check (`src/ml/services/treadPresence.ts`, thresholds in `treadPresenceConfig`, `src/config/capture.ts`)
+- Runs in `useTyreInspection.scanTreadWear` **before** the wear model, on up to 5 saved tread frames spread over the scan, each scaled to 160 px wide with nitro-image (every image disposed). No model, no network: plain pixel statistics.
+- **Rubber check** (`not_rubber_surface` when it fails): median luminance 8–150 (Rec. 601), median HSV saturation ≤ 0.35, blown-out pixels (L ≥ 235) ≤ 20 %. Tread rubber is charcoal and unsaturated; walls, paper and sky are bright, objects are coloured, glare is blown out.
+- **Groove check** (`too_smooth_no_grooves`): neighbouring-pixel luminance differences along columns and along rows; along the stronger axis at least 5 % of pairs must differ by ≥ 20 and the mean difference must be ≥ 5. Tread grooves and sipes are repeated strong transitions along one axis; walls, floors and paper are near 0 on both.
+- **Verdict:** fewer than 3 readable frames → `insufficient_frames` (confidence 0). Otherwise at least half the readable frames must pass; confidence is the pass fraction and the most common failure is the reason. Logged as `[TreadWear] presence: <reason> (tread …, confidence …)` with every frame's metrics and the thresholds, frames by index, no paths.
+- **Only positive evidence blocks** (`blocksTreadResult`): `insufficient_frames` does not, so unreadable frames, `demo://` simulation frames and tests still reach the wear scan, which reports unreadable frames itself.
+- Every number is an `estimate`. Calibrate from the log lines on real tyres (daylight, flash, worn and new treads) against walls, floors and the car body; a textured dark surface (asphalt, carpet) can pass the heuristics.
+
+### Tyre result when no tread is seen (`TreadWearState` `no_tread`)
+- The wear model is not run and nothing is saved to the result (no `No Surface Defects Detected`, no wear record).
+- Header: `No tyre tread detected` instead of the depth or status, no status badge, caption `No tread reading. Scan this tyre again.` A banner above the rows repeats the title with the reason text (grooves or rubber wording, `NO_TREAD_REASON_TEXT`). The Tread Pattern & Wear card shows the same with a warning badge. The Wear pattern and Cracks or damage rows show `Not read`. Sidewall rows are unchanged.
+- `Scan this tyre again` becomes the primary button; `Next tyre` stays as a text button below it. Copy logs is unchanged.
+- **Not done:** the saved result itself is not altered or marked, so the inspection summary, report and PDF would still carry the analyzer's values for that tyre if the user moves on without rescanning. Flag for an owner decision (mark the tyre as needing recapture, or drop the result).
+
+### Sidewall empty-frame notice (`src/ml/services/sidewallPresence.ts`)
+- `SidewallReadOutcome` now carries `linesRead`, the number of ML Kit lines over every run of a read. When it is 0, Sidewall captured runs the text detector over every saved frame (`countSidewallDetections`). If it finds no box either, or the model can't load, an inline notice says `No tyre sidewall detected — point closely at the tyre's sidewall lettering and retake`. The fields stay editable; nothing is blocked. The detector is not run when OCR read any line, even unusable ones, so the extra work only happens on empty captures.

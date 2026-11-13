@@ -16,7 +16,7 @@ setSidewallDebug(diagnosticsConfig.sidewallOcrLogs);
 // [TreadWear] logs while tread wear is verified on phones (src/config/diagnostics.ts).
 setTreadDebug(diagnosticsConfig.treadWearLogs);
 // [SidewallDetector] logs while the sidewall text detector is verified on phones (src/config/diagnostics.ts).
-setSidewallDetectorDebug(diagnosticsConfig.sidewallDetectorLogs);
+setSidewallDetectorDebug(diagnosticsConfig.sidewallDetectorLogs, diagnosticsConfig.sidewallOcrLogs);
 // Staging: keep the last 300 of both in memory for "Copy logs", even in Release (src/config/diagnostics.ts).
 setDebugLogBuffer(diagnosticsConfig.enableStagingLogs);
 

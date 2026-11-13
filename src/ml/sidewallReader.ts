@@ -51,6 +51,8 @@ export type SidewallReadOutcome =
       suggestions: SidewallSuggestions;
       /** ML Kit runs: centre crops plus whole frames. */
       ocrRuns: number;
+      /** Text lines ML Kit returned over every run (owner request 2026-11-13: 0 means an empty sidewall capture). */
+      linesRead: number;
     };
 
 export type CentreCrop = { path: string; sourceWidth: number; sourceHeight: number };
@@ -132,10 +134,13 @@ export function dominantValue<T>(values: T[]): T | null {
 }
 
 export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
+  /** Lines returned by every OCR run of the current `read` (reset at its start; reads run one at a time). */
+  let linesRead = 0;
   /** OCR of one image file; logs the raw text (TEMPORARY diagnostics). Null if it fails. */
   async function ocr(path: string, what: string, extra: Record<string, unknown> = {}): Promise<OcrLineLike[] | null> {
     try {
       const lines = await deps.recognizeLines(path);
+      linesRead += lines.length;
       sidewallLog(`ML Kit raw text (${what})`, {
         ...extra,
         lines: lines.map(l => ({ text: l.text, height: Math.round(l.frame.height) })),
@@ -190,6 +195,7 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       const real = frames.filter(isRealFrame);
       if (real.length === 0) return { status: 'unavailable', reason: 'no_frames' };
       const minAgreeing = deps.minAgreeingReads;
+      linesRead = 0;
       sidewallLog('read start', {
         frames: real.length,
         minAgreeing,
@@ -451,10 +457,11 @@ export function createSidewallReader(deps: SidewallReaderDeps): SidewallReader {
       sidewallLog('read done', {
         suggestions,
         ocrRuns,
+        linesRead,
         cancelled: isCancelled(),
         hitOcrCap: ocrRuns >= deps.maxOcrRuns,
       });
-      return { status: 'done', suggestions, ocrRuns };
+      return { status: 'done', suggestions, ocrRuns, linesRead };
     },
   };
 }

@@ -149,3 +149,36 @@ export const ocrConfig = {
   /** UNCALIBRATED. Most OCR runs (one per saved frame) for one sidewall, to bound the wait on slow phones. */
   sidewallMaxOcrRuns: 24,
 };
+
+/**
+ * Tread presence check (owner request 2026-11-13: a wall or floor swept as a
+ * tread still showed `6.2 mm · Good` and `No Surface Defects Detected`). Run on
+ * the saved tread frames before any tread result is shown
+ * (`src/ml/services/treadPresence.ts`). ALL `estimate`, UNCALIBRATED: set from
+ * what tyre rubber usually looks like, to be tuned from the `[TreadWear]
+ * presence:` log lines on real tyres, walls and floors.
+ */
+export const treadPresenceConfig = {
+  /** estimate. Frames are scaled to this width (aspect kept) before the pixels are read. */
+  analysisWidth: 160,
+  /** estimate. Most frames checked per scan, spread evenly over the saved frames. */
+  maxFramesChecked: 5,
+  /** estimate. Fewer readable frames than this gives `insufficient_frames` (not a verdict). */
+  minFrames: 3,
+  /** estimate. Fraction of readable frames that must look like tread for the scan to count as tread. */
+  minPassFraction: 0.5,
+  /** estimate. Median luminance 0–255 above this is too bright for tread rubber (walls, paper, sky). */
+  maxMedianLuminance: 150,
+  /** estimate. Median luminance below this is a covered lens or darkness, not rubber under light. */
+  minMedianLuminance: 8,
+  /** estimate. Median HSV saturation 0–1 above this is a coloured surface, not charcoal rubber. */
+  maxMedianSaturation: 0.35,
+  /** estimate. Fraction of pixels with luminance ≥ 235 above this is glare or a blown-out surface. */
+  maxBlownOutFraction: 0.2,
+  /** estimate. Neighbouring-pixel luminance difference that counts as an edge (groove wall, sipe). */
+  edgeDelta: 20,
+  /** estimate. Fraction of neighbour pairs, along the stronger axis, that must be edges. Smooth surfaces are near 0. */
+  minStrongEdgeFraction: 0.05,
+  /** estimate. Mean neighbour luminance difference, along the stronger axis, below which the surface is smooth. */
+  minMeanGradient: 5,
+} as const;
