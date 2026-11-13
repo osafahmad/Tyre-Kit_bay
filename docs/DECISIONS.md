@@ -1154,7 +1154,7 @@ The owner asked for three things from the screen-capture and device logs. Each w
 
 ## Sidewall capture: circular progress (2026-11-13)
 
-**Status: built and unit-tested. Not yet checked on a phone.**
+**Status: removed the same day. See "Sidewall capture: progress ring and frame count removed" below.** The rest of this entry describes what was built.
 
 - **Owner request:** replace the frame indicator on Sidewall capture (screen 13) with a centred circular progress bar and a frame count.
 - **What was there:** no 8-box grid existed in the code. While frames were being collected the screen showed a caption under the status pill, `3 of 8 frames`. That caption is what was replaced.
@@ -1183,3 +1183,39 @@ The owner asked for three things from the screen-capture and device logs. Each w
 
 ### Needs a real phone
 - Sidewall captured on iPhone 13, iPhone SE and one Android phone: the sheet ends cleanly after **Scan sidewall again**, with no blank space below it, and the keyboard still leaves the edited field visible.
+
+## Sidewall capture: progress ring and frame count removed (2026-11-13)
+
+**Status: removed and unit-tested. Not yet checked on a phone.**
+
+- **Owner request:** take the circular progress ring and the `X/8` count off the live sidewall preview so the guide circle stays clean.
+- **Removed:** the ring and its `Scanning sidewall frames` label from Sidewall capture (screen 13), and the `CircularProgress` component and its test, which nothing else used. The earlier `3 of 8 frames` caption was not brought back.
+- **Not changed:** capture. `useTyreCapture`, the capture session, the frame checks, the target of 8 frames and saving are untouched; `snapshot.accepted` is still counted, it is just not shown.
+- **What the user sees while frames are collected:** the status pill (`Hold steady`, `Too dark`, `Too bright`), the guide circle, the hint, and the Capture button disabled. Then Sidewall captured opens, or Capture problem with the reason.
+- **Trade-off:** there is no on-screen sign of how far collection has got. This matches `13-sidewall-capture.png`, which has no progress indicator.
+
+### Needs a real phone
+- Sidewall capture on iPhone 13, iPhone SE and one Android phone: nothing is drawn inside the guide circle while collecting, and it is still clear from the pill and the disabled button that the scan is running.
+
+## Scan progress ring on plate, chassis and sidewall (2026-11-13)
+
+**Status: built and unit-tested. Not yet checked on a phone.**
+
+- **Owner request:** one circular progress fill indicator, in the app's dark theme, on the three camera scanning screens: Scan number plate (08), Scan chassis number (10) and Sidewall capture (13).
+- **Component:** `ScanProgressRing` (`src/components/ScanProgressRing.tsx`). A ring that fills clockwise from 12 o'clock and shows a tick when full. It takes a 0–1 value and draws **no numbers**, following the earlier request the same day to keep the `X/8` count off the preview. Theme tokens only: `cameraBlue` fill, `darkLineStrong` track, `black` disc at 60 %, `white` tick. The fill eases over 280 ms (React Native `Animated`, JS driver, `react-native-svg`). No new dependency.
+- **What it measures on each screen (existing values, nothing invented):**
+  - **Plate, chassis:** how many of the last `ocrConfig.readWindow` (5) reads agree on one value, out of the `ocrConfig.stableReads` (3) needed: 0, 1/3, 2/3, full. New read-only `ReadStabilizer.progress()`. It can fall back when matching reads leave the window; that is the real state of the scan. Acceptance rules are unchanged.
+  - **Sidewall:** frames accepted by the capture session out of `sidewallTargetFrames` (8). Capture logic is unchanged.
+- **Placement:**
+  - **Plate, chassis:** 48 pt, top centre of the viewfinder (16 pt from the top), shown whenever the camera view is shown. It is outside the guide box, so it never covers the text being read. It starts as an empty track.
+  - **Sidewall:** 64 pt, centre of the guide circle (over the wheel hub, clear of the sidewall text), shown only while frames are being collected, since nothing is counted before Capture is pressed. The status pill keeps the top of the viewfinder.
+- **Not on Tread capture (15):** it already has its own bar with a percentage, and was not in the request.
+- **Accessibility:** a `progressbar` with a label per screen (`Plate read progress`, `Chassis number read progress`, `Sidewall capture progress`) and a 0–100 value. It is not a live region, so it does not talk over the hint and status announcements.
+- **Deviation from the screen images:** `08`, `10` and `13` show no progress indicator. This is an owner-requested addition to those screens.
+- **History today:** a ring with an `X/8` count was added to Sidewall capture, then removed (two entries above). This entry replaces both for the current state.
+
+### Needs a real phone
+- iPhone 13, iPhone SE and one Android phone, all three screens: the ring is where described, visible over bright and dark previews, and fills smoothly while the camera and OCR are running.
+- Plate and chassis: the ring does not cover the guide box on the smallest screen, and its stepping back when a read is lost does not look like a fault.
+- Sidewall on iPhone SE: the ring sits inside the guide circle without touching the status pill.
+

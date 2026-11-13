@@ -11,6 +11,7 @@ import {
   ControlButton,
   DarkTopBar,
   FlashToggle,
+  ScanProgressRing,
   Viewfinder,
 } from '../../components';
 import { useRootNavigation } from '../../app/navigation';
@@ -45,11 +46,14 @@ export function PlateScanScreen() {
   const [issue, setIssue] = useState<CameraIssue>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  /** Scan progress ring: share of the matching reads needed (`ocrConfig.stableReads`). */
+  const [progress, setProgress] = useState(0);
   const stabilizer = useRef(new ReadStabilizer(plateSearchKey));
 
   useFocusEffect(
     useCallback(() => {
       stabilizer.current.reset();
+      setProgress(0);
       setLeaving(false);
       setMessage(null);
     }, []),
@@ -57,6 +61,7 @@ export function PlateScanScreen() {
 
   const found = (plate: string) => {
     setLeaving(true);
+    setProgress(1);
     feedback.success('Plate found');
     navigation.navigate('PlateConfirm', { plate });
   };
@@ -76,6 +81,7 @@ export function PlateScanScreen() {
     }
     const stable = stabilizer.current.push(value);
     if (stable) found(stable);
+    else setProgress(stabilizer.current.progress());
   };
 
   const scanner = useTextScanner({ enabled: live && !leaving, onResult });
@@ -117,6 +123,7 @@ export function PlateScanScreen() {
             accessible
             accessibilityLabel="Plate guide box"
           />
+          <ScanProgressRing progress={progress} accessibilityLabel="Plate read progress" style={styles.progress} />
           <AppText
             variant="rowLabel"
             color="white"
@@ -156,6 +163,8 @@ const styles = StyleSheet.create({
     borderColor: colors.cameraBlue,
     borderRadius: 10,
   },
+  // Header of the viewfinder, clear of the guide box the text is read from.
+  progress: { position: 'absolute', top: 16, alignSelf: 'center' },
   hint: {
     position: 'absolute',
     left: 16,

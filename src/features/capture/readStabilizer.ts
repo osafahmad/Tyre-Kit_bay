@@ -26,6 +26,22 @@ export class ReadStabilizer {
     return count >= this.stableReads ? (this.latest.get(key) ?? null) : null;
   }
 
+  /**
+   * How close the most-read value in the window is to being accepted, 0 to 1.
+   * Display only (the scan progress ring); it can fall as reads leave the window.
+   */
+  progress(): number {
+    const counts = new Map<string, number>();
+    let best = 0;
+    for (const key of this.recent) {
+      if (key === null) continue;
+      const n = (counts.get(key) ?? 0) + 1;
+      counts.set(key, n);
+      if (n > best) best = n;
+    }
+    return Math.min(1, best / this.stableReads);
+  }
+
   reset() {
     this.recent = [];
     this.latest.clear();

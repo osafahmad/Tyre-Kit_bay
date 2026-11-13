@@ -11,6 +11,7 @@ import {
   ControlButton,
   DarkTopBar,
   FlashToggle,
+  ScanProgressRing,
   Viewfinder,
 } from '../../components';
 import { useRootNavigation } from '../../app/navigation';
@@ -46,11 +47,14 @@ export function ChassisScanScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [tooSmall, setTooSmall] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  /** Scan progress ring: share of the matching reads needed (`ocrConfig.stableReads`). */
+  const [progress, setProgress] = useState(0);
   const stabilizer = useRef(new ReadStabilizer());
 
   useFocusEffect(
     useCallback(() => {
       stabilizer.current.reset();
+      setProgress(0);
       setLeaving(false);
       setMessage(null);
       setTooSmall(false);
@@ -59,6 +63,7 @@ export function ChassisScanScreen() {
 
   const found = (chassis: string) => {
     setLeaving(true);
+    setProgress(1);
     setVehicle({ chassis });
     feedback.success('Chassis number found');
     navigation.navigate('VehicleDetails');
@@ -84,6 +89,7 @@ export function ChassisScanScreen() {
     }
     const stable = stabilizer.current.push(read.value);
     if (stable) found(stable);
+    else setProgress(stabilizer.current.progress());
   };
 
   const scanner = useTextScanner({ enabled: live && !leaving, onResult });
@@ -135,6 +141,7 @@ export function ChassisScanScreen() {
               </View>
             ) : null}
           </View>
+          <ScanProgressRing progress={progress} accessibilityLabel="Chassis number read progress" style={styles.progress} />
           <AppText
             variant="rowLabel"
             color="white"
@@ -198,6 +205,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 14,
   },
+  // Header of the viewfinder, clear of the guide box the text is read from.
+  progress: { position: 'absolute', top: 16, alignSelf: 'center' },
   hint: {
     position: 'absolute',
     left: 16,

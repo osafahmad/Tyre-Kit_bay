@@ -10,10 +10,10 @@ import {
   CameraStatusPill,
   CameraTitle,
   CaptureButton,
-  CircularProgress,
   DarkTopBar,
   DemoDataLabel,
   FlashToggle,
+  ScanProgressRing,
   SidewallGuideArt,
   SidewallGuideRing,
   Viewfinder,
@@ -37,7 +37,6 @@ import { colors } from '../../theme';
 type Props = NativeStackScreenProps<RootStackParamList, 'SidewallCapture'>;
 
 export const SIDEWALL_HINT = 'Fit the whole tyre inside the circle';
-export const SIDEWALL_PROGRESS_LABEL = 'Scanning sidewall frames';
 
 /**
  * 13 Sidewall capture (Sidewall.dc.html). Frames are checked for light,
@@ -145,12 +144,13 @@ function LiveSidewall(props: Props) {
         </View>
         <CameraStatusPill label={status.label} showCheck={status.ok} style={styles.pill} />
         {capture.snapshot.collecting ? (
-          // Centre of the guide circle: over the wheel hub, clear of the sidewall text. Not part of saved frames.
+          // Centre of the guide circle (over the wheel hub, clear of the sidewall text). No count is drawn.
           <View style={styles.progress} pointerEvents="none">
-            <CircularProgress
-              value={capture.snapshot.accepted}
-              total={inspectionConfig.capture.sidewallTargetFrames}
-              label={SIDEWALL_PROGRESS_LABEL}
+            <ScanProgressRing
+              progress={capture.snapshot.accepted / inspectionConfig.capture.sidewallTargetFrames}
+              accessibilityLabel="Sidewall capture progress"
+              size={64}
+              strokeWidth={6}
             />
           </View>
         ) : null}

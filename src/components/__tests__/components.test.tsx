@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { Button, CircularProgress, ResultRow, StatusBadge, IconButton } from '..';
+import { Button, ResultRow, ScanProgressRing, StatusBadge, IconButton } from '..';
 import { ChevronLeft } from 'lucide-react-native';
 
 test('every status badge has a text label', async () => {
@@ -54,20 +54,16 @@ test('logo shows the app name', async () => {
   expect(screen.getByLabelText('Tyre Kit Bay')).toBeTruthy();
 });
 
-test('circular progress shows the count, is a progressbar, and clamps out-of-range values', async () => {
-  const { rerender } = await render(<CircularProgress value={3} total={8} label="Scanning sidewall frames" />);
-  expect(screen.getByText('3/8')).toBeTruthy();
-  expect(screen.getByText('Scanning sidewall frames')).toBeTruthy();
-  expect(screen.getByRole('progressbar', { name: 'Scanning sidewall frames: 3 of 8' }).props.accessibilityValue).toEqual({
-    min: 0,
-    max: 8,
-    now: 3,
-  });
+test('scan progress ring is a progressbar in percent, clamps its value, and draws no numbers', async () => {
+  const ring = () => screen.getByRole('progressbar', { name: 'Plate read progress' });
   const settle = () => act(async () => new Promise<void>(resolve => setTimeout(resolve, 400)));
-  await rerender(<CircularProgress value={11} total={8} label="Scanning sidewall frames" />);
+  const { rerender } = await render(<ScanProgressRing progress={2 / 3} accessibilityLabel="Plate read progress" />);
+  expect(ring().props.accessibilityValue).toEqual({ min: 0, max: 100, now: 67 });
+  expect(screen.queryByText(/\d/)).toBeNull();
+  await rerender(<ScanProgressRing progress={4} accessibilityLabel="Plate read progress" />);
   await settle();
-  expect(screen.getByText('8/8')).toBeTruthy();
-  await rerender(<CircularProgress value={-2} total={8} label="Scanning sidewall frames" />);
+  expect(ring().props.accessibilityValue.now).toBe(100);
+  await rerender(<ScanProgressRing progress={Number.NaN} accessibilityLabel="Plate read progress" />);
   await settle();
-  expect(screen.getByText('0/8')).toBeTruthy();
+  expect(ring().props.accessibilityValue.now).toBe(0);
 });

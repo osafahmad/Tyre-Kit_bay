@@ -3,7 +3,7 @@ export { Button } from './Button';
 export { IconButton } from './IconButton';
 export { PendingStatusBadge, STATUS_PENDING_LABEL, StatusBadge, statusLabels } from './StatusBadge';
 export { ProgressSegments } from './ProgressSegments';
-export { CircularProgress } from './CircularProgress';
+export { ScanProgressRing } from './ScanProgressRing';
 export { ResultRow, NOT_READ } from './ResultRow';
 export { LogoMark } from './LogoMark';
 export * from './Artwork';

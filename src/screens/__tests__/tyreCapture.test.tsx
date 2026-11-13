@@ -46,9 +46,6 @@ const setSnapshot = async (patch: Partial<SessionSnapshot>) =>
     mockCapture.rerender?.();
   });
 
-/** Lets the progress ring's 280 ms animation finish inside act. */
-const settleRing = () => act(async () => new Promise<void>(resolve => setTimeout(resolve, 400)));
-
 const press = async (name: string | RegExp) =>
   fireEvent.press(await screen.findByRole('button', { name }));
 
@@ -86,20 +83,22 @@ describe('sidewall capture', () => {
   test('live camera, status pill, and Capture starts collecting', async () => {
     await toSidewall();
     expect(screen.getByTestId('camera-preview')).toBeTruthy();
+    // Shown only while frames are being collected.
+    expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getByText('Focusing…')).toBeTruthy();
     await setSnapshot({ status: 'ok' });
     expect(screen.getByText('Ready to capture')).toBeTruthy();
     await press('Capture sidewall');
     expect(mockCapture.start).toHaveBeenCalled();
     await setSnapshot({ collecting: true, accepted: 3 });
-    // Circular progress (2026-11-13) replaces the `3 of 8 frames` caption.
-    expect(screen.getByText('3/8')).toBeTruthy();
-    expect(screen.getByText('Scanning sidewall frames')).toBeTruthy();
-    const ring = screen.getByRole('progressbar', { name: 'Scanning sidewall frames: 3 of 8' });
-    expect(ring.props.accessibilityValue).toEqual({ min: 0, max: 8, now: 3 });
+    // Scan progress ring, with no frame count drawn (owner requests 2026-11-13).
+    const ring = () => screen.getByRole('progressbar', { name: 'Sidewall capture progress' });
+    expect(ring().props.accessibilityValue).toEqual({ min: 0, max: 100, now: 38 });
+    expect(screen.queryByText(/\d+\s*(\/|of)\s*8/)).toBeNull();
     await setSnapshot({ accepted: 8 });
-    await settleRing();
-    expect(screen.getByText('8/8')).toBeTruthy();
+    await act(async () => new Promise<void>(resolve => setTimeout(resolve, 400)));
+    expect(ring().props.accessibilityValue.now).toBe(100);
+    expect(screen.getByLabelText('Tyre guide circle')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Capture sidewall' })).toBeDisabled();
   });
 

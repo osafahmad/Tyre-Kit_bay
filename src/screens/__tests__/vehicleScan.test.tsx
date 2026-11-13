@@ -1,5 +1,5 @@
 import React from 'react';
-import { Linking } from 'react-native';
+import { Animated, Linking } from 'react-native';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as VC from 'react-native-vision-camera';
 import App from '../../app/App';
@@ -46,8 +46,24 @@ const read = async (
     }),
   );
 
+/** Scan progress ring value, 0–100. */
+const ringNow = (name: string) => screen.getByRole('progressbar', { name }).props.accessibilityValue.now;
+
 const press = async (name: string | RegExp) =>
   fireEvent.press(await screen.findByRole('button', { name }));
+
+// The scan progress ring's 280 ms fill would otherwise tick after each read's act() has ended.
+beforeAll(() => {
+  jest.spyOn(Animated, 'timing').mockImplementation(((value: Animated.Value, config: { toValue: number }) => ({
+    start: (done?: (result: { finished: boolean }) => void) => {
+      value.setValue(config.toValue);
+      done?.({ finished: true });
+    },
+    stop: () => {},
+    reset: () => {},
+  })) as never);
+});
+afterAll(() => jest.restoreAllMocks());
 
 beforeEach(() => {
   useInspectionStore.getState().replaceAll([], null);
@@ -136,9 +152,14 @@ describe('plate scanning', () => {
   test('the same plate read three times opens Confirm plate with exactly what was read', async () => {
     await startScan();
     await screen.findByText('Scan number plate');
+    // The scan progress ring fills with each matching read (2 of the 3 needed here).
+    expect(ringNow('Plate read progress')).toBe(0);
     await read('ABC 1234');
+    expect(ringNow('Plate read progress')).toBe(33);
     await read(null);
+    expect(ringNow('Plate read progress')).toBe(33);
     await read('ABC1234');
+    expect(ringNow('Plate read progress')).toBe(67);
     expect(screen.queryByText('Plate found')).toBeNull();
     await read('ABC-1234');
     expect(await screen.findByText('Plate found')).toBeTruthy();
@@ -228,8 +249,11 @@ describe('chassis scanning', () => {
 
   test('a stable read opens Vehicle details with it filled in, not padded to 17', async () => {
     await toChassis();
+    expect(ringNow('Chassis number read progress')).toBe(0);
     await read('KE30123456');
+    expect(ringNow('Chassis number read progress')).toBe(33);
     await read('KE30123456');
+    expect(ringNow('Chassis number read progress')).toBe(67);
     await read('KE30123456');
     expect(await screen.findByText('Check vehicle details')).toBeTruthy();
     expect(screen.getByLabelText('Chassis number, optional').props.value).toBe('KE30123456');
