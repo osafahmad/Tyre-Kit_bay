@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { LICENSE_NOTICES, type LicenseNotice } from '../config/licenses';
+import { LICENSE_TEXTS } from '../config/licenseTexts';
 import { colors, radius, sizes } from '../theme';
 import { AppText } from './AppText';
 import { IconButton } from './IconButton';
@@ -15,6 +16,9 @@ import { IconButton } from './IconButton';
 export const LICENSES_TITLE = 'Third-Party Licenses';
 
 function Notice({ n }: { n: LicenseNotice }) {
+  // Full licence texts are long (Apache-2.0, MMKV's OpenSSL terms), so each
+  // stays folded until asked for.
+  const [showText, setShowText] = useState(false);
   return (
     <View style={styles.notice} testID={`license-${n.id}`}>
       <AppText variant="body" weight="semibold" accessibilityRole="header">
@@ -39,6 +43,26 @@ function Notice({ n }: { n: LicenseNotice }) {
       <AppText variant="caption" color="textSecondary" selectable>
         {n.licenseUrl}
       </AppText>
+      {n.licenseTextId ? (
+        <>
+          <Pressable
+            style={styles.toggle}
+            onPress={() => setShowText(v => !v)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showText }}
+            accessibilityLabel={`${showText ? 'Hide' : 'Show'} licence text for ${n.title}`}
+          >
+            <AppText variant="bodySmall" weight="medium" color="navy">
+              {showText ? 'Hide licence text' : 'Show licence text'}
+            </AppText>
+          </Pressable>
+          {showText ? (
+            <AppText variant="caption" color="textBody" selectable testID={`license-text-${n.id}`}>
+              {LICENSE_TEXTS[n.licenseTextId]}
+            </AppText>
+          ) : null}
+        </>
+      ) : null}
     </View>
   );
 }
@@ -95,5 +119,6 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   list: { paddingVertical: 8 },
+  toggle: { minHeight: sizes.touchTarget, justifyContent: 'center', alignSelf: 'flex-start' },
   notice: { paddingVertical: 14, gap: 4, borderBottomWidth: 1, borderBottomColor: colors.border },
 });

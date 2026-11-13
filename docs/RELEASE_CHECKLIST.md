@@ -12,7 +12,14 @@ Everything in spec §11 plus project-specific items found while building. Every 
 - [ ] Minimum supported devices decided from real testing.
 - [ ] Final logo, app icon and splash screen provided and in place.
 - [ ] Privacy policy and store data disclosures completed.
-- [ ] All dependency and model licences checked. ~~`tyre_detector.tflite` (sidewall text detector) is AGPL-3.0: replace or license it.~~ ~~Done 2026-11-10: removed; no AGPL model is bundled.~~ **Re-opened 2026-11-13: `sidewall_detector.tflite` (Ultralytics YOLO11n-seg) is AGPL-3.0 (docs/LICENSES.md). Owner decision needed: Ultralytics Enterprise licence, or a non-AGPL architecture, before any store build.** Tread wear and sidewall text datasets (CC BY 4.0): attribution shown in the app and/or store listing. npm dependency licences and the ML Kit SDK terms still to check.
+- [ ] **STRICT BLOCKER (TestFlight, Play test tracks and store): `sidewall_detector.tflite` is AGPL-3.0** (Ultralytics YOLO11n-seg; docs/LICENSES.md, DECISIONS.md "Dependency licence audit (2026-11-13)"). Retrain on an Apache-2.0 / BSD architecture (YOLOX-Nano first choice) and replace the file, manifest entry and decoder before any build leaves the team. An Ultralytics Enterprise licence is the only alternative and is an owner decision.
+- [ ] Dependency licences. Audited 2026-11-13: no GPL / LGPL / AGPL code dependency. In-app notices added for TensorFlow Lite / LiteRT, Google support libraries, ML Kit, MMKV (OpenSSL acknowledgement) and Lucide / Feather. Still to do:
+  - [ ] Complete generated notices list for the remaining MIT / BSD / Apache libraries (iOS: CocoaPods acknowledgements file; Android: a licence report).
+  - [ ] ML Kit `NOTICES` (1.5 MB): owner decides whether the in-app reference is enough or the file is bundled / published.
+  - [ ] Dated snapshots of both Roboflow dataset pages showing CC BY 4.0.
+  - [ ] Licences sheet checked on iPhone and Android (new **Show licence text** rows, long texts scroll).
+  - [ ] `node scripts/generate-license-texts.js` re-run after any update of `lucide-react-native`, `react-native-mmkv` (MMKVCore) or the Google pods.
+- [ ] Android 16 KB page alignment re-checked on a fresh release build (`zipalign -c -P 16 -v 4`; passed on the 2026-11-04 APK).
 - [ ] Android release build and iOS archive succeed.
 
 ## Diagnostics

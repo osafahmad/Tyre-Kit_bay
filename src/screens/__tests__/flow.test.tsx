@@ -57,6 +57,13 @@ test('Home: Third-Party Licenses opens an overlay with the dataset attribution, 
   expect(screen.getByText('https://universe.roboflow.com/adtronics-pmfgf/tire-crack-detection-4z5ei/dataset/19')).toBeTruthy();
   expect(screen.getByText(/on Adtronics Tire Crack Detection v19 \(6,359 images\)/)).toBeTruthy();
   expect(screen.getByText('BSD 3-Clause License')).toBeTruthy();
+  // Dependency audit 2026-11-13: open-source notices, full text folded until asked for.
+  expect(screen.getByText('MMKV (key-value storage)')).toBeTruthy();
+  expect(screen.getByText(/software developed by the OpenSSL Project/)).toBeTruthy();
+  expect(screen.getByText(/Cole Bemis\.$/)).toBeTruthy();
+  expect(screen.queryByText(/Original SSLeay License/)).toBeNull();
+  await fireEvent.press(screen.getByRole('button', { name: 'Show licence text for MMKV (key-value storage)' }));
+  expect(screen.getByText(/Original SSLeay License/)).toBeTruthy();
   expect(navigationRef.getCurrentRoute()?.name).toBe(routeBefore);
   await fireEvent.press(screen.getAllByRole('button', { name: 'Close Third-Party Licenses' })[0]);
   expect(screen.queryByText('Tire Crack Detection Computer Vision Dataset (Version 19)')).toBeNull();

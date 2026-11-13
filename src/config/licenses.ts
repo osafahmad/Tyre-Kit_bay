@@ -2,6 +2,8 @@
 // Shown by `LicensesModal`, an overlay opened from Home's "Third-Party
 // Licenses" link (not a route: the app keeps the spec's 21 screens).
 
+import type { LicenseTextId } from './licenseTexts';
+
 export type LicenseNotice = {
   id: string;
   /** What it is, as shown to users. */
@@ -14,6 +16,12 @@ export type LicenseNotice = {
   licenseUrl: string;
   /** The notice text shown as written. */
   notice: string;
+  /**
+   * Full licence text in `LICENSE_TEXTS` (licenseTexts.ts), shown behind
+   * "Show licence text". Set where the licence asks for its text to travel
+   * with the app (Apache-2.0 §4a, BSD/OpenSSL binary redistribution, ISC/MIT).
+   */
+  licenseTextId?: LicenseTextId;
 };
 
 export const LICENSE_NOTICES: readonly LicenseNotice[] = [
@@ -57,6 +65,71 @@ export const LICENSE_NOTICES: readonly LicenseNotice[] = [
     license: 'SIL Open Font License 1.1',
     licenseUrl: 'https://openfontlicense.org',
     notice: 'Copyright (c) 2016 The Inter Project Authors.',
+  },
+  {
+    // Dependency audit 2026-11-13. The TFLite runtime behind react-native-fast-tflite:
+    // TensorFlowLiteC 2.17.0 with the Core ML delegate (iOS), LiteRT and
+    // LiteRT GPU 1.4.0 (Android). Copyright line as in the TensorFlow sources.
+    id: 'tensorflow-lite',
+    title: 'TensorFlow Lite / LiteRT (on-device model runtime)',
+    creator: 'The TensorFlow Authors (Google)',
+    sourceUrl: 'https://github.com/tensorflow/tensorflow',
+    license: 'Apache License 2.0',
+    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
+    notice: 'Copyright The TensorFlow Authors. All rights reserved. Licensed under the Apache License, Version 2.0.',
+    licenseTextId: 'apache-2.0',
+  },
+  {
+    // Dependency audit 2026-11-13. Pulled in by ML Kit: GoogleDataTransport,
+    // GoogleUtilities, GTMSessionFetcher, PromisesObjC, GoogleToolboxForMac
+    // (iOS pods) and com.google.android.datatransport (Android).
+    id: 'google-support-libraries',
+    title: 'Google support libraries (GoogleDataTransport, GoogleUtilities, GTMSessionFetcher, Promises, Google Toolbox for Mac)',
+    creator: 'Google LLC',
+    sourceUrl: 'https://github.com/google/GoogleDataTransport',
+    license: 'Apache License 2.0',
+    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
+    notice: 'Copyright Google LLC. Licensed under the Apache License, Version 2.0.',
+    licenseTextId: 'apache-2.0',
+  },
+  {
+    // Dependency audit 2026-11-13. Google's on-device SDK, used through
+    // rn-mlkit-ocr (MIT). Not open source: Google's terms apply. Its 1.5 MB
+    // NOTICES file is referenced, not embedded (docs/LICENSES.md).
+    id: 'google-ml-kit',
+    title: 'Google ML Kit Text Recognition',
+    creator: 'Google LLC',
+    sourceUrl: 'https://developers.google.com/ml-kit',
+    license: 'ML Kit Terms of Service',
+    licenseUrl: 'https://developers.google.com/ml-kit/terms',
+    notice:
+      'Text is read on the device with Google ML Kit, used under the ML Kit Terms of Service. ML Kit includes open-source software; its notices are in the NOTICES file distributed with the ML Kit SDK.',
+  },
+  {
+    // Dependency audit 2026-11-13. MMKVCore 2.4.0 (behind react-native-mmkv)
+    // compiles in OpenSSL AES code, so the OpenSSL and SSLeay
+    // acknowledgements below are mandatory. Wording is from MMKV's LICENSE.TXT.
+    id: 'mmkv',
+    title: 'MMKV (key-value storage)',
+    creator: 'THL A29 Limited, a Tencent company',
+    sourceUrl: 'https://github.com/Tencent/MMKV',
+    license: 'BSD 3-Clause License, with OpenSSL and SSLeay licensed components',
+    licenseUrl: 'https://github.com/Tencent/MMKV/blob/master/LICENSE.TXT',
+    notice:
+      'Copyright (C) 2018 THL A29 Limited, a Tencent company. All rights reserved. This product includes software developed by the OpenSSL Project for use in the OpenSSL Toolkit (http://www.openssl.org/). This product includes cryptographic software written by Eric Young (eay@cryptsoft.com). This product includes software written by Tim Hudson (tjh@cryptsoft.com).',
+    licenseTextId: 'mmkv',
+  },
+  {
+    // Dependency audit 2026-11-13. lucide-react-native 1.68.0; some icons
+    // come from Feather (MIT). Wording is from the package's LICENSE.
+    id: 'lucide',
+    title: 'Lucide icons',
+    creator: 'Lucide Icons and Contributors; Feather icons by Cole Bemis',
+    sourceUrl: 'https://github.com/lucide-icons/lucide',
+    license: 'ISC License (Lucide); MIT License (icons derived from Feather)',
+    licenseUrl: 'https://github.com/lucide-icons/lucide/blob/main/LICENSE',
+    notice: 'Copyright (c) 2026 Lucide Icons and Contributors. Some icons are derived from the Feather project, Copyright (c) 2013-present Cole Bemis.',
+    licenseTextId: 'lucide',
   },
 ];
 
