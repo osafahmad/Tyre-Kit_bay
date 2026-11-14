@@ -1219,3 +1219,67 @@ The owner asked for three things from the screen-capture and device logs. Each w
 - Plate and chassis: the ring does not cover the guide box on the smallest screen, and its stepping back when a read is lost does not look like a fault.
 - Sidewall on iPhone SE: the ring sits inside the guide circle without touching the status pill.
 
+## Sidewall text detector: YOLOX-Nano (2026-11-14)
+
+**Status: built and unit-tested. NOT run on a phone. Nothing about this model's boxes, speed or delegates is verified.**
+
+- **Owner task:** move the sidewall text detector from the Ultralytics YOLO11n-seg file (AGPL-3.0, the blocker in "Dependency licence audit (2026-11-13)") to the YOLOX-Nano file the owner put in `assets/models/sidewall_detector.tflite`, described in `docs/MODEL_CARD.md` and `docs/sidewall_detector.metadata.json`.
+
+### Model values and where each comes from
+- **Read from the file** (`manifest.test.ts`): input `serving_default_args_0` `[1, 3, 640, 640]` float32; one output `serving_default_output_0_output` `[1, 8, 8400]` float32; no embedded metadata. SHA-256 `b887b360…1bc8`, equal to the model card's (tested).
+- **From the model card:** classes 0 Brand, 1 DOT, 2 Model, 3 Size; letterbox 640 × 640 with grey 114; RGB 0–1; output rows are cx, cy, w, h in 640 × 640 pixels, then 4 scores that are objectness × class probability; score ≥ 0.25 and NMS IoU 0.45.
+- **Not in the model card:** `maxDetections` 300. It is the app's cap, carried over from the previous entry. Owner can change it.
+- Manifest entry `sidewallText` is now `YoloxDetectorManifestEntry` (`outputFormat: 'yolox_decoded'`, `boxFormat: 'cxcywh_pixels'`, version `yolox-nano-tyre-to-text-v3-2026-11-14`). `YoloSegDetectorManifestEntry`, `maskCoefficients` and the `prototypes` output are gone.
+
+### Decoding (`src/ml/inference/yolox.ts`, replaces `yoloSeg.ts`)
+- `decodeYoloxOutput`: attribute-major read of `[1, 8, 8400]`, best label per anchor, score ≥ 0.25 (inclusive), cx/cy/w/h → corners clamped to the input, greedy NMS per label at IoU 0.45 (YOLOX's own post-processing is per class too).
+- **No grid decode in the app.** The task asked for standard YOLOX anchor decoding (add the grid cell, multiply by the stride, `exp` the size). The model card says the output is already cx, cy, w, h in pixels and has 8 rows, not the 9 (4 + objectness + 4) of a raw YOLOX head, so the export does that step itself. Doing it again would move every box, so it was not added. A test pins this: the same values give the same box at anchors of all three strides. **If the phone readout shows boxes in the wrong place, this is the first thing to re-check with the owner.**
+- The run-time range check stays: if the raw box values look 0–1 while the manifest says pixels (or the reverse), the detector decodes with what the tensor shows and logs `overridden`. It cannot tell an undecoded head from a decoded one.
+- Removed: mask coefficients on each detection, prototype range stats, the second output tensor. No prototype multiplication, upsampling or polygon code existed to remove; Stage 4 (masks) was never built and is now dropped, since the model has no masks.
+- The loader (`modelLoader.ts`) checks 4 + labels rows, 8400 anchors from the input size, letterbox, and exactly one output tensor by name, type and shape. The old two-output seg file fails this check (tested).
+- Letterbox and un-letterbox (`imageFileToModelInput`, `detectionToFrameRect`) are unchanged: they were already driven by the manifest's NCHW `[1, 3, 640, 640]` entry. `nchwStrideAudit.test.ts` now runs on the 8-row layout with pixel boxes.
+
+### Crops (`sidewallCropOcr.ts`)
+- **Margin:** the 12 % cushion (`CROP_PADDING_RATIO`, 2026-11-13) is replaced by a fixed margin of **8 detector-input pixels** on every side (`CROP_PADDING_INPUT_PX`; the task asked for 5–10 px). It is scaled to the saved frame by the letterbox scale (`cropMarginForFrame`): 14 px on a 1080 × 1120 frame, 16 px on a 1280-wide one. Measuring in input pixels keeps the margin the same share of the detector's view on every phone; a literal 8 frame pixels would be almost nothing on a 12 MP frame. **Estimate, untested on a phone.**
+- Effect to expect: wide boxes get less side margin than before (a 400 px wide box had 48 px, now about 14–16), thin boxes get more height margin.
+- A box under one pixel wide or high inside the frame gives no crop, so the margin alone is never read.
+- Crops were already axis-aligned boxes; there was no polygon or min-area-rectangle warp to remove.
+- **Orientations kept as they were:** 0°, 90° CW, 90° CCW and 180° (`CROP_ROTATIONS`). The task named the 0° / 180° retry; the two 90° turns stay because side-arc text is vertical (2026-11-13).
+- **CLAHE: not present, not added.** The task said to retain it, but no CLAHE step exists in this app (it was a Stage 4 idea, "only if a native binding exists without new heavy dependencies"). Adding it needs a native image library, which is an owner decision.
+- `judgeCrops`, the crop pass, and the merge into fields (`sidewallCropMerge.ts`) are unchanged.
+
+### Licences
+- In-app: the tyre-to-text v3 / Hetvi EWW / CC BY 4.0 credit was already shown and is kept (now tested against the model card's wording). A YOLOX (Megvii, Apache-2.0) notice was added with the full Apache text. `docs/LICENSES.md` and the release checklist are updated; the AGPL blocker line is replaced by an owner confirmation line.
+
+### Needs a real phone
+- Model load and delegate on iPhone 13 and Redmi 13 (Core ML / GPU or CPU fallback), load and inference time. The 4 MB file should be faster than the 11.7 MB seg model, unmeasured.
+- `[SidewallDetector]` readout on a real sidewall: raw box range in the hundreds (pixels), `boxFormat.overridden: false`, best class scores between 0 and 1, and boxes sitting on the lettering.
+- Whether RGB 0–1 input is right for this export (stock YOLOX takes 0–255 BGR; the model card says RGB 0–1). Wrong input shows as low scores everywhere.
+- The Continental test tyre: Sidewall captured should still end with `195/55 R15`, the whole TIN, `Continental` and `ComfortContact`. Compare crop reads with the 12 % cushion results; if text at box edges is cut, raise `CROP_PADDING_INPUT_PX` (owner allowed up to 10).
+- Confidence 0.25 and IoU 0.45 on mounted tyres (the dataset is 424 flat-tyre images).
+- The Third-Party Licenses sheet shows the YOLOX notice and the dataset credit.
+
+## Sidewall captured: developer diagnostics restored behind "Developer debug" (2026-11-14)
+
+**Status: built and unit-tested. Not yet checked on a phone.**
+
+- **Owner request:** bring **Copy logs** and the staging detector card back to Sidewall captured (screen 14) for testing on phones, without cluttering the screen. This reverses "Sidewall captured: developer diagnostics removed (2026-11-13)".
+- **Where they are:** one row, **Developer debug**, at the end of the sheet under **Scan sidewall again** (`DeveloperDebugSection`, `src/components/DeveloperDebugSection.tsx`). It is closed every time the screen opens. Tapping it shows **Copy logs** and the detector card; tapping again hides them. The open state is not saved.
+- **Flags:** `diagnosticsConfig.sidewallDetectorDebugCard` is back (on for staging) and controls the card. **Copy logs** follows `enableStagingLogs`, as on Tyre result. With both off, the row is not rendered at all, so a store build shows the screen as designed. Both are on the release checklist.
+- **Detector card:** `SidewallDetectorDebugCard`, restored from git and adjusted for the YOLOX-Nano detector: the mask coefficient and prototype line is gone (the model has no masks). It shows, per saved frame: the frame with each box, label and score drawn on it; model version, delegate and load time; decode, inference and post-processing times; tensor shapes; raw box range and the box format used; best score per class; anchors over the threshold; each box's position and size; then each crop's thumbnail and the raw ML Kit text of every orientation.
+- **"Live":** the card runs on the saved frames after capture, one frame at a time, with **Previous**, **Next** and **Run again**. It is not an overlay on the camera preview during capture; Sidewall capture (screen 13) is unchanged. The detector does not run during capture.
+- **Cost:** the card's own detector and crop-OCR pass starts only when the section is opened, not when the screen opens (before the removal it ran on every open). Closing the section cancels it and deletes its crop thumbnails.
+- **Nothing on it fills a field.** Field values still come only from the whole-frame read and the Stage 3 crop pass.
+- **Colours:** theme tokens only (`border`, `textSecondary`, `surfaceMuted`, `cameraBlue` boxes, `navy` tags).
+- **Deviation from the screen image:** `14-sidewall-captured.png` has no such row. It is a staging-only addition and is absent from store builds.
+- **Privacy:** unchanged from 2026-11-12. The copied lines and the card include raw sidewall OCR text; nothing is written to disk or sent.
+
+### Tests
+- `developerDebugSection.test.tsx`: nothing rendered with both flags off; Copy logs alone with the card flag off; the readout and crop text for the YOLOX result shape.
+- `sidewallSuggestions.test.tsx`: closed by default with no extra detector pass; opening shows Copy logs and the card and runs the detector on the first frame; closing hides both.
+
+### Needs a real phone
+- iPhone 13, iPhone SE and one Android phone: the **Developer debug** row sits under **Scan sidewall again** without crowding it, opens and closes, and the sheet scrolls to the whole card.
+- **Copy logs** pastes the `[SidewallOCR]`, `[SidewallDetector]` and `[TreadWear]` lines of the session.
+- The card's boxes sit on the lettering of the saved frame, and the readout matches the `[SidewallDetector]` lines (first on-device look at the YOLOX-Nano boxes).
+- Opening the section while fields still show `Reading…` does not slow or change the values that fill in.

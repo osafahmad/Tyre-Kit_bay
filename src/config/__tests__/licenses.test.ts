@@ -44,6 +44,29 @@ describe('licence notices', () => {
     );
   });
 
+  test('the CC BY 4.0 credit names the dataset, its version and its author as the model card asks (2026-11-14)', () => {
+    const d = notice('sidewall-text-dataset');
+    expect(d.title).toBe('tyre-to-text Computer Vision Dataset (Version 3)');
+    expect(d.notice).toBe('Sidewall text detector trained on the tyre-to-text dataset v3 by Hetvi EWW (424 images, CC BY 4.0).');
+    // The card's own wording: "tyre-to-text v3 by Hetvi EWW ... CC BY 4.0. Add this credit in the app."
+    const card = readFileSync('docs/MODEL_CARD.md', 'utf8');
+    expect(card).toMatch(/tyre-to-text v3 by Hetvi EWW .*CC BY 4\.0/);
+    for (const part of ['tyre-to-text', 'v3', 'Hetvi EWW', 'CC BY 4.0']) expect(d.notice).toContain(part);
+  });
+
+  test('YOLOX (the sidewall text detector’s architecture) is credited under Apache-2.0, and no notice mentions Ultralytics', () => {
+    const d = notice('yolox');
+    expect(d).toEqual(
+      expect.objectContaining({
+        creator: 'Megvii Inc.',
+        sourceUrl: 'https://github.com/Megvii-BaseDetection/YOLOX',
+        license: 'Apache License 2.0',
+        licenseTextId: 'apache-2.0',
+      }),
+    );
+    expect(JSON.stringify(LICENSE_NOTICES)).not.toMatch(/ultralytics|AGPL|yolo11/i);
+  });
+
   test('the old smart-inspection tread wear dataset is no longer credited', () => {
     expect(JSON.stringify(LICENSE_NOTICES)).not.toMatch(/smart-inspection|tire-tread-wear/);
   });

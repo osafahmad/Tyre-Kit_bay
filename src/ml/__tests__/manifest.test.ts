@@ -12,6 +12,13 @@ import type { InferenceModel } from '../inference/types';
 
 declare const __dirname: string; // Jest (Node); the project doesn't load Node's types.
 
+const { readFileSync } = require('fs') as { readFileSync(path: string, encoding: 'utf8'): string };
+const { createHash } = require('crypto') as {
+  createHash(algorithm: 'sha256'): { update(data: Uint8Array): { digest(encoding: 'hex'): string } };
+};
+const readText = (path: string) => readFileSync(path, 'utf8');
+const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
 const ROOT = `${__dirname}/../../..`;
 const TREAD_PATH = `${ROOT}/assets/models/tread_wear.tflite`;
 const SIDEWALL_PATH = `${ROOT}/assets/models/sidewall_detector.tflite`;
@@ -155,16 +162,17 @@ describe('shipped manifest: treadWear (tread_wear.tflite, SSDLite)', () => {
   });
 });
 
-describe('shipped manifest: sidewallText (sidewall_detector.tflite, YOLO11n-seg)', () => {
+describe('shipped manifest: sidewallText (sidewall_detector.tflite, YOLOX-Nano)', () => {
   const sidewallModel = (): InferenceModel => ({
     inputs: sidewallFile.inputs,
     outputs: sidewallFile.outputs,
     run: jest.fn(),
   });
 
-  test('is registered with the values from the model file and the owner task (2026-11-13)', () => {
+  test('is registered with the values from the model file and the owner’s model card (2026-11-14)', () => {
     expect(sidewallText).toEqual(
       expect.objectContaining({
+        version: 'yolox-nano-tyre-to-text-v3-2026-11-14',
         inputShape: [1, 3, 640, 640],
         inputLayout: 'NCHW',
         inputType: 'float32',
@@ -175,45 +183,69 @@ describe('shipped manifest: sidewallText (sidewall_detector.tflite, YOLO11n-seg)
         inputQuantization: null,
         labels: ['Brand', 'DOT', 'Model', 'Size'],
         confidenceThreshold: 0.25,
-        outputFormat: 'yolo_seg_raw',
+        outputFormat: 'yolox_decoded',
         outputType: 'float32',
         outputQuantization: null,
         outputs: {
-          detections: { name: 'serving_default_output_0_output', shape: [1, 40, 8400] },
-          prototypes: { name: 'serving_default_output_1_output', shape: [1, 32, 160, 160] },
+          detections: { name: 'serving_default_output_0_output', shape: [1, 8, 8400] },
         },
-        maskCoefficients: 32,
-        boxFormat: 'cxcywh_normalised',
+        boxFormat: 'cxcywh_pixels',
         iouThreshold: 0.45,
         maxDetections: 300,
       }),
     );
+    expect(sidewallText).not.toHaveProperty('maskCoefficients');
+    expect(sidewallText.outputs).not.toHaveProperty('prototypes');
     expect(validateManifestEntry('sidewallText', sidewallText)).toEqual([]);
   });
 
-  test('matches the tensors and the Ultralytics metadata inside the bundled .tflite file', () => {
+  test('matches the tensors inside the bundled .tflite file: one [1, 8, 8400] output, no mask prototypes', () => {
     expect(sidewallFile.inputs).toEqual([
       expect.objectContaining({ shape: [1, 3, 640, 640], dataType: 'float32', quantized: false }),
     ]);
     expect(sidewallFile.outputs).toEqual([
       expect.objectContaining({ ...sidewallText.outputs.detections, dataType: 'float32', quantized: false }),
-      expect.objectContaining({ ...sidewallText.outputs.prototypes, dataType: 'float32', quantized: false }),
     ]);
-    const meta = sidewallFile.ultralytics!;
-    expect(meta).toEqual(
-      expect.objectContaining({ task: 'segment', imgsz: [640, 640], end2end: false, version: '8.4.211' }),
-    );
-    // Label order comes from the file's `names`, not from the task text.
-    expect(Object.values(meta.names as Record<string, string>)).toEqual(sidewallText.labels);
-    // Licence recorded in DECISIONS.md / LICENSES.md: the same AGPL blocker as the detector removed 2026-11-10.
-    expect(String(meta.license)).toMatch(/AGPL-3\.0/);
     expect(checkModelMatchesManifest('sidewallText', sidewallModel(), sidewallText)).toEqual([]);
   });
 
-  test('the loader rejects swapped outputs or an NHWC description of this file', () => {
-    const swapped: InferenceModel = { ...sidewallModel(), outputs: [...sidewallFile.outputs].reverse() };
-    expect(checkModelMatchesManifest('sidewallText', swapped, sidewallText)).toEqual(
-      expect.arrayContaining(['output 0 is serving_default_output_1_output, manifest says serving_default_output_0_output']),
+  test('the file is the one in the owner’s model card, and is not an Ultralytics (AGPL-3.0) export', () => {
+    // The previous YOLO11n-seg file carried Ultralytics metadata with an AGPL-3.0 licence line.
+    expect(sidewallFile.ultralytics).toBeNull();
+    const card = JSON.parse(readText(`${ROOT}/docs/sidewall_detector.metadata.json`)) as {
+      sha256: string;
+      ultralytics_used: boolean;
+      classes: Record<string, string>;
+      input: { shape: number[]; dtype: string; color: string };
+      output: { shape: number[]; suggested_postprocess: { score_threshold: number; nms_iou: number } };
+    };
+    expect(sha256(readFile(SIDEWALL_PATH))).toBe(card.sha256);
+    expect(card.ultralytics_used).toBe(false);
+    // The manifest values that come from the card, not from the file.
+    expect(Object.values(card.classes)).toEqual(sidewallText.labels);
+    expect(card.input.shape).toEqual(sidewallText.inputShape);
+    expect(card.input.dtype).toBe(sidewallText.inputType);
+    expect(card.input.color).toBe(sidewallText.colorOrder);
+    expect(card.output.shape).toEqual(sidewallText.outputs.detections.shape);
+    expect(card.output.suggested_postprocess).toEqual({
+      score_threshold: sidewallText.confidenceThreshold,
+      nms_iou: sidewallText.iouThreshold,
+    });
+  });
+
+  test('the loader rejects the old two-output seg file or an NHWC description of this file', () => {
+    const seg: InferenceModel = {
+      ...sidewallModel(),
+      outputs: [
+        { name: 'serving_default_output_0_output', dataType: 'float32', shape: [1, 40, 8400] },
+        { name: 'serving_default_output_1_output', dataType: 'float32', shape: [1, 32, 160, 160] },
+      ],
+    };
+    expect(checkModelMatchesManifest('sidewallText', seg, sidewallText)).toEqual(
+      expect.arrayContaining([
+        'expected 1 output tensor, model has 2',
+        'output 0 shape is [1,40,8400], manifest says [1,8,8400]',
+      ]),
     );
     const nhwc = { ...sidewallText, inputShape: [1, 640, 640, 3], inputLayout: 'NHWC' as const };
     expect(validateManifestEntry('sidewallText', nhwc)).toEqual([]);
@@ -225,7 +257,7 @@ describe('shipped manifest: sidewallText (sidewall_detector.tflite, YOLO11n-seg)
   test('the loader opens it with the platform default delegates, then CPU', async () => {
     const createModel = jest
       .fn()
-      .mockRejectedValueOnce(new Error('Core ML refused the Segment head'))
+      .mockRejectedValueOnce(new Error('Core ML refused the graph'))
       .mockResolvedValueOnce(sidewallModel());
     const deps = fakeLoaderDeps({
       platform: 'ios',

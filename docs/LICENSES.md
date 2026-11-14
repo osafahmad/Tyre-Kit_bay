@@ -13,21 +13,23 @@ The in-app copy is `src/config/licenses.ts` (`LICENSE_NOTICES`), shown in the Th
   > Trained SSDLite320-MobileNetV3-Large (Torchvision BSD-3-Clause) on Adtronics Tire Crack Detection v19 (6,359 images).
 
 ### tyre-to-text Computer Vision Dataset (Version 3) — CC BY 4.0
-- **Used for:** training `assets/models/sidewall_detector.tflite` (YOLO11n-seg sidewall text detector, version `yolo11n-seg-tyre-to-text-v3-2026-11-13`), 424 images.
+- **Used for:** training `assets/models/sidewall_detector.tflite` (YOLOX-Nano sidewall text detector, version `yolox-nano-tyre-to-text-v3-2026-11-14`; before that the YOLO11n-seg file of 2026-11-13), 424 images.
 - **Creator:** Hetvi EWW (Roboflow workspace `hetvi-eww-zdjt2`).
 - **Source:** <https://universe.roboflow.com/hetvi-eww-zdjt2/tyre-to-text-cm4fa> (Roboflow Universe).
 - **Licence:** [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/).
 - **Notice shown in the app** (2026-11-13):
   > Sidewall text detector trained on the tyre-to-text dataset v3 by Hetvi EWW (424 images, CC BY 4.0).
 
-### `sidewall_detector.tflite` — Ultralytics YOLO11n-seg, **AGPL-3.0: STRICT PRODUCTION BLOCKER**
-- **Status (formal, dependency audit 2026-11-13):** this file must not be in any build that leaves the team: **no TestFlight build (internal or external), no Play test track, no store release.** AGPL-3.0 applies when the app is distributed, not only when it is published.
-- **Evidence:** the `metadata.json` zipped inside the file reads `"author": "Ultralytics"`, `"version": "8.4.211"`, `"license": "AGPL-3.0 License (https://ultralytics.com/license)"`. `manifest.test.ts` checks this metadata. File SHA-256 `150fa09ce382959c5093389c5da40a9cef1bb8898063beb3ee799b9b23bad6b6`.
-- **Why it blocks:** Ultralytics YOLO11 weights, training code and exports are AGPL-3.0. A closed-source app that ships them must either publish its whole source under AGPL or hold an Ultralytics Enterprise licence.
-- **Required fix:** retrain the sidewall text detector on a permissively licensed architecture and replace the file. Candidates: **YOLOX-Nano (Apache-2.0, the detector spec §7 already names)**, or a torchvision detector (BSD-3-Clause) as used for `tread_wear.tflite`. The training code and any pretrained starting weights must be permissive too. The CC BY 4.0 dataset can be reused.
-- **Alternative (owner decision only):** an Ultralytics Enterprise licence. Not assumed.
-- **Until then:** the model is for development and on-team staging devices only. Same situation as the YOLOv8 `tyre_detector.tflite` removed on 2026-11-10 (below). See DECISIONS.md, "Dependency licence audit (2026-11-13)", and the release checklist.
-- The decoder, letterbox and NMS in `src/ml/inference/` are this project's own code and don't include Ultralytics code. A replacement model needs a new manifest entry and decoder for its own output layout.
+### YOLOX — Apache License 2.0
+- **Used for:** the YOLOX-Nano architecture, training code and COCO starting weights (`yolox_nano.pth`) behind `assets/models/sidewall_detector.tflite`. YOLOX commit `6ddff4824372906469a7fae2dc3206c7aa4bbaee`.
+- **Source:** <https://github.com/Megvii-BaseDetection/YOLOX>. Megvii Inc.
+- **In the app:** `Copyright (c) 2021-2022 Megvii Inc. All rights reserved. Licensed under the Apache License, Version 2.0.`, with the full Apache-2.0 text behind **Show licence text**.
+- **Open (owner):** the copyright line was written from memory of the YOLOX `LICENSE` file, not copied from it in this session. Compare it with the file at the commit above. The model card also says to confirm the release notes if weights-specific terms are needed for `yolox_nano.pth`.
+- Record: `docs/MODEL_CARD.md` and `docs/sidewall_detector.metadata.json` (owner, 2026-11-14). File SHA-256 `b887b3601cc1c588dd3b837fac1170865d2416c61dc17f4db4bdf0e3f1ec1bc8`; `manifest.test.ts` checks the bundled file against it and that it carries no Ultralytics metadata.
+
+### Removed: Ultralytics YOLO11n-seg `sidewall_detector.tflite` (was AGPL-3.0)
+- The AGPL-3.0 file added on 2026-11-13 (SHA-256 `150fa09ce382959c5093389c5da40a9cef1bb8898063beb3ee799b9b23bad6b6`) was replaced on 2026-11-14 by the YOLOX-Nano file above, under the same name. The app's decoder for it (`yoloSeg.ts`) was replaced by `yolox.ts`. See DECISIONS.md, "Sidewall text detector: YOLOX-Nano (2026-11-14)".
+- This clears the model's own licence. It is not a release sign-off: the old file is still in git history, and whether that matters for distribution is an owner question.
 
 ### Removed: Tire Tread Wear Computer Vision Project (smart-inspection, CC BY 4.0)
 - Trained the previous `tread_wear.tflite` (`ssdlite320-mobilenetv3-large-torchvision-2026-11-10`). That checkpoint was replaced on 2026-11-12 by the Adtronics-trained one, so the notice was removed from the app. See DECISIONS.md, "M7 Phase 3c".
@@ -38,7 +40,7 @@ The in-app copy is `src/config/licenses.ts` (`LICENSE_NOTICES`), shown in the Th
 - BSD-3 asks binary redistributions to reproduce the notice in their documentation. Listing it here and in the app covers that.
 
 ### Removed: `tyre_detector.tflite` (was AGPL-3.0)
-- The Ultralytics YOLOv8 sidewall text detector was deleted on 2026-11-10 and is no longer bundled. Sidewall text was then read by Google ML Kit Text Recognition alone (via `rn-mlkit-ocr`). ~~No AGPL-licensed model remains.~~ **2026-11-13: a new Ultralytics (AGPL-3.0) sidewall text detector was added, see above.** See DECISIONS.md, "Sidewall text without a detector".
+- The Ultralytics YOLOv8 sidewall text detector was deleted on 2026-11-10 and is no longer bundled. Sidewall text was then read by Google ML Kit Text Recognition alone (via `rn-mlkit-ocr`). ~~No AGPL-licensed model remains.~~ 2026-11-13: a new Ultralytics (AGPL-3.0) sidewall text detector was added; 2026-11-14: it was replaced by YOLOX-Nano (Apache-2.0), see above. See DECISIONS.md, "Sidewall text without a detector".
 
 ## Fonts
 
@@ -75,13 +77,13 @@ Each has an entry in `LICENSE_NOTICES`. Where the licence asks for its text to t
 
 ## Full inventory (dependency audit 2026-11-13)
 
-No GPL, LGPL or AGPL **code** dependency was found in the npm tree (about 870 packages) or the iOS pods. The only AGPL item is the `sidewall_detector.tflite` model above.
+No GPL, LGPL or AGPL **code** dependency was found in the npm tree (about 870 packages) or the iOS pods. The only AGPL item was the Ultralytics `sidewall_detector.tflite` model, replaced on 2026-11-14 (above).
 
 ### Models
 | File | Architecture and licence | Training data |
 |---|---|---|
 | `assets/models/tread_wear.tflite` | torchvision SSDLite320-MobileNetV3-Large, BSD-3-Clause | Adtronics Tire Crack Detection v19, CC BY 4.0 |
-| `assets/models/sidewall_detector.tflite` | Ultralytics YOLO11n-seg 8.4.211, **AGPL-3.0 (blocker)** | Hetvi EWW tyre-to-text v3, CC BY 4.0 |
+| `assets/models/sidewall_detector.tflite` | YOLOX-Nano (Megvii), Apache-2.0 | Hetvi EWW tyre-to-text v3, CC BY 4.0 |
 | ML Kit Text Recognition, Latin (inside the SDK) | Google, ML Kit Terms of Service | Google |
 
 ### npm packages that ship in the app

@@ -37,9 +37,11 @@ export const LICENSE_NOTICES: readonly LicenseNotice[] = [
     notice: 'Trained SSDLite320-MobileNetV3-Large (Torchvision BSD-3-Clause) on Adtronics Tire Crack Detection v19 (6,359 images).',
   },
   {
-    // Owner task 2026-11-13: the dataset behind sidewall_detector.tflite
-    // (yolo11n-seg-tyre-to-text-v3-2026-11-13). Roboflow Universe dataset
-    // `tyre-to-text`, version 3, workspace `hetvi-eww-zdjt2`, 424 images.
+    // The dataset behind sidewall_detector.tflite (owner task 2026-11-13; the
+    // model was retrained as yolox-nano-tyre-to-text-v3-2026-11-14 on the same
+    // data, docs/MODEL_CARD.md). Roboflow Universe dataset `tyre-to-text`,
+    // version 3, workspace `hetvi-eww-zdjt2`, 424 images. CC BY 4.0 requires
+    // this credit to stay in the app.
     id: 'sidewall-text-dataset',
     title: 'tyre-to-text Computer Vision Dataset (Version 3)',
     creator: 'Hetvi EWW (Roboflow workspace hetvi-eww-zdjt2)',
@@ -47,6 +49,18 @@ export const LICENSE_NOTICES: readonly LicenseNotice[] = [
     license: 'Creative Commons Attribution 4.0 International (CC BY 4.0)',
     licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
     notice: 'Sidewall text detector trained on the tyre-to-text dataset v3 by Hetvi EWW (424 images, CC BY 4.0).',
+  },
+  {
+    // Owner model card 2026-11-14: the architecture, training code and COCO
+    // starting weights behind sidewall_detector.tflite (YOLOX commit 6ddff48243).
+    id: 'yolox',
+    title: 'YOLOX (YOLOX-Nano sidewall text detector architecture)',
+    creator: 'Megvii Inc.',
+    sourceUrl: 'https://github.com/Megvii-BaseDetection/YOLOX',
+    license: 'Apache License 2.0',
+    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0',
+    notice: 'Copyright (c) 2021-2022 Megvii Inc. All rights reserved. Licensed under the Apache License, Version 2.0.',
+    licenseTextId: 'apache-2.0',
   },
   {
     id: 'torchvision',

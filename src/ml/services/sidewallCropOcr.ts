@@ -5,12 +5,30 @@ import { markerlessTinCandidate } from '../ocr/sidewallFields';
 import { filterSidewallText, type SidewallTextReading } from '../sidewallTextFilter';
 
 // Stage 2 (owner task 2026-11-13): the pure parts of per-box crop OCR. The
-// detector's box is padded and clamped to the frame, read by ML Kit in four
-// orientations, and the orientation whose text fits the box's class best is
-// kept. No native code here, so it is unit-tested directly.
+// detector's box is cropped axis-aligned with a small pixel margin, clamped to
+// the frame, read by ML Kit in four orientations, and the orientation whose
+// text fits the box's class best is kept. No native code here, so it is
+// unit-tested directly.
 
-/** Cushion added on each side of a detector box before cropping, as a fraction of its size (owner: ~12 %). */
-export const CROP_PADDING_RATIO = 0.12;
+/**
+ * Margin added on each side of a detector box before cropping, in
+ * detector-input pixels (owner brief 2026-11-14: a safe 5–10 px; it replaced
+ * the 12 % cushion of 2026-11-13). Measured where the detector's box error
+ * lives, so it is scaled up to saved-frame pixels by `cropMarginForFrame`.
+ */
+export const CROP_PADDING_INPUT_PX = 8;
+
+/**
+ * The crop margin in saved-frame pixels: `CROP_PADDING_INPUT_PX` with the
+ * letterbox scale undone (a 1280 px frame on a 640 input has scale 0.5, so
+ * 8 px becomes 16). Without a scale the margin is used as it is.
+ */
+export function cropMarginForFrame(
+  letterboxScale: number | null | undefined,
+  inputPx: number = CROP_PADDING_INPUT_PX,
+): number {
+  return letterboxScale && letterboxScale > 0 ? inputPx / letterboxScale : inputPx;
+}
 
 /**
  * Orientations ML Kit reads each crop in. Sidewall text runs around the tyre,
@@ -23,20 +41,23 @@ export type CropRotation = (typeof CROP_ROTATIONS)[number];
 export type CropRect = { x1: number; y1: number; x2: number; y2: number };
 
 /**
- * The detector box with `ratio` of its width and height added on every side,
- * in whole pixels, clamped to the frame. Null when nothing is left.
+ * The detector box, axis-aligned, with `margin` saved-frame pixels added on
+ * every side, in whole pixels, clamped to the frame. Null when the box itself
+ * is under a pixel wide or high inside the frame: the margin alone is never
+ * cropped and read.
  */
 export function paddedCropRect(
   rect: PixelRect,
   frame: { width: number; height: number },
-  ratio: number = CROP_PADDING_RATIO,
+  margin: number = CROP_PADDING_INPUT_PX,
 ): CropRect | null {
-  const padX = rect.width * ratio;
-  const padY = rect.height * ratio;
-  const x1 = Math.max(0, Math.floor(rect.x - padX));
-  const y1 = Math.max(0, Math.floor(rect.y - padY));
-  const x2 = Math.min(frame.width, Math.ceil(rect.x + rect.width + padX));
-  const y2 = Math.min(frame.height, Math.ceil(rect.y + rect.height + padY));
+  const insideW = Math.min(frame.width, rect.x + rect.width) - Math.max(0, rect.x);
+  const insideH = Math.min(frame.height, rect.y + rect.height) - Math.max(0, rect.y);
+  if (!(insideW >= 1 && insideH >= 1)) return null;
+  const x1 = Math.max(0, Math.floor(rect.x - margin));
+  const y1 = Math.max(0, Math.floor(rect.y - margin));
+  const x2 = Math.min(frame.width, Math.ceil(rect.x + rect.width + margin));
+  const y2 = Math.min(frame.height, Math.ceil(rect.y + rect.height + margin));
   return x2 - x1 >= 2 && y2 - y1 >= 2 ? { x1, y1, x2, y2 } : null;
 }
 

@@ -41,20 +41,32 @@ export const diagnosticsConfig = {
    * STAGING ONLY (owner request 2026-11-12: testing on a car in an underground
    * car park with a Release build and no console). Keeps the last 300
    * `[SidewallOCR]` and `[TreadWear]` lines in memory, in every build, and
-   * shows "Copy logs" on Tyre result (`src/utils/debugLogBuffer.ts`; removed
-   * from Sidewall captured on 2026-11-13). The lines include raw sidewall OCR text.
+   * shows "Copy logs" on Tyre result and, inside the collapsed "Developer debug"
+   * section, on Sidewall captured (`src/utils/debugLogBuffer.ts`; removed there
+   * on 2026-11-13, restored 2026-11-14). The lines include raw sidewall OCR text.
    * Nothing is written to disk or sent; they leave the phone only when copied.
    * Console logging still follows the two flags above.
    * MUST be false for any store build (docs/RELEASE_CHECKLIST.md).
    */
   enableStagingLogs: true,
   /**
-   * `[SidewallDetector]` logs (owner task 2026-11-13, Stage 1 of the YOLO11n-seg
-   * sidewall text detector): model load and delegate, tensor shapes, per-frame
+   * `[SidewallDetector]` logs (owner task 2026-11-13, Stage 1 of the sidewall
+   * text detector; YOLOX-Nano since 2026-11-14): model load and delegate, tensor shapes, per-frame
    * timings, raw output value ranges, and every box. No frame paths, plates or
    * OCR text are logged; frames are referred to by index. On in every build
    * while the detector is verified on phones. Turn off for store builds
    * (docs/RELEASE_CHECKLIST.md).
    */
   sidewallDetectorLogs: true,
+  /**
+   * STAGING ONLY (owner task 2026-11-13, Stage 1; removed 2026-11-13, restored
+   * 2026-11-14). Adds the "Sidewall text detector" card to the collapsed
+   * "Developer debug" section on Sidewall captured: the saved frame with the
+   * detector's boxes, labels and scores drawn on it, a readout of inference
+   * time, tensor shapes and raw value ranges, and the crop reads. The card
+   * runs its detector pass only once the section is opened. It is a
+   * diagnostics view, not a result: nothing on it fills a field. MUST be
+   * false for any store build (docs/RELEASE_CHECKLIST.md).
+   */
+  sidewallDetectorDebugCard: true,
 } as const;

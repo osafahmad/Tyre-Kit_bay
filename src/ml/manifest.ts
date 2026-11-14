@@ -123,31 +123,26 @@ export type SsdDetectorManifestEntry = ModelEntryBase & {
 };
 
 /**
- * Ultralytics YOLO segmentation head exported without NMS (`end2end: false`):
- * one tensor `[1, 4 + labels + maskCoefficients, anchors]` (cx, cy, w, h, one
- * sigmoid score per label, then the mask coefficients, attribute-major) and
- * one of mask prototypes `[1, maskCoefficients, H, W]`. Decoding and NMS are
- * done by the app (`decodeYoloSegOutput` in inference/yoloSeg.ts). Masks are
- * not decoded yet (Stage 4); the coefficients are kept with each detection.
+ * YOLOX detector exported with its head already decoded and no NMS: one
+ * tensor `[1, 4 + labels, anchors]` (cx, cy, w, h, then one score per label,
+ * attribute-major). The grid offsets and strides are applied inside the graph
+ * and each score is objectness × class probability, so the app only
+ * thresholds and runs NMS (`decodeYoloxOutput` in inference/yolox.ts). Boxes
+ * only: there are no mask outputs.
  */
-export type YoloSegDetectorManifestEntry = ModelEntryBase & {
-  outputFormat: 'yolo_seg_raw';
+export type YoloxDetectorManifestEntry = ModelEntryBase & {
+  outputFormat: 'yolox_decoded';
   outputType: TensorDType;
   /** Required when `outputType` is uint8 or int8. */
   outputQuantization: Quantization | null;
-  /** Output tensors by role, in the model's output order (detections first). */
+  /** The single output tensor. */
   outputs: {
     detections: { name: string; shape: number[] };
-    prototypes: { name: string; shape: number[] };
   };
-  /** Mask coefficients per anchor (= prototype channels), 32 for Ultralytics seg heads. */
-  maskCoefficients: number;
   /**
-   * How the 4 box values are expressed. Ultralytics TFLite exports scale boxes
-   * to 0–1 of the input (`_NormalizeCoords` in the graph); other exports give
-   * input pixels. The decoder reads the real range at run time and reports a
-   * mismatch (`[SidewallDetector]` log and the staging card), so a wrong
-   * value here is visible, not silent.
+   * How the 4 box values are expressed: input pixels, or 0–1 of the input.
+   * The decoder reads the real range at run time and reports a mismatch
+   * (`[SidewallDetector]` log), so a wrong value here is visible, not silent.
    */
   boxFormat: 'cxcywh_normalised' | 'cxcywh_pixels';
   /** Overlapping boxes of the same label above this IoU are merged by NMS. */
@@ -172,14 +167,14 @@ export type ModelManifest = {
    * saved sidewall frame, so OCR can read each crop (Stage 2+). Optional:
    * without it the whole-frame ML Kit flow in `sidewallReader.ts` runs as before.
    */
-  sidewallText: YoloSegDetectorManifestEntry | null;
+  sidewallText: YoloxDetectorManifestEntry | null;
 };
 
-/** Keys whose entries are `YoloSegDetectorManifestEntry`. */
-export const YOLO_SEG_MODELS = ['sidewallText'] as const satisfies readonly ModelKey[];
+/** Keys whose entries are `YoloxDetectorManifestEntry`. */
+export const YOLOX_MODELS = ['sidewallText'] as const satisfies readonly ModelKey[];
 
-export function isYoloSegModel(key: ModelKey): key is (typeof YOLO_SEG_MODELS)[number] {
-  return (YOLO_SEG_MODELS as readonly ModelKey[]).includes(key);
+export function isYoloxModel(key: ModelKey): key is (typeof YOLOX_MODELS)[number] {
+  return (YOLOX_MODELS as readonly ModelKey[]).includes(key);
 }
 
 /** Keys whose entries are `SsdDetectorManifestEntry`. */
@@ -279,30 +274,31 @@ export const modelManifest: ModelManifest = {
     acceleration: { ios: [] },
   },
   /**
-   * `sidewall_detector.tflite`, supplied by the owner 2026-11-13 (the task
-   * named it `best.tflite`; it is bundled under this name). Ultralytics
-   * 8.4.211 YOLO11n-seg, `task: segment`, `end2end: false`, trained on the
-   * Roboflow `tyre-to-text` v3 dataset (CC BY 4.0, docs/LICENSES.md).
+   * `sidewall_detector.tflite`, replaced by the owner 2026-11-14: YOLOX-Nano
+   * (Megvii-BaseDetection/YOLOX, Apache-2.0), boxes only. It replaces the
+   * AGPL-3.0 Ultralytics YOLO11n-seg file of 2026-11-13 (DECISIONS.md). Trained
+   * on the Roboflow `tyre-to-text` v3 dataset (CC BY 4.0, docs/LICENSES.md).
+   * File SHA-256 b887b3601cc1c588dd3b837fac1170865d2416c61dc17f4db4bdf0e3f1ec1bc8.
    * - Tensors read from the file (`__tests__/manifest.test.ts`): input
-   *   `serving_default_args_0` `[1, 3, 640, 640]` float32 NCHW; outputs
-   *   `[1, 40, 8400]` (4 box + 4 class + 32 mask coefficients × 8400 anchors
-   *   = 80² + 40² + 20²) and `[1, 32, 160, 160]` (mask prototypes), float32.
-   *   Embedded metadata: names 0 Brand, 1 DOT, 2 Model, 3 Size; imgsz 640.
-   * - Preprocessing (owner spec 2026-11-13, Ultralytics defaults): letterbox
-   *   with grey 114, RGB / 255.
-   * - `boxFormat`: the graph contains Ultralytics' `_NormalizeCoords`, so
-   *   boxes are expected 0–1 of the input. The real range is checked on the
-   *   phone at run time (Stage 1 readout) and this value corrected if needed.
-   * - Thresholds are STARTING VALUES, not measured: confidence 0.25 is the
-   *   Ultralytics default; IoU 0.45 is the owner's earlier detector value
-   *   (2026-11-06); 300 is the Ultralytics default. The dataset is 424
-   *   flat-tyre images, so tune these on mounted tyres (Stage 1 phone test).
-   * - LICENCE: the model is an Ultralytics AGPL-3.0 export (file metadata).
-   *   Same release blocker as the detector removed on 2026-11-10 (DECISIONS.md).
+   *   `serving_default_args_0` `[1, 3, 640, 640]` float32 NCHW; one output
+   *   `[1, 8, 8400]` float32 (4 box + 4 class × 8400 anchors = 80² + 40² + 20²).
+   *   The file has no embedded labels or metadata.
+   * - From the owner's model card (docs/MODEL_CARD.md,
+   *   docs/sidewall_detector.metadata.json): classes 0 Brand, 1 DOT, 2 Model,
+   *   3 Size; letterbox with grey 114, RGB 0–1; output is cx, cy, w, h in
+   *   640 × 640 pixels, then 4 scores that already are objectness × class
+   *   probability; confidence 0.25 and NMS IoU 0.45.
+   * - `maxDetections` 300 is NOT in the model card. It is the app's cap carried
+   *   over from the previous entry, far above what one sidewall frame holds.
+   * - `boxFormat` and the RGB 0–1 input are the card's description of the
+   *   export. The real box range is checked on the phone at run time
+   *   (`[SidewallDetector]` readout) and this value corrected if needed.
+   * Not yet run on a phone: boxes, thresholds and delegates still need the
+   * Stage 1–3 phone tests repeated with this file.
    */
   sidewallText: {
     file: require('../../assets/models/sidewall_detector.tflite'),
-    version: 'yolo11n-seg-tyre-to-text-v3-2026-11-13',
+    version: 'yolox-nano-tyre-to-text-v3-2026-11-14',
     inputShape: [1, 3, 640, 640],
     inputLayout: 'NCHW',
     inputType: 'float32',
@@ -313,15 +309,13 @@ export const modelManifest: ModelManifest = {
     inputQuantization: null,
     labels: ['Brand', 'DOT', 'Model', 'Size'],
     confidenceThreshold: 0.25,
-    outputFormat: 'yolo_seg_raw',
+    outputFormat: 'yolox_decoded',
     outputType: 'float32',
     outputQuantization: null,
     outputs: {
-      detections: { name: 'serving_default_output_0_output', shape: [1, 40, 8400] },
-      prototypes: { name: 'serving_default_output_1_output', shape: [1, 32, 160, 160] },
+      detections: { name: 'serving_default_output_0_output', shape: [1, 8, 8400] },
     },
-    maskCoefficients: 32,
-    boxFormat: 'cxcywh_normalised',
+    boxFormat: 'cxcywh_pixels',
     iouThreshold: 0.45,
     maxDetections: 300,
   },

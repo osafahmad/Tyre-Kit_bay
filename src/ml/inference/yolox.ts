@@ -1,46 +1,45 @@
-import type { YoloSegDetectorManifestEntry } from '../manifest';
+import type { YoloxDetectorManifestEntry } from '../manifest';
 import { nonMaxSuppression, readScores, tensorSpecFromManifest } from './tensorUtils';
 import type { Detection, LetterboxInfo, PixelRect } from './types';
 
-// Ultralytics YOLO segmentation output decoding (Stage 1: boxes only). Every
-// value comes from the manifest entry or the tensors; no model values live here.
+// YOLOX detection output decoding (boxes only, no masks). Every value comes
+// from the manifest entry or the tensor; no model values live here.
+//
+// The bundled export decodes its own head: the grid offsets and strides are
+// already applied in the graph and objectness is already multiplied into the
+// class scores (docs/MODEL_CARD.md). So the tensor holds finished cx, cy, w, h
+// and this file only thresholds, converts to corners and runs NMS. Applying
+// the grid decode a second time here would move every box.
 
-/** Ultralytics detection heads predict on the P3, P4 and P5 feature maps (strides 8, 16, 32). */
-export const YOLO_STRIDES = [8, 16, 32] as const;
+/** YOLOX heads predict on three feature maps (strides 8, 16, 32). */
+export const YOLOX_STRIDES = [8, 16, 32] as const;
 
-/** Anchors a YOLO head makes for an input size, without running it. */
-export function yoloAnchorCount(width: number, height: number): number {
-  return YOLO_STRIDES.reduce((sum, s) => sum + Math.floor(width / s) * Math.floor(height / s), 0);
+/** Anchor points a YOLOX head makes for an input size (one per grid cell), without running it. */
+export function yoloxAnchorCount(width: number, height: number): number {
+  return YOLOX_STRIDES.reduce((sum, s) => sum + Math.floor(width / s) * Math.floor(height / s), 0);
 }
 
-export type YoloBoxFormat = YoloSegDetectorManifestEntry['boxFormat'];
+export type YoloxBoxFormat = YoloxDetectorManifestEntry['boxFormat'];
 
-/** One detection after NMS, in model-input pixels, with its mask coefficients (Stage 4 uses them). */
-export type SegDetection = Detection & { maskCoefficients: Float32Array };
-
-export type YoloSegDecodeOptions = {
-  /** Overrides for the staging card; the manifest values are the defaults. */
+export type YoloxDecodeOptions = {
+  /** Overrides for diagnostics; the manifest values are the defaults. */
   confidenceThreshold?: number;
   iouThreshold?: number;
   maxDetections?: number;
-  boxFormat?: YoloBoxFormat;
+  boxFormat?: YoloxBoxFormat;
 };
 
 /**
- * Raw value ranges of the detections output, for the Stage 1 readout. Read
+ * Raw value ranges of the output, for the `[SidewallDetector]` readout. Read
  * over every anchor before any threshold, so they describe what the model
  * really returns (e.g. whether boxes are 0–1 or pixels).
  */
-export type YoloSegOutputStats = {
+export type YoloxOutputStats = {
   anchors: number;
   /** Min and max over the 4 box rows (cx, cy, w, h). */
   boxes: { min: number; max: number };
   /** Highest score of each label over all anchors, in `labels` order. */
   classMax: Record<string, number>;
-  /** Min and max over the mask coefficient rows. */
-  maskCoefficients: { min: number; max: number };
-  /** Min and max of the prototype tensor (null when it wasn't read). */
-  prototypes: { min: number; max: number } | null;
   /** Anchors whose best class score reaches the threshold (before NMS). */
   anchorsAboveThreshold: number;
 };
@@ -61,7 +60,7 @@ const range = (values: Float32Array, from: number, to: number): Range => {
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 const roundRange = (r: Range): Range => ({ min: round3(r.min), max: round3(r.max) });
 
-function readDetections(output: ArrayBuffer, entry: YoloSegDetectorManifestEntry) {
+function readDetections(output: ArrayBuffer, entry: YoloxDetectorManifestEntry) {
   const [, attributes, anchors] = entry.outputs.detections.shape;
   const values = readScores(output, entry.outputType, entry.outputQuantization);
   if (values.length !== attributes * anchors) {
@@ -70,13 +69,12 @@ function readDetections(output: ArrayBuffer, entry: YoloSegDetectorManifestEntry
   return { values, attributes, anchors };
 }
 
-/** Value ranges of the raw outputs (see `YoloSegOutputStats`). */
-export function yoloSegOutputStats(
+/** Value ranges of the raw output (see `YoloxOutputStats`). */
+export function yoloxOutputStats(
   detectionsOutput: ArrayBuffer,
-  prototypesOutput: ArrayBuffer | null,
-  entry: YoloSegDetectorManifestEntry,
+  entry: YoloxDetectorManifestEntry,
   confidenceThreshold: number = entry.confidenceThreshold,
-): YoloSegOutputStats {
+): YoloxOutputStats {
   const { values, anchors } = readDetections(detectionsOutput, entry);
   const labels = entry.labels.length;
   const classMax: Record<string, number> = {};
@@ -92,19 +90,10 @@ export function yoloSegOutputStats(
   entry.labels.forEach((label, c) => {
     classMax[label] = round3(range(values, (4 + c) * anchors, (5 + c) * anchors).max);
   });
-  const maskStart = (4 + labels) * anchors;
-  const maskEnd = maskStart + entry.maskCoefficients * anchors;
-  let prototypes: Range | null = null;
-  if (prototypesOutput) {
-    const protos = readScores(prototypesOutput, entry.outputType, entry.outputQuantization);
-    prototypes = roundRange(range(protos, 0, protos.length));
-  }
   return {
     anchors,
     boxes: roundRange(range(values, 0, 4 * anchors)),
     classMax,
-    maskCoefficients: roundRange(range(values, maskStart, maskEnd)),
-    prototypes,
     anchorsAboveThreshold: above,
   };
 }
@@ -115,27 +104,28 @@ export function yoloSegOutputStats(
  * 640 input reach the hundreds. Null when the range decides nothing (e.g. an
  * empty or all-zero output).
  */
-export function inferBoxFormat(stats: Pick<YoloSegOutputStats, 'boxes'>): YoloBoxFormat | null {
+export function inferBoxFormat(stats: Pick<YoloxOutputStats, 'boxes'>): YoloxBoxFormat | null {
   if (!Number.isFinite(stats.boxes.max) || stats.boxes.max <= 0) return null;
   return stats.boxes.max > 1.5 ? 'cxcywh_pixels' : 'cxcywh_normalised';
 }
 
 /**
- * Raw YOLO seg output → boxes in model-input pixels.
- * - Reads `[1, 4 + labels + maskCoefficients, anchors]` attribute-major.
- * - Each anchor takes its best label; the export already applies sigmoid, so
- *   scores are used as they are. Anchors below the confidence threshold and
- *   zero-size boxes are dropped.
- * - Boxes are cx, cy, w, h in 0–1 of the input (`cxcywh_normalised`) or in
- *   input pixels, then clamped to the input.
- * - Greedy NMS per label at `iouThreshold`, at most `maxDetections`
- *   (Ultralytics' default is per class, not class-agnostic).
+ * YOLOX output → boxes in model-input pixels.
+ * - Reads `[1, 4 + labels, anchors]` attribute-major: rows 0–3 are cx, cy, w,
+ *   h, then one score row per label.
+ * - Each anchor takes its best label. The scores already are objectness ×
+ *   class probability, so they are used as they are. Anchors below the
+ *   confidence threshold and zero-size boxes are dropped.
+ * - Boxes are cx, cy, w, h in input pixels (`cxcywh_pixels`, the bundled
+ *   export) or in 0–1 of the input, then clamped to the input.
+ * - Greedy NMS per label at `iouThreshold`, at most `maxDetections` (YOLOX's
+ *   own post-processing is per class too, not class-agnostic).
  */
-export function decodeYoloSegOutput(
+export function decodeYoloxOutput(
   detectionsOutput: ArrayBuffer,
-  entry: YoloSegDetectorManifestEntry,
-  options: YoloSegDecodeOptions = {},
-): SegDetection[] {
+  entry: YoloxDetectorManifestEntry,
+  options: YoloxDecodeOptions = {},
+): Detection[] {
   const { values, anchors } = readDetections(detectionsOutput, entry);
   const labels = entry.labels.length;
   const confidence = options.confidenceThreshold ?? entry.confidenceThreshold;
@@ -146,9 +136,8 @@ export function decodeYoloSegOutput(
   const sx = boxFormat === 'cxcywh_normalised' ? inW : 1;
   const sy = boxFormat === 'cxcywh_normalised' ? inH : 1;
   const clampTo = (v: number, max: number) => (v < 0 ? 0 : v > max ? max : v);
-  const maskStart = 4 + labels;
 
-  const candidates: SegDetection[] = [];
+  const candidates: Detection[] = [];
   for (let j = 0; j < anchors; j++) {
     let best = 0;
     let score = values[4 * anchors + j];
@@ -169,11 +158,7 @@ export function decodeYoloSegOutput(
     const x2 = clampTo(cx + w / 2, inW);
     const y2 = clampTo(cy + h / 2, inH);
     if (!(x2 > x1 && y2 > y1)) continue;
-    const maskCoefficients = new Float32Array(entry.maskCoefficients);
-    for (let m = 0; m < entry.maskCoefficients; m++) {
-      maskCoefficients[m] = values[(maskStart + m) * anchors + j];
-    }
-    candidates.push({ label: entry.labels[best], labelIndex: best, score, x1, y1, x2, y2, maskCoefficients });
+    candidates.push({ label: entry.labels[best], labelIndex: best, score, x1, y1, x2, y2 });
   }
   return nonMaxSuppression(candidates, iouThreshold, maxDetections);
 }

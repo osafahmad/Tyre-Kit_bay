@@ -1,14 +1,14 @@
 import { deleteCropFiles, SidewallTextDetector, type SidewallCropOcrDeps, type SidewallTextDetectorDeps } from '../SidewallTextDetector';
 import { fakeDecoder } from '../../inference/__fixtures__/models';
 import type { InferenceModel, LoadedModel } from '../../inference/types';
-import type { YoloSegDetectorManifestEntry } from '../../manifest';
+import type { YoloxDetectorManifestEntry } from '../../manifest';
 import { recordDebugLog, setDebugLogBuffer, getDebugLogsText, clearDebugLogs } from '../../../utils/debugLogBuffer';
 
-// Synthetic 32 × 32 YOLO seg entry (21 anchors). Test numbers only.
+// Synthetic 32 × 32 YOLOX entry (21 anchors, 4 box + 4 class rows). Test numbers only.
 const ANCHORS = 21;
-const entry: YoloSegDetectorManifestEntry = {
+const entry: YoloxDetectorManifestEntry = {
   file: 1,
-  version: 'test-seg',
+  version: 'test-yolox',
   inputShape: [1, 3, 32, 32],
   inputLayout: 'NCHW',
   inputType: 'float32',
@@ -19,46 +19,40 @@ const entry: YoloSegDetectorManifestEntry = {
   inputQuantization: null,
   labels: ['Brand', 'DOT', 'Model', 'Size'],
   confidenceThreshold: 0.25,
-  outputFormat: 'yolo_seg_raw',
+  outputFormat: 'yolox_decoded',
   outputType: 'float32',
   outputQuantization: null,
   outputs: {
-    detections: { name: 'det', shape: [1, 10, ANCHORS] },
-    prototypes: { name: 'proto', shape: [1, 2, 8, 8] },
+    detections: { name: 'det', shape: [1, 8, ANCHORS] },
   },
-  maskCoefficients: 2,
-  boxFormat: 'cxcywh_normalised',
+  boxFormat: 'cxcywh_pixels',
   iouThreshold: 0.45,
   maxDetections: 300,
 };
 
 /** One anchor (index 0) at the given box with a 0.9 Size score. */
 function detectionsOutput(box: number[]): ArrayBuffer {
-  const v = new Float32Array(10 * ANCHORS);
+  const v = new Float32Array(8 * ANCHORS);
   box.forEach((b, i) => (v[i * ANCHORS] = b));
   v[7 * ANCHORS] = 0.9; // Size
   return v.buffer;
 }
-const protos = () => new Float32Array(2 * 8 * 8).fill(0.5).buffer;
 
-function loaded(run: InferenceModel['run']): LoadedModel<YoloSegDetectorManifestEntry> {
+function loaded(run: InferenceModel['run']): LoadedModel<YoloxDetectorManifestEntry> {
   return {
     key: 'sidewallText',
     entry,
     delegate: 'cpu',
     model: {
       inputs: [{ name: 'in', dataType: 'float32', shape: [1, 3, 32, 32] }],
-      outputs: [
-        { name: 'det', dataType: 'float32', shape: [1, 10, ANCHORS] },
-        { name: 'proto', dataType: 'float32', shape: [1, 2, 8, 8] },
-      ],
+      outputs: [{ name: 'det', dataType: 'float32', shape: [1, 8, ANCHORS] }],
       run,
     },
   };
 }
 
 function detector(
-  model: LoadedModel<YoloSegDetectorManifestEntry> | null,
+  model: LoadedModel<YoloxDetectorManifestEntry> | null,
   decoderSize = { width: 64, height: 32 },
   overrides: Partial<SidewallTextDetectorDeps> = {},
 ) {
@@ -85,7 +79,7 @@ beforeEach(() => {
 });
 
 test('a frame goes through letterbox → run → decode; boxes come back in input and frame pixels with timings', async () => {
-  const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+  const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8])]);
   const { d, created, loadModel } = detector(loaded(run));
   const outcome = await d.detectFrame('frames/a.jpg', 0);
   expect(outcome.status).toBe('done');
@@ -98,11 +92,13 @@ test('a frame goes through letterbox → run → decode; boxes come back in inpu
   expect(r.detections[0]).toMatchObject({ label: 'Size', x1: 8, y1: 12, x2: 24, y2: 20 });
   expect(r.detections[0].frameRect).toEqual({ x: 16, y: 8, width: 32, height: 16 });
   expect(r.timings).toEqual({ decodeMs: expect.any(Number), inferenceMs: expect.any(Number), postMs: expect.any(Number) });
-  expect(r.boxFormat).toEqual({ used: 'cxcywh_normalised', manifest: 'cxcywh_normalised', inferred: 'cxcywh_normalised', overridden: false });
+  expect(r.boxFormat).toEqual({ used: 'cxcywh_pixels', manifest: 'cxcywh_pixels', inferred: 'cxcywh_pixels', overridden: false });
   expect(r.stats.classMax).toEqual({ Brand: 0, DOT: 0, Model: 0, Size: 0.9 });
-  expect(r.stats.prototypes).toEqual({ min: 0.5, max: 0.5 });
+  expect(r.stats).not.toHaveProperty('prototypes');
+  expect(r.stats).not.toHaveProperty('maskCoefficients');
+  expect(r.detections[0]).not.toHaveProperty('maskCoefficients');
   expect(r.thresholds).toEqual({ confidence: 0.25, iou: 0.45, maxDetections: 300 });
-  expect(r.tensors.outputs.map(o => o.name)).toEqual(['det', 'proto']);
+  expect(r.tensors.outputs.map(o => o.name)).toEqual(['det']);
   expect(r.delegate).toBe('cpu');
   expect(r.loadMs).toEqual(expect.any(Number));
   expect(created.every(img => img.dispose.mock.calls.length === 1)).toBe(true);
@@ -112,22 +108,30 @@ test('a frame goes through letterbox → run → decode; boxes come back in inpu
   expect(loadModel).toHaveBeenCalledTimes(1);
 });
 
-test('pixel-range boxes override a normalised manifest and are flagged, so a wrong boxFormat is visible', async () => {
-  const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8]), protos()]);
+test('0–1 range boxes override a pixel manifest and are flagged, so a wrong boxFormat is visible', async () => {
+  const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25])]);
   const { d } = detector(loaded(run));
   const outcome = await d.detectFrame('frames/a.jpg', 0);
   if (outcome.status !== 'done') throw new Error(outcome.status);
   expect(outcome.result.boxFormat).toEqual({
-    used: 'cxcywh_pixels',
-    manifest: 'cxcywh_normalised',
-    inferred: 'cxcywh_pixels',
+    used: 'cxcywh_normalised',
+    manifest: 'cxcywh_pixels',
+    inferred: 'cxcywh_normalised',
     overridden: true,
   });
   expect(outcome.result.detections[0]).toMatchObject({ x1: 8, y1: 12, x2: 24, y2: 20 });
 });
 
-test('card overrides for thresholds and box format are passed through', async () => {
-  const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+test('a second output tensor (the old seg export’s prototypes) is ignored; only the detections are read', async () => {
+  const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8]), new Float32Array(128).buffer]);
+  const { d } = detector(loaded(run));
+  const outcome = await d.detectFrame('frames/a.jpg', 0);
+  if (outcome.status !== 'done') throw new Error(outcome.status);
+  expect(outcome.result.detections).toHaveLength(1);
+});
+
+test('overrides for thresholds are passed through', async () => {
+  const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8])]);
   const { d } = detector(loaded(run));
   const outcome = await d.detectFrame('frames/a.jpg', 0, { confidenceThreshold: 0.95 });
   if (outcome.status !== 'done') throw new Error(outcome.status);
@@ -170,7 +174,7 @@ test('a model with no output is a failure', async () => {
 test('staging buffer: per-frame lines name frames by index and carry no path', async () => {
   setDebugLogBuffer(true);
   recordDebugLog('marker');
-  const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+  const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8])]);
   const { d } = detector(loaded(run));
   await d.detectFrame('frames/secret-plate.jpg', 2);
   const text = getDebugLogsText();
@@ -211,8 +215,8 @@ describe('Stage 2: readCrops', () => {
     return outcome.result;
   }
 
-  test('each box is padded, cropped from the saved frame in 4 orientations, read, and the best kept; turned crops are deleted', async () => {
-    const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+  test('each box is cropped axis-aligned with the pixel margin from the saved frame in 4 orientations, read, and the best kept; turned crops are deleted', async () => {
+    const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8])]);
     const ocr = fakeOcr({ 0: ['ILl'], 90: ['215/60 R17 96H'], [-90]: ['H96'], 180: [] });
     const det = detector(loaded(run), { width: 64, height: 32 }, { ocr });
     const result = await frameResult(det);
@@ -223,8 +227,8 @@ describe('Stage 2: readCrops', () => {
     if (crops.status !== 'done') return;
     expect(crops.crops).toHaveLength(1);
     const c = crops.crops[0];
-    // 12 % of 32 × 16 is 3.84 × 1.92: floor/ceil → 12,6 .. 52,26.
-    expect(c.crop).toEqual({ x1: 12, y1: 6, x2: 52, y2: 26 });
+    // 8 input px at letterbox scale 0.5 is 16 frame px on every side, clamped to the 64 × 32 frame.
+    expect(c.crop).toEqual({ x1: 0, y1: 0, x2: 64, y2: 32 });
     expect(c.label).toBe('Size');
     expect(ocr.cropToTempFile.mock.calls.map(call => call[2])).toEqual([0, 90, -90, 180]);
     expect(ocr.cropToTempFile.mock.calls.every(call => call[0] === '/docs/frames/a.jpg')).toBe(true);
@@ -236,16 +240,16 @@ describe('Stage 2: readCrops', () => {
     ]);
     expect(c.best?.rotation).toBe(90);
     expect(c.best?.reading.size).toBe('215/60 R17');
-    expect(c.thumbnailPath).toBe('/tmp/crop_12_0.jpg');
-    expect(ocr.deleted.sort()).toEqual(['/tmp/crop_12_-90.jpg', '/tmp/crop_12_180.jpg', '/tmp/crop_12_90.jpg']);
+    expect(c.thumbnailPath).toBe('/tmp/crop_0_0.jpg');
+    expect(ocr.deleted.sort()).toEqual(['/tmp/crop_0_-90.jpg', '/tmp/crop_0_180.jpg', '/tmp/crop_0_90.jpg']);
 
     const unlink = jest.fn(async () => {});
     await deleteCropFiles(crops.crops, unlink);
-    expect(unlink).toHaveBeenCalledWith('/tmp/crop_12_0.jpg');
+    expect(unlink).toHaveBeenCalledWith('/tmp/crop_0_0.jpg');
   });
 
   test('a failed orientation is left out; the others still count', async () => {
-    const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+    const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8])]);
     const ocr = fakeOcr({ 0: ['215/60 R17'], 180: ['x'] });
     ocr.recognizeLines = async path => {
       if (/_90\.jpg$/.test(path)) throw new Error('ML Kit choked');
@@ -257,11 +261,11 @@ describe('Stage 2: readCrops', () => {
     expect(crops.crops[0].reads.map(r => r.rotation)).toEqual([0, -90, 180]);
     expect(crops.crops[0].best?.rotation).toBe(0);
     // The failed orientation's file is still deleted.
-    expect(ocr.deleted).toContain('/tmp/crop_12_90.jpg');
+    expect(ocr.deleted).toContain('/tmp/crop_0_90.jpg');
   });
 
   test('no ML Kit → ocr_missing; no boxes → no_detections', async () => {
-    const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+    const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8])]);
     const det = detector(loaded(run), { width: 64, height: 32 }, { ocr: fakeOcr({}, false) });
     const result = await frameResult(det);
     expect(await det.d.readCrops(result, 0)).toEqual({ status: 'unavailable', reason: 'ocr_missing' });
@@ -277,7 +281,7 @@ describe('Stage 2: readCrops', () => {
     const log = jest.spyOn(console, 'log').mockImplementation(() => {});
     try {
       setSidewallDetectorDebug(true, false);
-      const run = jest.fn(async () => [detectionsOutput([0.5, 0.5, 0.5, 0.25]), protos()]);
+      const run = jest.fn(async () => [detectionsOutput([16, 16, 16, 8])]);
       const det = detector(loaded(run), { width: 64, height: 32 }, { ocr: fakeOcr({ 0: ['SECRET-TEXT 215/60 R17'] }) });
       await det.d.readCrops(await frameResult(det), 0);
       expect(getDebugLogsText()).toMatch(/SECRET-TEXT/);

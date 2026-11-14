@@ -2,23 +2,23 @@ import { absoluteFramePath } from '../../features/capture/frameFiles';
 import { defaultModelLoaderDeps, loadModel, type ModelLoaderDeps } from '../inference/modelLoader';
 import { localFramePath, type PipelineDeps } from '../inference/pipeline';
 import { imageFileToModelInput, tensorSpecFromManifest, type ImageDecoder } from '../inference/tensorUtils';
-import type { LetterboxInfo, LoadedModel, ModelDelegate, ModelLoadFailure, PixelRect, TensorInfo } from '../inference/types';
+import type { Detection, LetterboxInfo, LoadedModel, ModelDelegate, ModelLoadFailure, PixelRect, TensorInfo } from '../inference/types';
 import {
-  decodeYoloSegOutput,
+  decodeYoloxOutput,
   detectionToFrameRect,
   inferBoxFormat,
-  yoloSegOutputStats,
-  type SegDetection,
-  type YoloBoxFormat,
-  type YoloSegDecodeOptions,
-  type YoloSegOutputStats,
-} from '../inference/yoloSeg';
-import { modelManifest, type ModelManifest, type YoloSegDetectorManifestEntry } from '../manifest';
+  yoloxOutputStats,
+  type YoloxBoxFormat,
+  type YoloxDecodeOptions,
+  type YoloxOutputStats,
+} from '../inference/yolox';
+import { modelManifest, type ModelManifest, type YoloxDetectorManifestEntry } from '../manifest';
 import { ocrConfig } from '../../config/capture';
 import { isOcrAvailable, recognizeLines } from '../ocr/ocr';
 import type { OcrLineLike } from '../ocr/textCandidates';
 import {
   bestCropRead,
+  cropMarginForFrame,
   cropRead,
   CROP_ROTATIONS,
   judgeCrops,
@@ -30,14 +30,15 @@ import {
 } from './sidewallCropOcr';
 import { sidewallDetectorLog } from './sidewallDetectorDebug';
 
-// Runs the YOLO11n-seg sidewall text detector on one saved sidewall frame,
-// after capture only. Stage 1 (owner task 2026-11-13): boxes, scores, timings
-// and raw tensor ranges for the staging card on Sidewall captured. Stage 2:
-// each box is cropped from the saved frame with a cushion and read by ML Kit
-// in four orientations (`readCrops`). Nothing here fills a sidewall field;
-// connecting the crop text to the fields is Stage 3.
+// Runs the YOLOX-Nano sidewall text detector on one saved sidewall frame,
+// after capture only (owner task 2026-11-14; it replaced the YOLO11n-seg
+// model of 2026-11-13). Stage 1: boxes, scores, timings and raw tensor ranges
+// for the `[SidewallDetector]` log. Stage 2: each box is cropped from the
+// saved frame, axis-aligned with a small pixel margin, and read by ML Kit in
+// four orientations (`readCrops`). Nothing here fills a sidewall field;
+// connecting the crop text to the fields is Stage 3 (`sidewallCropMerge.ts`).
 
-export type SidewallTextDetection = SegDetection & {
+export type SidewallTextDetection = Detection & {
   /** The box in the saved frame's pixels (letterbox undone), or null if it lies in the padding. */
   frameRect: PixelRect | null;
 };
@@ -49,9 +50,9 @@ export type SidewallTextFrameResult = {
   letterbox: LetterboxInfo | null;
   detections: SidewallTextDetection[];
   timings: { decodeMs: number; inferenceMs: number; postMs: number };
-  stats: YoloSegOutputStats;
+  stats: YoloxOutputStats;
   /** The format the boxes were decoded with, and whether the raw range disagreed with the manifest. */
-  boxFormat: { used: YoloBoxFormat; manifest: YoloBoxFormat; inferred: YoloBoxFormat | null; overridden: boolean };
+  boxFormat: { used: YoloxBoxFormat; manifest: YoloxBoxFormat; inferred: YoloxBoxFormat | null; overridden: boolean };
   thresholds: { confidence: number; iou: number; maxDetections: number };
   tensors: { inputs: TensorInfo[]; outputs: TensorInfo[] };
   delegate: ModelDelegate | 'cpu';
@@ -107,7 +108,7 @@ export type SidewallCropOcrDeps = {
 export type SidewallTextDetectorDeps = {
   /** The model, or the load failure. */
   loadModel(): Promise<
-    { ok: true; model: LoadedModel<YoloSegDetectorManifestEntry> } | { ok: false; failure: ModelLoadFailure }
+    { ok: true; model: LoadedModel<YoloxDetectorManifestEntry> } | { ok: false; failure: ModelLoadFailure }
   >;
   pipeline: PipelineDeps;
   /** Stage 2 crop OCR. Without it `readCrops` reports `ocr_missing`. */
@@ -119,7 +120,7 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 export class SidewallTextDetector {
-  private model: Promise<LoadedModel<YoloSegDetectorManifestEntry> | null> | null = null;
+  private model: Promise<LoadedModel<YoloxDetectorManifestEntry> | null> | null = null;
   private lastFailure: ModelLoadFailure | null = null;
   private loadMs: number | null = null;
   private readonly now: () => number;
@@ -134,7 +135,7 @@ export class SidewallTextDetector {
   }
 
   /** Loads the model once. A failed load is retried on the next call. */
-  async load(): Promise<LoadedModel<YoloSegDetectorManifestEntry> | null> {
+  async load(): Promise<LoadedModel<YoloxDetectorManifestEntry> | null> {
     const fresh = this.model === null;
     const started = this.now();
     if (fresh) sidewallDetectorLog('model load started');
@@ -183,7 +184,7 @@ export class SidewallTextDetector {
   async detectFrame(
     frame: string,
     frameIndex: number,
-    options: YoloSegDecodeOptions = {},
+    options: YoloxDecodeOptions = {},
   ): Promise<SidewallTextDetectOutcome> {
     const label = `frame ${frameIndex + 1}`;
     let path: string;
@@ -214,17 +215,17 @@ export class SidewallTextDetector {
       // Letterbox to 640 × 640 on grey 114, RGB / 255, NCHW float32 (from the manifest); every image is disposed.
       const input = await imageFileToModelInput(path, spec, this.deps.pipeline.decoder);
       const t1 = this.now();
-      // Outputs come back in the model's order: detections, then prototypes (checked at load).
-      const [detectionsOut, prototypesOut] = await model.run([input.tensor]);
+      // One output: `[1, 4 + labels, anchors]` (checked against the manifest at load).
+      const [detectionsOut] = await model.run([input.tensor]);
       const t2 = this.now();
       if (!detectionsOut) throw new Error('The sidewall text detector returned no output.');
-      const stats = yoloSegOutputStats(detectionsOut, prototypesOut ?? null, entry, thresholds.confidence);
+      const stats = yoloxOutputStats(detectionsOut, entry, thresholds.confidence);
       const inferred = inferBoxFormat(stats);
       const manifestFormat = entry.boxFormat;
-      // The manifest's box format is a reading of the export graph. If the raw
-      // range clearly says otherwise, decode with what the tensor shows and say so.
+      // The manifest's box format comes from the model card. If the raw range
+      // clearly says otherwise, decode with what the tensor shows and say so.
       const used = options.boxFormat ?? (inferred && inferred !== manifestFormat ? inferred : manifestFormat);
-      const decoded = decodeYoloSegOutput(detectionsOut, entry, { ...options, boxFormat: used });
+      const decoded = decodeYoloxOutput(detectionsOut, entry, { ...options, boxFormat: used });
       const letterbox = input.letterbox;
       const detections: SidewallTextDetection[] = decoded.map(d => ({
         ...d,
@@ -268,8 +269,8 @@ export class SidewallTextDetector {
 
   /**
    * Stage 2: every detection of a frame result, cropped from the saved frame
-   * with `CROP_PADDING_RATIO` and read by ML Kit at 0°, 90° CW, 90° CCW and
-   * 180°. The 0° crop is kept as a temporary JPEG for the card; the caller
+   * as an axis-aligned box with a `CROP_PADDING_INPUT_PX` margin and read by
+   * ML Kit at 0°, 90° CW, 90° CCW and 180°. The 0° crop is kept as a temporary JPEG for the card; the caller
    * deletes it with `deleteCropFiles`. Never throws: a crop or orientation
    * that fails is logged and left out.
    */
@@ -289,8 +290,9 @@ export class SidewallTextDetector {
       return { status: 'unavailable', reason: 'no_detections' };
     }
     const crops: Omit<SidewallCropResult, 'verified' | 'ignored' | 'overlappedBy'>[] = [];
+    const margin = cropMarginForFrame(result.letterbox?.scale);
     for (const [i, d] of result.detections.entries()) {
-      const crop = d.frameRect ? paddedCropRect(d.frameRect, result.source) : null;
+      const crop = d.frameRect ? paddedCropRect(d.frameRect, result.source, margin) : null;
       if (!crop) {
         sidewallDetectorLog(`${label} box ${i + 1} (${d.label}): no crop (box in the padding)`);
         continue;
@@ -437,8 +439,8 @@ export function defaultSidewallTextDetectorDeps(
   loaderDeps: () => ModelLoaderDeps = defaultModelLoaderDeps,
 ): SidewallTextDetectorDeps {
   return {
-    // Platform defaults: Core ML then CPU on iOS, GPU then CPU on Android. Whether
-    // Core ML accepts the Segment head is part of the Stage 1 phone test.
+    // Platform defaults: Core ML then CPU on iOS, GPU then CPU on Android. Which
+    // delegate accepts the YOLOX graph is part of the Stage 1 phone test.
     loadModel: async () => {
       const r = await loadModel('sidewallText', manifest, { ...loaderDeps(), log: sidewallDetectorLog });
       if (!r.ok) sidewallDetectorLog('model load failed', r.failure);

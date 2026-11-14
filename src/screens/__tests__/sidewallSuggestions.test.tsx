@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { SidewallCapturedScreen } from '../SidewallCaptured/SidewallCapturedScreen';
 import { useInspectionStore } from '../../features/inspection/store';
 import type { SidewallReadOutcome } from '../../ml/sidewallReader';
+import { setDebugLogBuffer } from '../../utils/debugLogBuffer';
 
 // The reader is mocked; its whole-frame OCR → filter logic is tested in src/ml/__tests__/sidewallReader.test.ts.
 const mockReader = {
@@ -110,18 +111,50 @@ test('read values fill the fields as suggestions and are saved; the user can sti
   expect(details(tyreId).make).toBe('Michelin');
 });
 
-test('no developer diagnostics on Sidewall captured, with the staging flags as shipped (2026-11-13)', async () => {
-  const tyreId = seedTyre();
-  mockReader.read.mockResolvedValue(done({ size: '205/55 R16' }));
-  await renderScreen(tyreId);
-  await flush();
-  expect(screen.queryByText('Copy logs')).toBeNull();
-  expect(screen.queryByText(/STAGING/)).toBeNull();
-  expect(screen.queryByTestId('sidewall-detector-card')).toBeNull();
-  // The actions that remain.
-  expect(screen.getByRole('button', { name: 'Scan tread' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Scan sidewall again' })).toBeTruthy();
-  expect(screen.getAllByRole('button', { name: /^Edit / })).toHaveLength(4);
+describe('Developer debug section (staging, restored 2026-11-14)', () => {
+  afterEach(() => setDebugLogBuffer(false));
+
+  test('collapsed by default: no Copy logs, no detector card, no extra detector pass', async () => {
+    const tyreId = seedTyre();
+    mockReader.read.mockResolvedValue(done({ size: '205/55 R16' }));
+    mockDetectFrame.mockClear();
+    await renderScreen(tyreId);
+    await flush();
+    const calls = mockDetectFrame.mock.calls.length; // the crop pass only
+    const toggle = screen.getByRole('button', { name: 'Developer debug' });
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false });
+    expect(screen.queryByText('Copy logs')).toBeNull();
+    expect(screen.queryByText(/STAGING/)).toBeNull();
+    expect(screen.queryByTestId('sidewall-detector-card')).toBeNull();
+    await flush();
+    expect(mockDetectFrame).toHaveBeenCalledTimes(calls);
+    // The screen's own actions are unchanged.
+    expect(screen.getByRole('button', { name: 'Scan tread' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Scan sidewall again' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /^Edit / })).toHaveLength(4);
+  });
+
+  test('opening it shows Copy logs and the detector card; closing it hides them again', async () => {
+    setDebugLogBuffer(true);
+    const tyreId = seedTyre();
+    mockReader.read.mockResolvedValue(done({ size: '205/55 R16' }));
+    await renderScreen(tyreId);
+    await flush();
+    mockDetectFrame.mockClear();
+    await fireEvent.press(screen.getByRole('button', { name: 'Developer debug' }));
+    await flush();
+    expect(screen.getByRole('button', { name: 'Developer debug' }).props.accessibilityState).toEqual({ expanded: true });
+    expect(screen.getByText('Copy logs')).toBeTruthy();
+    expect(screen.getByTestId('sidewall-detector-card')).toBeTruthy();
+    expect(screen.getByText('STAGING · Sidewall text detector')).toBeTruthy();
+    expect(screen.getByText('Frame 1 of 2')).toBeTruthy();
+    expect(mockDetectFrame).toHaveBeenCalledWith('frames/a.jpg', 0); // the card's own pass, first frame
+    expect(screen.getByText(/Model not loaded/)).toBeTruthy();
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Developer debug' }));
+    expect(screen.queryByText('Copy logs')).toBeNull();
+    expect(screen.queryByTestId('sidewall-detector-card')).toBeNull();
+  });
 });
 
 test('fields the user typed in while reading are not overwritten', async () => {

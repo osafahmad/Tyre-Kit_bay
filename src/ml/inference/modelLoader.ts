@@ -9,17 +9,17 @@ import {
 import type { TyreStatus } from '../../features/inspection/types';
 import {
   isSsdModel,
-  isYoloSegModel,
+  isYoloxModel,
   type ClassifierManifestEntry,
   type DamageManifestEntry,
   type ModelKey,
   type ModelManifest,
   type SsdDetectorManifestEntry,
   type TreadManifestEntry,
-  type YoloSegDetectorManifestEntry,
+  type YoloxDetectorManifestEntry,
 } from '../manifest';
 import { ssdAnchorCount } from './tensorUtils';
-import { yoloAnchorCount } from './yoloSeg';
+import { yoloxAnchorCount } from './yolox';
 import type {
   InferenceModel,
   LoadedModel,
@@ -159,7 +159,7 @@ export function validateManifestEntry(
     }
   }
   if (isSsdModel(key)) p.push(...validateSsdEntry(entry as SsdDetectorManifestEntry));
-  if (isYoloSegModel(key)) p.push(...validateYoloSegEntry(entry as YoloSegDetectorManifestEntry));
+  if (isYoloxModel(key)) p.push(...validateYoloxEntry(entry as YoloxDetectorManifestEntry));
   if (key === 'tread') {
     const t = entry as TreadManifestEntry;
     for (const label of t.labels) {
@@ -244,48 +244,34 @@ function validateSsdEntry(d: SsdDetectorManifestEntry): string[] {
   return p;
 }
 
-function validateYoloSegEntry(d: YoloSegDetectorManifestEntry): string[] {
+function validateYoloxEntry(d: YoloxDetectorManifestEntry): string[] {
   const p: string[] = [];
-  if (d.outputFormat !== 'yolo_seg_raw') p.push(`outputFormat ${String(d.outputFormat)} is not supported`);
+  if (d.outputFormat !== 'yolox_decoded') p.push(`outputFormat ${String(d.outputFormat)} is not supported`);
   if (d.outputType !== 'float32') {
     const q = d.outputQuantization;
     if (!q || !isNum(q.scale) || q.scale <= 0 || !isNum(q.zeroPoint)) {
       p.push(`outputQuantization is required for ${d.outputType} output`);
     }
   }
-  if (d.resize !== 'letterbox') p.push('YOLO detectors are trained on letterboxed input; resize must be letterbox');
-  if (!Number.isInteger(d.maskCoefficients) || d.maskCoefficients <= 0) {
-    p.push('maskCoefficients must be a positive integer');
-  }
+  if (d.resize !== 'letterbox') p.push('YOLOX detectors are trained on letterboxed input; resize must be letterbox');
   if (d.boxFormat !== 'cxcywh_normalised' && d.boxFormat !== 'cxcywh_pixels') {
     p.push(`boxFormat ${String(d.boxFormat)} is not supported`);
   }
   const det = d.outputs?.detections;
-  const proto = d.outputs?.prototypes;
-  const is3 = (s: unknown): s is number[] => isShape(s);
-  const is4 = (s: unknown): s is number[] =>
-    Array.isArray(s) && s.length === 4 && s.every(n => Number.isInteger(n) && n > 0);
-  if (!det?.name || !is3(det.shape)) p.push('outputs.detections needs a name and 3 positive integers');
-  if (!proto?.name || !is4(proto.shape)) p.push('outputs.prototypes needs a name and 4 positive integers');
-  if (det && is3(det.shape)) {
+  if (!det?.name || !isShape(det.shape)) p.push('outputs.detections needs a name and 3 positive integers');
+  if (det && isShape(det.shape)) {
     if (det.shape[0] !== 1) p.push('output batch must be 1');
-    const attributes = 4 + d.labels.length + d.maskCoefficients;
+    const attributes = 4 + d.labels.length;
     if (det.shape[1] !== attributes) {
-      p.push(`outputs.detections needs ${attributes} values per anchor (4 box + ${d.labels.length} labels + ${d.maskCoefficients} mask coefficients), has ${det.shape[1]}`);
+      p.push(`outputs.detections needs ${attributes} values per anchor (4 box + ${d.labels.length} labels), has ${det.shape[1]}`);
     }
     const shape = d.inputShape;
     if (shape.length === 4) {
       const nchw = d.inputLayout === 'NCHW';
-      const expected = yoloAnchorCount(nchw ? shape[3] : shape[2], nchw ? shape[2] : shape[1]);
+      const expected = yoloxAnchorCount(nchw ? shape[3] : shape[2], nchw ? shape[2] : shape[1]);
       if (det.shape[2] !== expected) {
         p.push(`a ${nchw ? shape[3] : shape[2]} × ${nchw ? shape[2] : shape[1]} input makes ${expected} anchors, outputs have ${det.shape[2]}`);
       }
-    }
-  }
-  if (proto && is4(proto.shape)) {
-    if (proto.shape[0] !== 1) p.push('prototype batch must be 1');
-    if (proto.shape[1] !== d.maskCoefficients) {
-      p.push(`outputs.prototypes needs ${d.maskCoefficients} channels, has ${proto.shape[1]}`);
     }
   }
   if (!isNum(d.iouThreshold) || d.iouThreshold <= 0 || d.iouThreshold > 1) {
@@ -330,19 +316,17 @@ export function checkModelMatchesManifest(
       }
     });
   }
-  if (isYoloSegModel(key) && model.outputs.length > 0) {
-    const d = entry as YoloSegDetectorManifestEntry;
-    const expected = [d.outputs.detections, d.outputs.prototypes];
-    if (model.outputs.length !== 2) p.push(`expected 2 output tensors, model has ${model.outputs.length}`);
-    model.outputs.slice(0, 2).forEach((out, i) => {
-      const want = expected[i];
-      // Outputs are read by position, so the names guard against swapped detections and prototypes.
-      if (out.name && out.name !== want.name) p.push(`output ${i} is ${out.name}, manifest says ${want.name}`);
-      if (out.dataType !== d.outputType) p.push(`output ${i} type is ${out.dataType}, manifest says ${d.outputType}`);
-      if (out.shape.join(',') !== want.shape.join(',')) {
-        p.push(`output ${i} shape is [${out.shape}], manifest says [${want.shape}]`);
-      }
-    });
+  if (isYoloxModel(key) && model.outputs.length > 0) {
+    const d = entry as YoloxDetectorManifestEntry;
+    const want = d.outputs.detections;
+    // A second tensor would mean a different export (e.g. a segmentation head with prototypes).
+    if (model.outputs.length !== 1) p.push(`expected 1 output tensor, model has ${model.outputs.length}`);
+    const out = model.outputs[0];
+    if (out.name && out.name !== want.name) p.push(`output 0 is ${out.name}, manifest says ${want.name}`);
+    if (out.dataType !== d.outputType) p.push(`output 0 type is ${out.dataType}, manifest says ${d.outputType}`);
+    if (out.shape.join(',') !== want.shape.join(',')) {
+      p.push(`output 0 shape is [${out.shape}], manifest says [${want.shape}]`);
+    }
   }
   if ((key === 'tread' || key === 'damage') && model.outputs.length > 0) {
     const c = entry as ClassifierManifestEntry;

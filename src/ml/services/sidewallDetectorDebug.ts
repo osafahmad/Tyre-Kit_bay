@@ -8,9 +8,9 @@
 // Logged (Stage 1):
 // - Model load: delegate tried, failures, load time, the tensors allocated.
 // - Per frame: source size, letterbox geometry, decode / inference / post
-//   times, raw output value ranges (boxes, best score per class, mask
-//   coefficients, prototypes), the box format used, and every detection
-//   (label, score, box in input and frame pixels).
+//   times, raw output value ranges (boxes, best score per class), the box
+//   format used, and every detection (label, score, box in input and frame
+//   pixels).
 //
 // - Stage 2, per box: the crop rectangle, the ML Kit text of each orientation
 //   and the orientation kept. Raw crop text goes to the console only when

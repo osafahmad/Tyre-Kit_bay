@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AppText, BackButton, Button, SidewallDoneArt } from '../../components';
+import { AppText, BackButton, Button, DeveloperDebugSection, SidewallDoneArt } from '../../components';
 import { goBackSafely } from '../../app/navigation';
 import type { RootStackParamList } from '../../app/routes';
 import { useInspectionStore, useTyre } from '../../features/inspection/store';
@@ -233,6 +233,8 @@ export function SidewallCapturedScreen({ navigation, route }: Props) {
             onPress={() => navigation.replace('SidewallCapture', { tyreId })}
           />
         </View>
+        {/* Staging only, collapsed by default: Copy logs and the detector card (diagnosticsConfig). */}
+        <DeveloperDebugSection frames={frames} />
       </ScrollView>
     </KeyboardAvoidingView>
   );

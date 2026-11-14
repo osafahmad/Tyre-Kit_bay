@@ -1,11 +1,12 @@
-import type { YoloSegDetectorManifestEntry } from '../../manifest';
+import type { YoloxDetectorManifestEntry } from '../../manifest';
 import { imageFileToModelInput, letterboxPlan, padPixels, pixelsToTensor, tensorSpecFromManifest } from '../tensorUtils';
-import { decodeYoloSegOutput, detectionToFrameRect } from '../yoloSeg';
+import { decodeYoloxOutput, detectionToFrameRect } from '../yolox';
 import type { DecodableImage, ImageDecoder } from '../tensorUtils';
 import type { RawPixels } from '../types';
 
 // Audit (owner request 2026-11-13, iPhone 13 boxes landing on the hub): the
-// input must be packed as NCHW planes in RGB order, and `[1, 40, 8400]` must be
+// input must be packed as NCHW planes in RGB order, and `[1, 8, 8400]` (then
+// `[1, 40, 8400]`, the YOLO11n-seg model replaced on 2026-11-14) must be
 // read channel-major (`channel * anchors + anchor`). Every tensor here is
 // non-symmetric, so a transposed layout or a swapped channel order changes the
 // asserted values.
@@ -73,10 +74,10 @@ describe('NCHW input packing', () => {
   });
 });
 
-// 32 × 32 input, 21 anchors (4² + 2² + 1²), 4 labels, 2 mask coefficients.
+// 32 × 32 input, 21 anchors (4² + 2² + 1²), 4 box values + 4 labels.
 const ANCHORS = 21;
-const ATTRS = 10;
-const entry: YoloSegDetectorManifestEntry = {
+const ATTRS = 8;
+const entry: YoloxDetectorManifestEntry = {
   file: 1,
   version: 'test',
   inputShape: [1, 3, 32, 32],
@@ -89,62 +90,59 @@ const entry: YoloSegDetectorManifestEntry = {
   inputQuantization: null,
   labels: ['Brand', 'DOT', 'Model', 'Size'],
   confidenceThreshold: 0.25,
-  outputFormat: 'yolo_seg_raw',
+  outputFormat: 'yolox_decoded',
   outputType: 'float32',
   outputQuantization: null,
-  outputs: { detections: { name: 'det', shape: [1, ATTRS, ANCHORS] }, prototypes: { name: 'proto', shape: [1, 2, 8, 8] } },
-  maskCoefficients: 2,
-  boxFormat: 'cxcywh_normalised',
+  outputs: { detections: { name: 'det', shape: [1, ATTRS, ANCHORS] } },
+  boxFormat: 'cxcywh_pixels',
   iouThreshold: 0.45,
   maxDetections: 300,
 };
 
-describe('[1, 40, 8400]-style output stride', () => {
+describe('[1, 8, 8400]-style output stride', () => {
   test('channel-major read: anchor 5 holds cx, cy, w, h at rows 0–3 and its DOT score at row 5', () => {
     const v = new Float32Array(ATTRS * ANCHORS);
     const anchor = 5;
     const channelMajor = (channel: number, a: number) => channel * ANCHORS + a;
-    v[channelMajor(0, anchor)] = 0.75; // cx
-    v[channelMajor(1, anchor)] = 0.25; // cy
-    v[channelMajor(2, anchor)] = 0.5; // w
-    v[channelMajor(3, anchor)] = 0.125; // h
+    v[channelMajor(0, anchor)] = 24; // cx
+    v[channelMajor(1, anchor)] = 8; // cy
+    v[channelMajor(2, anchor)] = 16; // w
+    v[channelMajor(3, anchor)] = 4; // h
     v[channelMajor(5, anchor)] = 0.8; // DOT
-    v[channelMajor(9, anchor)] = -0.4; // mask coefficient 1
-    const [d] = decodeYoloSegOutput(v.buffer, entry);
+    const [d] = decodeYoloxOutput(v.buffer, entry);
     expect(d).toMatchObject({ label: 'DOT', labelIndex: 1 });
     expect(d.score).toBeCloseTo(0.8);
     expect([d.x1, d.y1, d.x2, d.y2]).toEqual([16, 6, 32, 10]);
-    expect(Array.from(d.maskCoefficients).map(m => Math.round(m * 10) / 10)).toEqual([0, -0.4]);
 
-    // The same numbers written anchor-major (anchor * 40 + channel) would be
+    // The same numbers written anchor-major (anchor * 8 + channel) would be
     // decoded as something else entirely: no detection reaches the threshold.
     const t = new Float32Array(ATTRS * ANCHORS);
     const anchorMajor = (channel: number, a: number) => a * ATTRS + channel;
-    t[anchorMajor(0, anchor)] = 0.75;
-    t[anchorMajor(1, anchor)] = 0.25;
-    t[anchorMajor(2, anchor)] = 0.5;
-    t[anchorMajor(3, anchor)] = 0.125;
+    t[anchorMajor(0, anchor)] = 24;
+    t[anchorMajor(1, anchor)] = 8;
+    t[anchorMajor(2, anchor)] = 16;
+    t[anchorMajor(3, anchor)] = 4;
     t[anchorMajor(5, anchor)] = 0.8;
-    const wrong = decodeYoloSegOutput(t.buffer, entry);
+    const wrong = decodeYoloxOutput(t.buffer, entry);
     expect(wrong.find(x => x.label === 'DOT' && x.x1 === 16)).toBeUndefined();
   });
 });
 
 describe('un-letterboxing on the real-car frame size (1080 × 1120 → 640 × 640)', () => {
-  test('frame rect = ((coord × 640) − pad) / scale, with the 11 px horizontal pad', () => {
+  test('frame rect = (input pixel − pad) / scale, with the 11 px horizontal pad', () => {
     const plan = letterboxPlan(1080, 1120, 640, 640);
     expect(plan.scale).toBeCloseTo(640 / 1120, 6);
     expect([plan.resizedWidth, plan.resizedHeight, plan.padX, plan.padY]).toEqual([617, 640, 11, 0]);
 
-    // One normalised box: cx 0.6, cy 0.3, w 0.2, h 0.1.
+    // One box in 640 × 640 input pixels: cx 384, cy 192, w 128, h 64.
     const v = new Float32Array(ATTRS * ANCHORS);
-    v[0 * ANCHORS + 2] = 0.6;
-    v[1 * ANCHORS + 2] = 0.3;
-    v[2 * ANCHORS + 2] = 0.2;
-    v[3 * ANCHORS + 2] = 0.1;
+    v[0 * ANCHORS + 2] = 384;
+    v[1 * ANCHORS + 2] = 192;
+    v[2 * ANCHORS + 2] = 128;
+    v[3 * ANCHORS + 2] = 64;
     v[7 * ANCHORS + 2] = 0.9; // Size
     const big = { ...entry, inputShape: [1, 3, 640, 640], outputs: { ...entry.outputs } };
-    const [d] = decodeYoloSegOutput(v.buffer, big);
+    const [d] = decodeYoloxOutput(v.buffer, big);
     expect([d.x1, d.y1, d.x2, d.y2].map(n => Math.round(n * 1000) / 1000)).toEqual([320, 160, 448, 224]);
     const rect = detectionToFrameRect(d, { sourceWidth: 1080, sourceHeight: 1120, scale: plan.scale, padX: plan.padX, padY: plan.padY })!;
     const expectX = (c: number) => (c * 640 - 11) / plan.scale;
